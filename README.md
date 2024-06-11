@@ -56,7 +56,7 @@ Input:
 ## TLDR;
 Modules are listed below:
 
-![image](https://github.com/NetSPI/gcpwn/assets/74038921/a8c91039-2b4b-453f-af72-81cfa942e273)
+![image](https://github.com/NetSPI/gcpwn/assets/74038921/5c1cf902-ea03-4c50-87e6-60dbbf3c6952)
 
 If you don't want to read through the wiki or need to run a module real quick, here are some common examples
 
