@@ -43,20 +43,20 @@ Welcome to your workspace! Type 'help' or '?' to see available commands.
 
 [*] Listing existing credentials...
 
-Submit the name or index of an existing credential from above, 
-or add NEW credentials via Application Default Credentails (adc - google.auth.default()), a file pointing to
-adc credentials, a standalone OAuth2 Token, or Service credentials. See wiki for details on each. To proceed 
-with no credentials just hit ENTER and submit an empty string. 
-  [1] *adc      <credential_name> [tokeninfo]                    (ex. default mydefaultcreds [tokeninfo]) 
-  [2] *adc-file <credential_name> <filepath> [tokeninfo]         (ex. service mydefaultcreds /tmp/name2.json)
-  [3] *oauth2   <credential_name> <token_value> [tokeninfo]      (ex. oauth2 mydefaultcreds ya[TRUNCATED]i3jJK)  
-  [4] service   <credential_name> <filepath_to_service_creds>    (ex. service mydefaultcreds /tmp/name2.json)
+Submit the name or index of an existing credential from above, or add NEW credentials via Application Default 
+Credentails (adc - google.auth.default()), a file pointing to adc credentials, a standalone OAuth2 Token, 
+or Service credentials. See wiki for details on each. To proceed with no credentials just hit ENTER and submit 
+an empty string. 
+ [1] *adc      <credential_name> [tokeninfo]                    (ex. adc mydefaultcreds [tokeninfo]) 
+ [2] *adc-file <credential_name> <filepath> [tokeninfo]         (ex. adc-file mydefaultcreds /tmp/name2.json)
+ [3] *oauth2   <credential_name> <token_value> [tokeninfo]      (ex. oauth2 mydefaultcreds ya[TRUNCATED]i3jJK)  
+ [4] service   <credential_name> <filepath_to_service_creds>    (ex. service mydefaultcreds /tmp/name2.json)
 
-*To get scope and/or email info for Oauth2 tokens (options 1 & 2) include a third argument of 
+*To get scope and/or email info for Oauth2 tokens (options 1-3) include a third argument of 
 "tokeninfo" to send the tokens to Google's official oauth2 endpoint to get back scope. 
 tokeninfo will set the credential name for oauth2, otherwise credential name will be used.
 Advised for best results. See https://cloud.google.com/docs/authentication/token-types#access-contents.
-Using tokeninfo will add scope/email to your references.
+Using tokeninfo will add scope/email to your references if not auto-picked up.
 
 Input:  
 ```

@@ -750,8 +750,8 @@ def initial_instructions(workspace_id: int, workspace_name: str):
         Credentails (adc - google.auth.default()), a file pointing to adc credentials, a standalone OAuth2 Token, 
         or Service credentials. See wiki for details on each. To proceed with no credentials just hit ENTER and submit 
         an empty string. 
-        [1] *adc      <credential_name> [tokeninfo]                    (ex. default mydefaultcreds [tokeninfo]) 
-        [2] *adc-file <credential_name> <filepath> [tokeninfo]         (ex. service mydefaultcreds /tmp/name2.json)
+        [1] *adc      <credential_name> [tokeninfo]                    (ex. adc mydefaultcreds [tokeninfo]) 
+        [2] *adc-file <credential_name> <filepath> [tokeninfo]         (ex. adc-file mydefaultcreds /tmp/name2.json)
         [3] *oauth2   <credential_name> <token_value> [tokeninfo]      (ex. oauth2 mydefaultcreds ya[TRUNCATED]i3jJK)  
         [4] service   <credential_name> <filepath_to_service_creds>    (ex. service mydefaultcreds /tmp/name2.json)
 
