@@ -1,0 +1,248 @@
+databases:
+  # https://cloud.google.com/storage/docs/bucket-metadata
+  - database_name: "service_info"
+    tables:
+      - table_name: "cloudstorage-buckets"
+        columns: [
+          project_id,
+          name,
+          id,
+          storage_class,
+          location,
+          location_type,
+          cors,
+          default_event_based_hold,
+          default_kms_key_name,
+          metageneration,
+          iam_configuration_public_access_prevention,
+          retention_policy_effective_time,
+          retention_period,
+          retention_policy_locked,
+          requester_pays,
+          self_link,
+          time_created,
+          versioning_enabled,
+          labels,
+          external_curl
+        ]
+        primary_keys: [project_id, name]
+      - table_name: "cloudstorage-bucketblobs"
+        columns: [
+          project_id,
+          name,
+          bucket_name,
+          storage_class,
+          id,
+          size,
+          updated,
+          generation,
+          metageneration,
+          etag,
+          owner,
+          component_count,
+          crc32c,
+          md5_hash,
+          cache_control,
+          content_type,
+          content_disposition,
+          content_encoding,
+          content_language,
+          metadata,
+          media_link,
+          custom_time,
+          temporary_hold,
+          event_based_hold,
+          retention_expiration_time
+        ]
+        primary_keys: [project_id, name]
+      - table_name: "cloudstorage-hmac-keys"
+        columns: [
+          access_id,
+          secret,
+          etag,
+          id,
+          path,
+          project_id,
+          service_account_email,
+          state,
+          time_created,
+          updated,
+          user_project
+        ]
+        primary_keys: [access_id, project_id, service_account_email]
+      - table_name: "cloudfunctions-functions"
+        columns: [
+          project_id,
+          name,
+          description,
+          state,
+          update_time,
+          labels,
+          state_messages,
+          environment,
+          url,
+          kms_key_name,
+          build_config,
+          service_config,
+          event_trigger,
+          external_curl
+        ]
+        primary_keys: [name, project_id]
+      - table_name: "cloudsourcerepositories-repositories"
+        columns: [
+          name,
+          url,
+          project_id
+        ]
+        primary_keys: [project_id, name, url]
+      - table_name: "iam-bindings"
+        columns: [
+          member,
+          project_id,
+          name,
+          display_name,
+          type,
+          roles
+        ]
+        primary_keys: [member, project_id, type, name]
+      - table_name: "iam-unauth-permissions"
+        columns: [
+          member,
+          project_id,
+          name,
+          display_name,
+          type,
+          permissions
+        ]
+        primary_keys: [member, project_id, type, name]
+      - table_name: "cloudcompute-instances"
+        columns: [
+          project_id,
+          advanced_machine_features,
+          can_ip_forward,
+          confidential_instance_config,
+          cpu_platform,
+          creation_timestamp,
+          deletion_protection,
+          description,
+          disks,
+          guest_accelerators,
+          network_interfaces,
+          scheduling,
+          display_device,
+          fingerprint,
+          hostname,
+          id,
+          instance_encryption_key,
+          key_revocation_action_type,
+          kind,
+          label_fingerprint,
+          labels,
+          last_start_timestamp,
+          last_stop_timestamp,
+          last_suspended_timestamp,
+          machine_type,
+          metadata_enable_os_login,
+          metadata,
+          min_cpu_platform,
+          name,
+          network_performance_config,
+          params,
+          private_ipv6_google_access,
+          reservation_affinity,
+          resource_policies,
+          resource_status,
+          satisfies_pzi,
+          satisfies_pzs,
+          self_link,
+          service_accounts,
+          shielded_instance_config,
+          shielded_instance_integrity_policy,
+          source_machine_image,
+          source_machine_image_encryption_key,
+          start_restricted,
+          status,
+          status_message,
+          tags,
+          zone
+        ]
+        primary_keys: [project_id, id, zone]
+      - table_name: "cloudcompute-projects"
+        columns: [
+          cloud_armor_tier,
+          common_instance_metadata,
+          creation_timestamp,
+          default_network_tier,
+          default_service_account,
+          description,
+          enabled_features,
+          id,
+          kind,
+          project_id,
+          quotas,
+          self_link,
+          usage_export_location,
+          vm_dns_setting,
+          xpn_project_status,
+          metadata_enable_os_login
+        ]
+        primary_keys: [project_id, id]
+      - table_name: "abstract-tree-hierarchy"
+        columns: [
+          name,
+          display_name,
+          project_id,
+          type,
+          parent,
+          state
+        ]
+        primary_keys: [project_id, name]
+      - table_name: "member-permissions-summary"
+        columns: [
+          crednames,
+          member,
+          roles_and_assets,
+          permissions_and_assets
+        ]
+        primary_keys: [member]
+      - table_name: "iam-principals"
+        columns: [
+          credname,
+          name,
+          project_id,
+          unique_id,
+          email,
+          display_name,
+          etag,
+          description,
+          oauth2_client_id,
+          disabled,
+          type
+        ]
+        primary_keys: [email, project_id, unique_id, type]
+      - table_name: "iam-sa-keys"
+        columns: [
+          name,
+          private_key_type,
+          key_algorithm,
+          private_key_data,
+          public_key_data,
+          valid_after_time,
+          valid_before_time,
+          key_origin,
+          key_type,
+          disabled
+        ]
+        primary_keys: [name]
+      - table_name: "iam-roles"
+        columns: [
+          name,
+          title,
+          description,
+          included_permissions,
+          stage,
+          etag,
+          deleted,
+          scope_of_custom_role  # Either project or organization
+        ]
+        primary_keys: [name]

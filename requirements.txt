@@ -1,0 +1,83 @@
+# Google Python libraries
+google-cloud-iam == 2.15.0 
+
+google-cloud-billing == 1.13.3 
+
+google-cloud-secret-manager == 2.20.0 
+
+google-cloud-storageinsights == 0.1.8 
+
+google-cloud-compute == 1.18.0 
+
+google-cloud-access-approval == 1.13.3 
+
+google-cloud-iot == 2.9.2 
+
+google-cloud-bigquery == 3.22.0 
+
+google-cloud-bigtable == 2.23.1 
+
+google-cloud-dataproc == 5.9.3 
+
+google-cloud-datastore == 2.19.0 
+
+google-cloud-dns == 0.35.0 
+
+google-cloud-error-reporting == 1.11.0 
+
+google-cloud-firestore == 2.16.0 
+
+google-cloud-functions == 1.16.3 
+
+google-cloud-language == 2.13.3 
+
+google-cloud-logging == 3.10.0 
+
+google-cloud-monitoring == 2.21.0 
+
+google-cloud-pubsub == 2.21.1 
+
+google-cloud-resource-manager == 1.12.3 
+
+google-cloud-runtimeconfig == 0.34.0 
+
+google-cloud-service-directory == 1.11.3 
+
+google-cloud-spanner == 3.46.0 
+
+google-cloud-speech == 2.26.0 
+
+google-cloud-storage == 2.16.0 
+
+google-cloud-trace == 1.13.3 
+
+google-cloud-translate == 3.15.3
+
+google-cloud-videointelligence == 2.13.3 
+
+google-cloud-vision == 3.7.2 
+
+google-cloud-netapp == 0.3.9 
+
+# Google Groups Docs APIs - https://developers.google.com/docs/api/quickstart/python
+# https://cloud.google.com/iam/docs/reference/libraries#iam-client-libraries-install-python (v1)
+google-api-python-client == 2.129.0 
+
+google-auth-httplib2 == 0.2.0 
+
+google-auth-oauthlib == 1.2.0 
+
+# For errors https://developers.google.com/google-ads/api/docs/client-libs/python/dependencies
+google-api-core == 2.19.0 
+
+# For generate_graph
+matplotlib == 3.9.0
+networkx == 3.3
+
+requests == 2.32.3 
+
+pandas == 2.2.2 
+
+beautifulsoup4==4.12.3 
+
+PyYAML == 6.0.1 

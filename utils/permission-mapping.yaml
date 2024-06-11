@@ -1,0 +1,783 @@
+- "id": ["1"]
+  "main_permission": "1"
+  "issue": "Deployment Manager Creation Allowed"
+  "permission": "deploymentmanager.deployments.create"
+  "alternate": "None"
+  "module_exists": False
+  "description": "Coming Soon..."
+  "instructions": "Coming Soon..."
+  "roles":
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/deploymentmanager.editor"
+    - "roles/firebasemods.serviceAgent"
+    - "roles/vpcaccess.serviceAgent"
+
+- "id": ["2"]
+  "main_permission": "2"
+  "issue": "Storage HMAC Keys Creation Allowed"
+  "permission": "storage.hmacKeys.create"
+  "alternate": "None"
+  "module_exists": True
+  "description": "You can generate a storage HMAC key for a specified service account. Ideally this SA has more cloud storage permissions. Using the HMAC key you then make SigV4 requests to GCP endpoints to get back storage data."
+  "instructions": "Run 'modules run enum_iam_users_service' to populate service accounts && 'modules run exploit_hmac_keys' to create & use HMAC keys for service account"
+  "roles":
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/storage.hmacKeyAdmin"
+
+
+- "id": ["3", "10", "11", "12", "13"]
+  "main_permission": "3"
+  "issue": "IAM ActAs Allowed on Service Account"
+  "permission": "iam.serviceAccounts.actAs"
+  "alternate": "None"
+  "module_exists": True
+  "description": "By leveraging iam.serviceAccounts.actAs, you can pass a role to a resource in GCP and subsequently leveragee that resource to get the role credentials or act as that role. Note that this permission is usually tied into a lot of other vuln routes (ex. cloudfunctions create), but is called out individually for your awareness/context"
+  "instructions": "See if any other permissions are flagged like cloud functions create or cloud compute create and call those to leverage the underlying serviceAccounts.actAs"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"     
+    - "roles/batch.serviceAgent"
+    - "roles/cloudconfig.serviceAgent"
+    - "roles/clouddeploy.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudfunctions.serviceAgent"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"  
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/datapipelines.serviceAgent"
+    - "roles/dataplex.serviceAgent"
+    - "roles/dataprep.serviceAgent"     
+    - "roles/dataproc.hubAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/eventarc.serviceAgent"
+    - "roles/firebasemods.serviceAgent"
+    - "roles/gameservices.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/iam.serviceAccountUser" 
+    - "roles/krmapihosting.anthosApiEndpointServiceAgent"
+    - "roles/krmapihosting.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/notebooks.serviceAgent"
+    - "roles/osconfig.serviceAgent"
+    - "roles/run.serviceAgent"
+    - "roles/runapps.serviceAgent"
+    - "roles/securitycenter.securityResponseServiceAgent"
+    - "roles/serverless.serviceAgent"
+    - "roles/workstations.serviceAgent"
+
+- "id": ["4"]
+  "main_permission": "4"
+  "issue": "IAM Service Accounts Access Token Creator"
+  "permission": "iam.serviceAccounts.getAccessToken"
+  "alternate": "None"
+  "module_exists": True
+  "description": "Access tokens are what GCP uses to make authetnicated calls. They usually last ~1 hour. This permission lets you point to a service account and get the access token back, thus letting you make calls as the new service account. Note this token will expire in ~1 hour if you see that via the tool"
+  "instructions": "Run 'modules run exploit_generate_access_token' module supplying the service account name or allowing wizard to prompt you for one"
+  "roles":
+    - "roles/aiplatform.customCodeServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/apigateway.serviceAgent"
+    - "roles/apigee.serviceAgent"
+    - "roles/appengine.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/bigquerydatatransfer.serviceAgent"
+    - "roles/bigqueryspark.serviceAgent"
+    - "roles/cloudbuild.serviceAgent"
+    - "roles/cloudconfig.serviceAgent"
+    - "roles/clouddeploy.serviceAgent"
+    - "roles/cloudfunctions.serviceAgent"
+    - "roles/cloudscheduler.serviceAgent"
+    - "roles/cloudtasks.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/connectors.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/eventarc.serviceAgent"
+    - "roles/iam.serviceAccountTokenCreator"
+    - "roles/iam.workloadIdentityUser"
+    - "roles/integrations.serviceAgent"
+    - "roles/ml.serviceAgent"
+    - "roles/notebooks.serviceAgent"
+    - "roles/pubsub.serviceAgent"
+    - "roles/run.serviceAgent"
+    - "roles/serverless.serviceAgent"
+    - "roles/sourcerepo.serviceAgent"
+    - "roles/workflows.serviceAgent"
+
+- "id": ["5"]
+  "main_permission": "5"
+  "issue": "IAM Implicit Delegation Allowed"
+  "permission": "iam.serviceAccounts.implicitDelegation"
+  "alternate": "None"
+  "module_exists": True
+  "description": "If you have implicit delegation on one or more service accounts in a chain, than you can make an API call as if you are the final service account in that chain. In this way, if you have implicit delegation permissions on Service Account B, and servie Account B can call serviceAccounts.getAccessToken on Service Account C, than you (Service Account A) can call serviceAccounts.getAccessToken on Service Account C"
+  "instructions": "Run 'modules run exploit_generate_access_token' module supplying the service account name. Note this will try to call getAccessToken"
+  "roles":
+    - "roles/iam.serviceAccountTokenCreator"
+    - "roles/aiplatform.customCodeServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/connectors.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/ml.serviceAgent"
+    - "roles/pubsub.serviceAgent"
+
+- "id": ["6"]
+  "main_permission": "6"
+  "issue": "IAM Service Accounts Service Keys Creator"
+  "permission": "iam.serviceAccountKeys.create"
+  "alternate": "None"
+  "module_exists": True
+  "description": "Service Accounts can be tied to JSON keys. You can create a service account key and use that to  call APIs as the service account. Unlike the GetAccessToken call, this will create a static key that should not expire and last longer"
+  "instructions": "Run `modules run exploit_service_account_keys --assume` to generate a new key and assume the new sa user"
+  "roles":
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/assuredoss.admin"
+    - "roles/iam.serviceAccountKeyAdmin"
+    - "oles/securitycenter.admin"
+
+
+- "id": ["7"]
+  "main_permission": "7"
+  "issue": "Custom Role Update Allowed"
+  "permission": "iam.roles.update"
+  "alternate": "None"
+  "module_exists": False
+  "description": "A user can create a custom role in GCP with multiple permissions. With update roles permissions, you can update a role to make it more permissive which is helpful if that custom role is attached to yourself"
+  "instructions": "Coming Soon..."
+  "roles":
+    - "roles/iam.organizationRoleAdmin"
+    - "roles/iam.roleAdmin"
+    - "roles/owner"
+
+- "id": ["8"]
+  "main_permission": "8"
+  "issue": "IAM Service Accounts Sign Blob"
+  "permission": "iam.serviceAccounts.signBlob"
+  "alternate": "None"
+  "module_exists": False
+  "description": "TEST"
+  "instructions": "Try runnin "
+  "roles":
+    - "roles/iam.serviceAccountTokenCreator"
+    - "roles/aiplatform.customCodeServiceAgent"
+    - "roles/appengine.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/cloudfunctions.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/ml.serviceAgent"
+    - "roles/pubsub.serviceAgent"
+    - "roles/run.serviceAgent"
+    - "roles/serverless.serviceAgent"
+
+- "id": ["9"]
+  "main_permission": "9"
+  "issue": "IAM Service Accounts Sign JWT"
+  "permission": "iam.serviceAccounts.signJwt"
+  "alternate": "None"
+  "module_exists": False
+  "description": "TEST"
+  "instructions": "Try runnin "
+  "roles": 
+    - "roles/iam.serviceAccountTokenCreator"
+    - "roles/aiplatform.customCodeServiceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/ml.serviceAgent"
+    - "roles/pubsub.serviceAgent"
+    
+- "id": ["10"]
+  "main_permission": "10"
+  "issue": "Create Cloud Function with Service Account"
+  "permission": "cloudfunctions.functions.create"
+  "alternate": "None"
+  "module_exists": True
+  "description": "You can attach service accounts to cloud functions via the iam.serviceAccounts.actAs permissions. So you can create a function, attach a permissive service eaccount, invoke the function, and query the metadat aendponit to get backthe serivce account creds"
+  "instructions": "Run `modules run exploit_functions_invoke --create"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/cloudconfig.serviceAgent"
+    - "roles/clouddeploy.serviceAgent"
+    - "roles/cloudfunctions.serviceAgent"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/datapipelines.serviceAgent"
+    - "roles/dataplex.serviceAgent"
+    - "roles/dataprep.serviceAgent"
+    - "roles/dataproc.hubAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/eventarc.serviceAgent"
+    - "roles/firebasemods.serviceAgent"
+    - "roles/gameservices.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/iam.serviceAccountUser"
+    - "roles/krmapihosting.anthosApiEndpointServiceAgent"
+    - "roles/krmapihosting.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/notebooks.serviceAgent"
+    - "roles/osconfig.serviceAgent"
+    - "roles/run.serviceAgent"
+    - "roles/runapps.serviceAgent"
+    - "roles/securitycenter.securityResponseServiceAgent"
+    - "roles/serverless.serviceAgent"
+    - "roles/workstations.serviceAgent"  
+
+
+- "id": ["11"]
+  "main_permission": "11"
+  "issue": "Update Cloud Function with Service Account"
+  "permission": "cloudfunctions.functions.update"
+  "alternate": "None"
+  "module_exists": True
+  "description": "You can attach service accounts to cloud functions via the iam.serviceAccounts.actAs permissions. So you can create a function, attach a permissive service eaccount, invoke the function, and query the metadat aendponit to get backthe serivce account creds"
+  "instructions": "Run `modules run exploit_functions_invoke --update`. Note you will need to host your source code in a storage bucket."
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudfunctions.admin"  
+    - "roles/cloudfunctions.developer"
+    - "roles/firebase.admin"
+    - "roles/firebase.developAdmin"
+
+- "id": ["10", "11"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "cloudfunctions.functions.sourceCodeSet"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/cloudfunctions.admin"
+    - "roles/cloudfunctions.developer"
+    - "roles/firebase.admin"
+    - "roles/firebase.developAdmin"
+
+- "id": ["10", "11"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "cloudfunctions.functions.call"
+  "alternate": "cloudfunctions.functions.setIamPolicy"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/clouddeploymentmanager.serviceAgent" 
+    - "roles/cloudfunctions.admin" 
+    - "roles/cloudfunctions.developer" 
+    - "roles/firebase.admin"
+    - "roles/firebase.developAdmin"   
+
+- "id": ["10"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "cloudfunctions.functions.setIamPolicy"
+  "alternate": "cloudfunctions.functions.call"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/cloudfunctions.admin"
+    - "roles/firebase.admin"
+    - "roles/firebase.developAdmin"
+    - "roles/firebasemods.serviceAgent"
+    - "roles/iam.securityAdmin"
+
+- "id": ["12"]
+  "main_permission": "12"
+  "issue": "Create Cloud Instance with Service Account"
+  "permission": "compute.instances.create"
+  "alternate": "None"
+  "module_exists": True
+  "description": "You can attach service accounts to cloud instances. So you can create an instance, attach a service account, set a startup script via metadata, and exfiltrate attached service account creds"
+  "instructions": "Run `modules run exploit_instances"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/metastore.migrationAdmin"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/vpcaccess.serviceAgent"
+    - "roles/workstations.serviceAgent"
+
+- "id": ["12"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "compute.disks.create"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/compute.storageAdmin"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/gkebackup.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/metastore.migrationAdmin"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/vpcaccess.serviceAgent"
+    - "roles/workstations.serviceAgent"
+
+- "id": ["12"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "compute.instances.setMetadata"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.hubAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/metastore.migrationAdmin"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/osconfig.serviceAgent"
+    - "roles/securitycenter.securityResponseServiceAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/vpcaccess.serviceAgent"
+    - "roles/workstations.serviceAgent"
+
+- "id": ["12"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "compute.instances.setServiceAccount"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/workstations.serviceAgent"
+
+
+- "id": ["12"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "compute.subnetworks.use"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/apim.apiDiscoveryServiceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/bigquerydatatransfer.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/composer.sharedVpcAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.loadBalancerAdmin"
+    - "roles/compute.networkAdmin"
+    - "roles/compute.networkUser"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/datamigration.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/managedkafka.serviceAgent"
+    - "roles/meshconfig.serviceAgent"
+    - "roles/metastore.migrationAdmin"
+    - "roles/metastore.serviceAgent"
+    - "roles/multiclusteringress.serviceAgent"
+    - "roles/networkconnectivity.serviceAgent"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/run.serviceAgent"
+    - "roles/serverless.serviceAgent"
+    - "roles/tpu.xpnAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/vpcaccess.serviceAgent"
+    - "roles/workstations.networkAdmin"
+    - "roles/workstations.serviceAgent"
+
+- "id": ["12"]
+  "main_permission": "None"
+  "issue": "None"
+  "permission": "compute.subnetworks.useExternalIp"
+  "alternate": "None"
+  "module_exists": False
+  "description": "N/A"
+  "instructions": "N/A"
+  "roles": 
+    - "roles/owner"
+    - "roles/editor"
+    - "roles/aiplatform.colabServiceAgent"
+    - "roles/aiplatform.serviceAgent"
+    - "roles/appengineflex.serviceAgent"
+    - "roles/backupdr.computeEngineOperator"
+    - "roles/backupdr.serviceAgent"
+    - "roles/batch.serviceAgent"
+    - "roles/clouddeploymentmanager.serviceAgent"
+    - "roles/cloudmigration.inframanager"
+    - "roles/cloudtpu.serviceAgent"
+    - "roles/composer.serviceAgent"
+    - "roles/composer.sharedVpcAgent"
+    - "roles/compute.admin"
+    - "roles/compute.instanceAdmin"
+    - "roles/compute.instanceAdmin.v1"
+    - "roles/compute.instanceGroupManagerServiceAgent"
+    - "roles/compute.networkAdmin"
+    - "roles/compute.networkUser"
+    - "roles/compute.serviceAgent"
+    - "roles/container.serviceAgent"
+    - "roles/dataflow.serviceAgent"
+    - "roles/dataproc.serviceAgent"
+    - "roles/genomics.serviceAgent"
+    - "roles/lifesciences.serviceAgent"
+    - "roles/notebooks.legacyAdmin"
+    - "roles/notebooks.serviceAgent"
+    - "roles/tpu.xpnAgent"
+    - "roles/vmmigration.serviceAgent"
+    - "roles/workstations.networkAdmin"
+    - "roles/workstations.serviceAgent"
+
+
+- "id": ["14"]
+  "main_permission": "14"
+  "issue": "SetIAMPolicy on Respective Resource"
+  "permission": "*.*.setIamPolicy"
+  "alternate": "None"
+  "module_exists": False
+  "description": "Many resources in GCP that support resource policies (storage, compute, functions, etc.) allow one to set the IAM Policy on it. If you can set the IAM Policy on it, then you can set an IAM policy making yourself admin basically taking over the respective service. You need to check which specific role is allowed and that would give you ownership over that resource"
+  "instructions": "Run `modules run exploit_[resource]_setiampolicy` if suppoted. Else look up GCP documentation for how to call SetIamPolicy on other services"
+  "roles":
+    - roles/accessapproval.approver
+    - roles/accessapproval.viewer
+    - roles/accesscontextmanager.policyAdmin
+    - roles/accesscontextmanager.policyEditor
+    - roles/accesscontextmanager.policyReader
+    - roles/analyticsadmin
+    - roles/analyticshub.admin
+    - roles/analyticshub.listingAdmin
+    - roles/apigateway.admin
+    - roles/apigeeregistry.admin
+    - roles/apigeeregistry.adminReader
+    - roles/apigeeregistry.adminWriter
+    - roles/artifactregistry.admin
+    - roles/assettype.editor
+    - roles/assettype.owner
+    - roles/assettype.viewer
+    - roles/autoscaling.sitesAdmin
+    - roles/beyondcorp.admin
+    - roles/beyondcorp.clientConnectorAdmin
+    - roles/bigquery.admin
+    - roles/bigquery.connectionAdmin
+    - roles/bigquery.dataOwner
+    - roles/bigquery.studioAdmin
+    - roles/bigtable.admin
+    - roles/billing.admin
+    - roles/binaryauthorization.attestorsAdmin
+    - roles/binaryauthorization.policyAdmin
+    - roles/certificateauthority.admin
+    - roles/certificateauthority.viewer
+    - roles/certificatemanager.owner
+    - roles/certificatemanager.viewer
+    - roles/cloudbuild.connectionAdmin
+    - roles/cloudbuild.viewer
+    - roles/cloudcomposer.admin
+    - roles/cloudcomposer.environmentAndStorageObjectAdmin
+    - roles/cloudcomposer.user
+    - roles/clouddeploy.admin
+    - roles/clouddeploy.customTargetTypeAdmin
+    - roles/cloudfunctions.serviceAgent
+    - roles/cloudkms.admin
+    - roles/cloudprofiler.agent
+    - roles/cloudprofiler.admin
+    - roles/cloudscheduler.admin
+    - roles/cloudscheduler.serviceAgent
+    - roles/cloudsql.admin
+    - roles/cloudsql.client
+    - roles/cloudsql.editor
+    - roles/cloudsql.viewer
+    - roles/cloudtasks.admin
+    - roles/cloudtrace.agent
+    - roles/cloudtrace.admin
+    - roles/cloudtrace.user
+    - roles/cloudtpu.serviceAgent
+    - roles/composer.serviceAgent
+    - roles/compute.admin
+    - roles/compute.loadBalancerAdmin
+    - roles/compute.networkAdmin
+    - roles/container.serviceAgent
+    - roles/containeranalysis.admin
+    - roles/datacatalog.admin
+    - roles/datacatalog.categoryAdmin
+    - roles/datacatalog.entryGroupOwner
+    - roles/datacatalog.entryOwner
+    - roles/datacatalog.glossaryOwner
+    - roles/dataflow.serviceAgent
+    - roles/datafusion.serviceAgent
+    - roles/dataplex.serviceAgent
+    - roles/dataproc.serviceAgent
+    - roles/dataproc.worker
+    - roles/datapublisher.serviceAgent
+    - roles/datastore.owner
+    - roles/datastore.user
+    - roles/deploymentmanager.editor
+    - roles/deploymentmanager.environmentAndStorageObjectAdmin
+    - roles/deploymentmanager.typeAdmin
+    - roles/dialogflow.admin
+    - roles/dialogflow.client
+    - roles/dialogflow.consoleAgent
+    - roles/dialogflow.exportAgent
+    - roles/dialogflow.reader
+    - roles/dialogflow.serviceAgent
+    - roles/dialogflow.validator
+    - roles/dlp.admin
+    - roles/dlp.serviceAgent
+    - roles/endpointportal.viewer
+    - roles/essentials.databaseAdmin
+    - roles/eventarc.admin
+    - roles/eventarc.serviceAgent
+    - roles/externalidentity.admin
+    - roles/file.admin
+    - roles/file.editor
+    - roles/file.viewer
+    - roles/firebase.admin
+    - roles/firebase.developAdmin
+    - roles/firebase.viewer
+    - roles/folders.editor
+    - roles/folders.viewer
+    - roles/functions.admin
+    - roles/gkehub.admin
+    - roles/gkehub.connect
+    - roles/gkehub.reader
+    - roles/gkehub.viewer
+    - roles/genomics.admin
+    - roles/genomics.viewer
+    - roles/iam.securityAdmin
+    - roles/iam.serviceAccountAdmin
+    - roles/iam.serviceAccountKeyAdmin
+    - roles/iam.serviceAccountTokenCreator
+    - roles/identityplatform.admin
+    - roles/identityplatform.user
+    - roles/iap.httpsResourceAccessor
+    - roles/kms.admin
+    - roles/kms.serviceAccountAdmin
+    - roles/kms.serviceAccountKeyAdmin
+    - roles/kms.serviceAccountTokenCreator
+    - roles/language.admin
+    - roles/language.user
+    - roles/lifesciences.admin
+    - roles/lifesciences.viewer
+    - roles/logging.configWriter
+    - roles/logging.logWriter
+    - roles/machinelearning.admin
+    - roles/machinelearning.developer
+    - roles/machinelearning.viewer
+    - roles/managedidentities.admin
+    - roles/memcache.viewer
+    - roles/ml.engineAdmin
+    - roles/ml.engineDeveloper
+    - roles/ml.engineEditor
+    - roles/ml.engineReader
+    - roles/ml.admin
+    - roles/ml.developer
+    - roles/ml.editor
+    - roles/ml.viewer
+    - roles/networkconnectivity.serviceAgent
+    - roles/networksecurity.admin
+    - roles/networksecurity.viewer
+    - roles/networkservices.admin
+    - roles/networkservices.viewer
+    - roles/notebooks.admin
+    - roles/notebooks.legacyAdmin
+    - roles/notebooks.serviceAgent
+    - roles/ondemandscanning.admin
+    - roles/ondemandscanning.serviceAgent
+    - roles/ondemandscanning.viewer
+    - roles/osconfig.guestPolicyAdmin
+    - roles/osconfig.serviceAgent
+    - roles/osconfig.viewer
+    - roles/oslogin.admin
+    - roles/oslogin.serviceAgent
+    - roles/oslogin.viewer
+    - roles/policyanalyzer.admin
+    - roles/privateca.admin
+    - roles/privateca.viewer
+    - roles/pubsub.admin
+    - roles/pubsub.editor
+    - roles/pubsub.publisher
+    - roles/pubsub.subscriber
+    - roles/pubsub.viewer
+    - roles/redis.admin
+    - roles/redis.editor
+    - roles/redis.viewer
+    - roles/recommendedvminstancetest.runner
+    - roles/recommendationengine.admin
+    - roles/recommendationengine.editor
+    - roles/recommendationengine.viewer
+    - roles/resourcemanager.folderAdmin
+    - roles/resourcemanager.folderCreator
+    - roles/resourcemanager.folderDeleter
+    - roles/resourcemanager.folderEditor
+    - roles/resourcemanager.folderMover
+    - roles/resourcemanager.folderReader
+    - roles/resourcemanager.organizationAdmin
+    - roles/resourcemanager.projectCreator
+    - roles/resourcemanager.projectDeleter
+    - roles/resourcemanager.projectEditor
+    - roles/resourcemanager.projectIamAdmin
+    - roles/resourcemanager.projectMover
+    - roles/resourcemanager.projectDeleter
+    - roles/resourcemanager.projectRenamer
+    - roles/retail.admin
+    - roles/retail.viewer
+    - roles/rtc.admin
+    - roles/rtc.viewer
+    - roles/secretmanager.admin
+    - roles/secretmanager.secretAccessor
+    - roles/secretmanager.secretAdmin
+    - roles/secretmanager.secretVersionManager
+    - roles/securitycenter.admin
+    - roles/securitycenter.editor
+    - roles/securitycenter.viewer
+    - roles/securityscanner.admin
+    - roles/securityscanner.user
+    - roles/serverless.frameworkAdmin
+    - roles/serverless.serviceAgent
+    - roles/serverless.serviceAdmin
+    - roles/serverless.serviceDeveloper
+    - roles/serverless.serviceRunner
+    - roles/servicebroker.admin
+    - roles/servicebroker.consumer
+    - roles/serviceconsumermanagement.admin
+    - roles/serviceconsumermanagement.consumer
+    - roles/serviceconsumermanagement.quotaAdmin
+    - roles/serviceconsumermanagement.quotaViewer
+    - roles/servicemanagement.quotaAdmin
+    - roles/servicemanagement.quotaViewer
+    - roles/servicemanagement.serviceConfigAdmin
+    - roles/servicemanagement.serviceController

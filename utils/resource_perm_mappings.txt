@@ -1,0 +1,7 @@
+org,organization_actions_allowed
+project,project_actions_allowed
+folder,folder_actions_allowed
+bucket,storage_actions_allowed
+cloudfunction,function_actions_allowed
+computeinstance,compute_actions_allowed
+saaccounts,service_account_actions_allowed
