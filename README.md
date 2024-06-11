@@ -11,6 +11,14 @@ This tool is mainly for pentesters, those just learning GCP security, and securi
 * For those just learning GCP security, the tool is setup in such a way that it should be easy to add your own module via a Pull request as you dive into the individual service.
 * For security researchers, the tool allows you to run through a large number of GCP API calls and I document how to proxy the tool in the background through a local tool like Burp Suite. So running `enum_all` with burp suite logging all the requests will give you visibility into all the different API endpoints across all the different python libraries with one command. That's the hope at least, I got it partially working with env variables, if someone can finish cracking the code :)
 
+## Installation Support
+
+I tested GCPwn with the following installation setups. While its python which should theoretically work everywhere, I can't GURANTEE there are no bugs on windows/etc although happy to fix any that arise:
+
+**Supported OS**: Kali Linux 6.6.9
+
+**Python Version**: Python3 3.11.8
+
 ## Installation
 
 Ideally the tool will be in pip at some point. For now, it requires a git clone and a setup script. Once you start the tool it will ask you to create a workspace (a purely logical attempt at a container, you can pass in whatever name you want) and you should be good to go. setup.sh just installs gcloud at the command line and pip install the requirements.txt if you wanted to do those separately.
@@ -96,3 +104,10 @@ I will be watching issues/pulls for any cool new stuff, that being said I do hav
 
 ## Open Issues for Feature Requests/Bugs
 - Tool is robust when enumerating buckets while knowing the project_id, but missing ability to just check unauthenticated bucket.
+  
+## Credit
+
+Built on the shoulder of giants, credit for some code & ideas/research was inspired by:
+- Rhino Security (https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/)
+- GCPBucketBrute (https://github.com/RhinoSecurityLabs/GCPBucketBrute)
+- MUCH Google Documentation (https://cloud.google.com/python/docs/reference)
