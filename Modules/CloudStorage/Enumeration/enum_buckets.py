@@ -255,8 +255,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         if blob_list:
 
-            print(f"[***] GET Bucket Blobs")
-
             # time limit is per bucket
             if args.time_limit:
                 start_time = time.time()
@@ -266,9 +264,11 @@ def run_module(user_args, session, first_run = False, last_run = False):
                 # If blob is user supplied string, cast to blob object for later use
                 blob_name = blob.name
 
-                all_buckets[bucket_name].append(blob_name)
+                if bucket_name in all_buckets.keys() and len(all_buckets[bucket_name]) <= 10:
+                    all_buckets[bucket_name].append(blob_name)
 
                 if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
+                    print(f"[***] GET Bucket Blobs")
                     blob_meta = get_blob(bucket,blob_name, debug = debug)
                     if blob_meta:
                         save_blob(blob_meta, session)
@@ -276,7 +276,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
                     
                 if args.download:
-
+                    print(f"[***] DOWNLOAD Bucket Blobs")
                     if args.access_id and args.hmac_secret and blob_name[-1] != "/":
                         hmac_download_blob(storage_client,args.access_id, args.hmac_secret, bucket_name, blob_name,project_id, debug=debug, output_folder = OUTPUT_DIRECTORY)
                     else:
@@ -289,5 +289,5 @@ def run_module(user_args, session, first_run = False, last_run = False):
                             print(f"[-] Time limit of {time_limit} reached for download for bucket {bucket_name}")
                             break
 
-    UtilityTools.summary_wrapup(resource_top = "Buckets",resource_dictionary = all_buckets,project_id = project_id)
+    UtilityTools.summary_wrapup(resource_top = "Buckets (with up to 10 blobs shown each)",resource_dictionary = all_buckets,project_id = project_id)
     session.insert_actions(action_dict,project_id, column_name = "storage_actions_allowed")
