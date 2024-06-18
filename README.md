@@ -74,7 +74,7 @@ If you don't want to read through the wiki or need to run a module real quick, h
 modules run enum_all --iam
 # Longer: Run all enumeration modules + testIAM Permissions including ~9000 for projects/folder/org
 modules run enum_all --iam --all-permissions
-# Longer + Downloads: Run all enumeration modules + testIAM Permissions including ~9000 for projects/folder/org + download everyting
+# Longer + Downloads: Run all enumeration modules + testIAM Permissions including ~9000 for projects/folder/org + download everything
 modules run enum_all --iam --all-permissions --download
 ```
 **Take all IAM Policy Bindings from enum_all or other modules above and return a summary/vuln analysis**
