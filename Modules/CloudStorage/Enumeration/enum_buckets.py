@@ -1,4 +1,5 @@
 from Modules.CloudStorage.utils.util_helpers import *
+import sys
 
 def validate_args(args):
     if (args.blobs or args.blob_file) and not args.buckets:
@@ -46,7 +47,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     if args.output:
         OUTPUT_DIRECTORY = args.output 
     else:
-        OUTPUT_DIRECTORY = UtilityTools.get_save_filepath(session.workspace_name,"","Storage")
+        OUTPUT_DIRECTORY = UtilityTools.get_save_filepath(session.workspace_directory_name,"","Storage")
 
     # Ensure if a blob argument is supplied a bucket argument is also supplied
     if validate_args(args) == -1:
@@ -255,11 +256,20 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         if blob_list:
 
+            if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
+                print(f"[***] GET Bucket Blobs")
+            
+            if args.download:
+                print(f"[***] DOWNLOAD Bucket Blobs")
+
             # time limit is per bucket
             if args.time_limit:
                 start_time = time.time()
                 
-            for blob in blob_list:
+            if blob_list:
+                max_len = len(blob_list)
+
+            for index, blob in enumerate(blob_list):
                 
                 # If blob is user supplied string, cast to blob object for later use
                 blob_name = blob.name
@@ -268,7 +278,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
                     all_buckets[bucket_name].append(blob_name)
 
                 if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
-                    print(f"[***] GET Bucket Blobs")
                     blob_meta = get_blob(bucket,blob_name, debug = debug)
                     if blob_meta:
                         save_blob(blob_meta, session)
@@ -276,7 +285,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
                     
                 if args.download:
-                    print(f"[***] DOWNLOAD Bucket Blobs")
+                    
                     if args.access_id and args.hmac_secret and blob_name[-1] != "/":
                         hmac_download_blob(storage_client,args.access_id, args.hmac_secret, bucket_name, blob_name,project_id, debug=debug, output_folder = OUTPUT_DIRECTORY)
                     else:
@@ -288,6 +297,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
                         if elapsed_time > int(time_limit):
                             print(f"[-] Time limit of {time_limit} reached for download for bucket {bucket_name}")
                             break
+                # Print the counter
+                print(f"[***] Processed {index + 1} of {max_len} blobs", end='\r')
+                sys.stdout.flush()  # Ensure the print is updated in plac
 
     UtilityTools.summary_wrapup(resource_top = "Buckets (with up to 10 blobs shown each)",resource_dictionary = all_buckets,project_id = project_id)
     session.insert_actions(action_dict,project_id, column_name = "storage_actions_allowed")
