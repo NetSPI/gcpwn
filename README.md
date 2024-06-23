@@ -22,6 +22,7 @@ Review the wiki at https://github.com/NetSPI/gcpwn/wiki for:
 5. Research Head Scratchers: Research topics/open questions
 
 ## The TLDR
+fwd:cloudsec 2024: https://www.youtube.com/watch?v=opvv9h3Qe0s ("GCPwn: A Pentesting Tool For GCP - Scott Weston")
 
 If you already have the tool installed and want quick commands to run, then you can usually run the `enum_all` module followed by `creds info` to view newly enumerated permissions. The `process_iam_bindings` module will then give you a TXT/CSV summary of policy bindings if they can be enumerated, and `analyze_vulns` will try to flag bad roles/permissions. See the common flags below.
 
