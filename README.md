@@ -13,7 +13,7 @@ This tool is mainly for pentesters, those just learning GCP security, and securi
 
 ## Wiki Instructions
 
-Review the wiki at https://github.com/NetSPI/gcpwn/wiki for: 
+Review the wiki (In-Progress; Target date 6/30/2024) at https://github.com/NetSPI/gcpwn/wiki for: 
 1. Installation Instructions & Folder Setup: How to set up the tool for first-time use and default folders used
 2. Authentication Management & Tokeninfo: Load in user and/or service credentials to get creds setup
 3. Managing Projects & Retrieving Resource Data: How to manage Project IDs and how to retrieve enumerated data from SQLite tables.
