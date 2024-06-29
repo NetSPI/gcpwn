@@ -1,5 +1,5 @@
 from datetime import datetime
-import yaml, os
+import yaml, os, re
 
 
 class UtilityTools:
@@ -27,6 +27,18 @@ class UtilityTools:
 
     # Bold escape code
     BOLD = "\033[1m"
+
+    @staticmethod
+    ########### Formatting Check
+    def validate_input_format(resource_list, sections):
+
+        pattern = r'^' + r'/'.join([r'[^/]+' for _ in range(sections)]) + r'$'
+        
+        for key in resource_list:
+            if not re.match(pattern, key):
+                return -1, key
+        
+        return 0, None  # All keys are valid
 
     @staticmethod
     def get_save_filepath(workspace_name, file_name, key_to_get):
