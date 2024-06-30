@@ -24,7 +24,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
     # for summary
     resources_to_print = set([])
 
-    print(f"[*] Checking {project_id} for HMAC keys...")
 
     if args.access_keys or args.access_keys_file:
 
@@ -65,6 +64,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
             hmac_list_project.setdefault(project_id, []).extend(hmac_list_output)
         else:
             hmac_list_project = None
+
+    print(f"[*] Checking {hmac_project_id} for HMAC keys...")
+
 
     if hmac_list_project:  
 
