@@ -35,8 +35,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     parser.add_argument("--access-id", type=str,  help="Access ID for HMAC key to use in Request")
     parser.add_argument("--hmac-secret", type=str,  help="HMAC Secret to use when making API call")
+    
     parser.add_argument("--list-hmac-secrets",required=False, action="store_true", help="Good regex to match for downloading files")
-
     parser.add_argument("--validate-buckets", required=False,action="store_true", help="Specify file path with list of blobs")
 
     # Debug/non-module specific

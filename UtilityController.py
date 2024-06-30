@@ -30,15 +30,29 @@ class UtilityTools:
 
     @staticmethod
     ########### Formatting Check
-    def validate_input_format(resource_list, sections):
+    def validate_input_format(resource, sections):
 
         pattern = r'^' + r'/'.join([r'[^/]+' for _ in range(sections)]) + r'$'
+
+        if type(resource) == list:        
+            for key in resource:
+                if not re.match(pattern, key):
+                    return -1, key
+        else:
+            if not re.match(pattern, resource):
+                return -1, resource       
         
-        for key in resource_list:
-            if not re.match(pattern, key):
-                return -1, key
-        
-        return 0, None  # All keys are valid
+        return 0, None 
+
+    ########### Formatting Check
+    def validate_user_format(member):
+
+        pattern = r'^(user:|serviceaccount:)[^\[\]]+$'
+        regex = re.compile(pattern, re.IGNORECASE)
+        if not regex.match(member):
+            return -1, member
+
+        return 0, None 
 
     @staticmethod
     def get_save_filepath(workspace_name, file_name, key_to_get):

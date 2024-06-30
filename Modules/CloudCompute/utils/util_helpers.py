@@ -645,44 +645,63 @@ def add_metadata(
 def add_instance_iam_member(instance_client, instance_name, project_id, zone, member, action_dict, brute = False, role = None, debug=False):
     
     additional_bind = {"role": role, "members": [member]}
-   
-    print(f"[*] Adding {member} to {instance_name}")
-    policy = instance_get_iam_policy(instance_client, instance_name, project_id, zone, debug=debug)
     policy_dict = {}
 
-    if policy:
-        # Just assume v1 till I can get a better method
-        action_dict.setdefault(project_id, {}).setdefault("compute.instances.getIamPolicy", {}).setdefault("instances", set()).add(instance_name)
-        policy_dict["bindings"] = list(policy.bindings)
+    if brute:
+        print(f"[*] Overwiting {instance_name} to just be {member}")
+
+        policy_dict["bindings"] = []
         policy_dict["bindings"].append(additional_bind)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
+        policy_dict["version"] = 1
         policy = policy_dict
-   
-        bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {instance_name} \n{bindings}")
 
     else:
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {instance_name}.")
-            policy_dict["bindings"] = []
-            policy_dict["bindings"].append(additional_bind)
 
-            policy_dict["version"] = 1
-            print(f"[*] New policy below being added to {instance_name} \n{additional_bind}")
-            policy = policy_dict
+        print(f"[*] Fetching current policy for {instance_name}...")
+        policy = instance_get_iam_policy(instance_client, instance_name, project_id, zone, debug=debug)
+    
+        if policy:
+
+            if policy == 404:
+
+                print(f"{UtilityTools.RED}[X] Exiting the module as {instance_name} does not exist. Double check the name.{UtilityTools.RESET}")
+                return -1
+
+            else:
+
+                action_dict.setdefault(project_id, {}).setdefault("compute.instances.getIamPolicy", {}).setdefault("instances", set()).add(instance_name)
+                
+                policy_dict["bindings"] = list(policy.bindings)
+                policy_dict["bindings"].append(additional_bind)
+                policy_dict["etag"] = policy.etag
+                policy_dict["version"] = policy.version
+                policy = policy_dict
+        
         else:
-
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire bucket IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
             return -1
 
-    status = instance_set_iam_policy(instance_client, instance_name, project_id, zone, policy, debug=debug)
-    if status:
-        action_dict.setdefault(project_id, {}).setdefault("compute.instances.setIamPolicy", {}).setdefault("instances", set()).add(instance_name)
-    
-    return status
+    if policy != None:
+        policy_bindings = policy_dict["bindings"]
+        print(f"[*] New policy below being added to {instance_name} \n{policy_bindings}")
 
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
+
+
+    status = instance_set_iam_policy(instance_client, instance_name, project_id, zone, policy, debug=debug)
+    
+    if status:
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {function_name} does not exist. Double check the name. Note the gs:// prefix is not included{UtilityTools.RESET}")
+            return -1
+
+        else:
+            action_dict.setdefault(project_id, {}).setdefault("compute.instances.setIamPolicy", {}).setdefault("instances", set()).add(instance_name)
+
+    return status
+    
 
 def instance_get_serial(instance_client, instance_name, project_id, zone_id, workspace_name, output = None,  debug = False):
 
@@ -826,9 +845,8 @@ def list_aggregated_instances(instances_client, project_id, debug=False):
         return None
 
     except NotFound as e:
-
-        if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
+        if "was not found" in str(e) and f"{project_id}" in str(e):
+            print(f"{UtilityTools.RED}[X] 404: {project_id} does not appear to exist.{UtilityTools.RESET}")
             
         return None
     except Exception as e:

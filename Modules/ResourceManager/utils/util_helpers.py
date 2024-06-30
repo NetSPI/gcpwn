@@ -20,129 +20,184 @@ from google.api_core.exceptions import BadRequest
 
 def add_project_iam_member(project_client, project_name, member, action_dict, brute = False, role = None, debug=False):
     
-    additional_bind = {"role": role, "members": [member]}
-   
-    print(f"[*] Adding {member} to {project_name}")
-    policy = project_get_iam_policy(project_client, project_name, debug=debug)
     policy_dict = {}
+    additional_bind = {"role": role, "members": [member]}
 
-    if policy:
-        # Just assume v1 till I can get a better method
-        action_dict.setdefault("project_permissions", {}).setdefault(project_name, set()).add("resourcemanager.projects.getIamPolicy")
-        policy_dict["bindings"] = list(policy.bindings)
+    if brute:
+        print(f"[*] Overwiting {project_name} to just be {member}")
+        policy_dict["bindings"] = []
         policy_dict["bindings"].append(additional_bind)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
+        policy_dict["version"] = 1
         policy = policy_dict
-   
-        bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {project_name} \n{bindings}")
+
 
     else:
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {project_name}.")
-            policy_dict["bindings"] = []
-            policy_dict["bindings"].append(additional_bind)
 
-            policy_dict["version"] = 1
-            print(f"[*] New policy below being added to {project_name} \n{additional_bind}")
-            policy = policy_dict
+        print(f"[*] Fetching current policy for {project_name}...")
+        policy = project_get_iam_policy(project_client, project_name, debug=debug)
+
+        if policy:
+
+            if policy == 404:
+
+                print(f"{UtilityTools.RED}[X] Exiting the module as {project_name} does not exist. Double check the name. {UtilityTools.RESET}")
+                return -1
+
+            else:
+
+                action_dict.setdefault("project_permissions", {}).setdefault(project_name, set()).add("resourcemanager.projects.getIamPolicy")
+                policy_dict["bindings"] = list(policy.bindings)
+                policy_dict["bindings"].append(additional_bind)
+                policy_dict["etag"] = policy.etag
+                policy_dict["version"] = policy.version
+                policy = policy_dict
+
         else:
-
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire folder IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
             return -1
+
+    if policy != None:
+        policy_bindings = policy_dict["bindings"]
+        print(f"[*] New policy below being added to {project_name} \n{policy_bindings}")
+
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
+
 
     status = project_set_iam_policy(project_client, project_name, policy, debug=debug)
     if status:
-        action_dict.setdefault("project_permissions", {}).setdefault(project_name, set()).add("resourcemanager.projects.setIamPolicy")
+        
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {project_name} does not exist. Double check the name. {UtilityTools.RESET}")
+            return -1
+
+        else:
+            action_dict.setdefault("folder_permissions", {}).setdefault(project_name, set()).add("resourcemanager.folders.setIamPolicy")
     
     return status
 
 def add_folder_iam_member(folder_client, folder_name, member, action_dict, brute = False, role = None, debug=False):
     
+    policy_dict = {}
     additional_bind = {"role": role, "members": [member]}
    
-    print(f"[*] Adding {member} to {folder_name}")
-    policy = folder_get_iam_policy(folder_client, folder_name, debug=debug)
-    policy_dict = {}
-
-    if policy:
-        # Just assume v1 till I can get a better method
-        action_dict.setdefault("folder_permissions", {}).setdefault(folder_name, set()).add("resourcemanager.folders.getIamPolicy")
-        policy_dict["bindings"] = list(policy.bindings)
+    if brute:
+        print(f"[*] Overwiting {folder_name} to just be {member}")
+        policy_dict["bindings"] = []
         policy_dict["bindings"].append(additional_bind)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
+
+        policy_dict["version"] = 1
         policy = policy_dict
-   
-        bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {folder_name} \n{bindings}")
+
 
     else:
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {folder_name}.")
-            policy_dict["bindings"] = []
-            policy_dict["bindings"].append(additional_bind)
 
-            policy_dict["version"] = 1
-            print(f"[*] New policy below being added to {folder_name} \n{additional_bind}")
-            policy = policy_dict
+        print(f"[*] Fetching current policy for {folder_name}...")
+        policy = folder_get_iam_policy(folder_client, folder_name, debug=debug)
+
+        if policy:
+
+            if policy == 404:
+
+                print(f"{UtilityTools.RED}[X] Exiting the module as {folder_name} does not exist. Double check the name. {UtilityTools.RESET}")
+                return -1
+
+            else:
+
+                # Just assume v1 till I can get a better method
+                action_dict.setdefault("folder_permissions", {}).setdefault(folder_name, set()).add("resourcemanager.folders.getIamPolicy")
+                policy_dict["bindings"] = list(policy.bindings)
+                policy_dict["bindings"].append(additional_bind)
+                policy_dict["etag"] = policy.etag
+                policy_dict["version"] = policy.version
+                policy = policy_dict
+        
         else:
-
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire folder IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
             return -1
+
+    if policy != None:
+        policy_bindings = policy_dict["bindings"]
+        print(f"[*] New policy below being added to {folder_name} \n{policy}")
+
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
 
     status = folder_set_iam_policy(folder_client, folder_name, policy, debug=debug)
     if status:
-        action_dict.setdefault("folder_permissions", {}).setdefault(folder_name, set()).add("resourcemanager.folders.setIamPolicy")
-    
-    return status
-
-
-
-# TODO manually make policy if needed (dont have getIampermissions for example)
-def add_organization_iam_member(organization_client, organization_name, member, action_dict, brute = False, role = None, debug=False):
-    
-    additional_bind = {"role": role, "members": [member]}
-   
-    print(f"[*] Adding {member} to {organization_name}")
-    policy = organization_get_iam_policy(organization_client, organization_name, debug=debug)
-    policy_dict = {}
-
-    if policy:
-        # Just assume v1 till I can get a better method
-        action_dict.setdefault("organization_permissions", {}).setdefault(organization_name, set()).add("resourcemanager.organizations.getIamPolicy")
-        policy_dict["bindings"] = list(policy.bindings)
-        policy_dict["bindings"].append(additional_bind)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
-        policy = policy_dict
-   
-        bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {organization_name} \n{bindings}")
-
-    else:
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {organization_name}.")
-            policy_dict["bindings"] = []
-            policy_dict["bindings"].append(additional_bind)
-
-            policy_dict["version"] = 1
-            print(f"[*] New policy below being added to {organization_name} \n{additional_bind}")
-            policy = policy_dict
-        else:
-
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
+        
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {folder_name} does not exist. Double check the name. {UtilityTools.RESET}")
             return -1
 
-    status = organization_set_iam_policy(organization_client, organization_name, policy, debug=debug)
-    if status:
-        action_dict.setdefault("organization_permissions", {}).setdefault(organization_name, set()).add("resourcemanager.organizations.setIamPolicy")
+        else:
+            action_dict.setdefault("folder_permissions", {}).setdefault(folder_name, set()).add("resourcemanager.folders.setIamPolicy")
     
     return status
+
+
+def add_organization_iam_member(organization_client, organization_name, member, action_dict, brute = False, role = None, debug=False):
+    
+    policy_dict = {}
+    additional_bind = {"role": role, "members": [member]}
+   
+    if brute:
+        print(f"[-] Could not call get_iam_policy for {organization_name}.")
+        policy_dict["bindings"] = []
+        policy_dict["bindings"].append(additional_bind)
+
+        policy_dict["version"] = 1
+        policy = policy_dict
+
+    else:
+
+        print(f"[*] Fetching current policy for {organization_name}...")
+        policy = organization_get_iam_policy(organization_client, organization_name, debug=debug)
+
+        if policy:
+
+            if policy == 404:
+
+                print(f"{UtilityTools.RED}[X] Exiting the module as {organization_name} does not exist. Double check the name. {UtilityTools.RESET}")
+                return -1
+
+            else:
+
+                # Just assume v1 till I can get a better method
+                action_dict.setdefault("organization_permissions", {}).setdefault(organization_name, set()).add("resourcemanager.organizations.getIamPolicy")
+                policy_dict["bindings"] = list(policy.bindings)
+                policy_dict["bindings"].append(additional_bind)
+                policy_dict["etag"] = policy.etag
+                policy_dict["version"] = policy.version
+                policy = policy_dict
+        
+        else:
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire organization IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
+            return -1
+
+    if policy != None:
+        policy_bindings = policy_dict["bindings"]
+        print(f"[*] New policy below being added to {organization_name} \n{policy}")
+
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
+
+    status = organization_set_iam_policy(organization_client, organization_name, policy, debug=debug)
+
+    if status:
+        
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {organization_name} does not exist. Double check the name. {UtilityTools.RESET}")
+            return -1
+
+        else:
+            action_dict.setdefault("organization_permissions", {}).setdefault(organization_name, set()).add("resourcemanager.organizations.setIamPolicy")
+    
+    return status
+
 
 def check_project_permissions(authenticated_project_client, project_name, permissions, authenticated = True, debug = False):
     

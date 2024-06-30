@@ -874,36 +874,49 @@ def add_bucket_iam_member(
         debug: Optional[bool] =False
     ):
 
-    additional_bind = {"role": role, "members": [member]}
+    policy, additional_bind = None, {"role": role, "members": [member]}
    
-    print(f"[*] Adding {member} to {bucket_name}")
-    policy = bucket_get_iam_policy(storage_client, bucket_name, debug=debug)
+    if brute:
+        print(f"[*] Overwiting {bucket_name} to just be {member}")
 
-    if policy:
-        action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.getIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
-        policy.bindings.append(additional_bind)
-        print(f"[*] New policy below being added to {bucket_name} \n{policy.bindings}")
+        policy = Policy()
+        policy.bindings = [additional_bind]
+        policy.version = 3
 
     else:
 
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {bucket_name}.")
-            
-            policy = Policy()
-            additional_bind = [{"role": role, "members": [member]}]
-            policy.bindings = additional_bind
-            policy.version = 3
+        print(f"[*] Fetching current policy for {bucket_name}...")
+        policy = bucket_get_iam_policy(storage_client, bucket_name, debug=debug)
 
-            print(f"[*] New policy below being added to {bucket_name} \n{policy.bindings}")
-        
+        if policy:
+
+            if policy == 404:
+                print(f"{UtilityTools.RED}[X] Exiting the module as {bucket_name} does not exist. Double check the name. Note the gs:// prefix is not included{UtilityTools.RESET}")
+                return -1
+
+            else:
+                action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.getIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
+                policy.bindings.append(additional_bind)
         else:
-
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire bucket IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
             return -1
+
+    if policy != None:
+
+        print(f"[*] New policy below being added to {bucket_name} \n{policy.bindings}")
+
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
+
     status = bucket_set_iam_policy(storage_client, bucket_name, policy, debug=debug)
+
     if status:
-        action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.setIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {bucket_name} does not exist. Double check the name. Note the gs:// prefix is not included{UtilityTools.RESET}")
+            return -1
+        else:
+            action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.setIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
     
     return status
 

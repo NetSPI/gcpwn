@@ -172,7 +172,7 @@ def save_function(function: Union[CloudFunction, Function], session: SessionUtil
     if function.service_config.timeout_seconds: service_config["timeout_seconds"] = function.service_config.timeout_seconds
     if function.service_config.available_memory: service_config["available_memory"] = function.service_config.available_memory
     if function.service_config.available_cpu: service_config["available_cpu"] = function.service_config.available_cpu
-    if function.service_config.environment_variables: service_config["environment_variables"] = function.service_config.environment_variables
+    if function.service_config.environment_variables: service_config["environment_variables"] = dict(function.service_config.environment_variables)
     if function.service_config.max_instance_count: service_config["max_instance_count"] = function.service_config.max_instance_count
     if function.service_config.min_instance_count: service_config["min_instance_count"] = function.service_config.min_instance_count
     if function.service_config.vpc_connector: service_config["vpc_connector"] = function.service_config.vpc_connector
@@ -186,7 +186,6 @@ def save_function(function: Union[CloudFunction, Function], session: SessionUtil
     if function.service_config.max_instance_request_concurrency: service_config["max_instance_request_concurrency"] = function.service_config.max_instance_request_concurrency
     if function.service_config.security_level: service_config["security_level"] = function.service_config.security_level
     
-
     save_data["service_config"] = json.dumps(service_config)
 
     # google.cloud.functions_v2.types.EventTrigger: google.cloud.functions_v2.types.EventTrigger
@@ -217,53 +216,66 @@ def add_function_iam_member(
     ) -> Union[Policy, None]:
     
     project_id = function_name.split("/")[1]
+    policy_dict = {}
     additional_bind = {"role": role, "members": [member]}
    
-    print(f"[*] Adding {member} to {function_name}")
-    policy = cloudfunction_get_iam_policy(function_client, function_name, debug=debug)
-    policy_dict = {}
+    if brute:
 
-    if policy:
-        if env_version == 1:
-            action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v1", set()).add(function_name)
+        print(f"[*] Overwiting {function_name} to just be {member}")
 
-        else:
-            action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v2", set()).add(function_name)
-
-
-        policy_dict["bindings"] = list(policy.bindings)
+        policy_dict["bindings"] = []
         policy_dict["bindings"].append(additional_bind)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
+        policy_dict["version"] = 1
         policy = policy_dict
-   
-        bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {function_name} \n{bindings}")
 
     else:
-        # Could not retrieve policy to append, rewrite entire policy?
-        if brute:
-            print(f"[-] Could not call get_iam_policy for {function_name}.")
-            policy_dict["bindings"] = []
-            policy_dict["bindings"].append(additional_bind)
 
-            policy_dict["version"] = 1
-            print(f"[*] New policy below being added to {function_name} \n{additional_bind}")
-            policy = policy_dict
-            
+        print(f"[*] Fetching current policy for {function_name}...")
+        policy = cloudfunction_get_iam_policy(function_client, function_name, debug=debug)
+        if policy:
+
+            if policy == 404:
+
+                print(f"{UtilityTools.RED}[X] Exiting the module as {function_name} does not exist. Double check the name.{UtilityTools.RESET}")
+                return -1
+
+            else:
+
+                if env_version == 1:
+                    action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v1", set()).add(function_name)
+                else:
+                    action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v2", set()).add(function_name)
+
+                policy_dict["bindings"] = list(policy.bindings)
+                policy_dict["bindings"].append(additional_bind)
+                policy_dict["etag"] = policy.etag
+                policy_dict["version"] = policy.version
+                policy = policy_dict
+                
         else:
+            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire bucket IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
+            return -1
 
-            print(f"[X] Exiting the module as we cannot append binding to existing bindings. Supply --brute to OVERWRITE (as opposed to append) IAM policy of the bucket to just your member and role")
-            return None
+    if policy != None:
+        policy_bindings = policy_dict["bindings"]
+        print(f"[*] New policy below being added to {function_name} \n{policy_bindings}")
+
+    else:
+        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
+        return -1
 
     status = cloudfunction_set_iam_policy(function_client, function_name, policy, debug=debug)
     if status:
-
-        if env_version == 1:
-            action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.setIamPolicy", {}).setdefault("functions_v1", set()).add(function_name)
+        if status == 404:
+            print(f"{UtilityTools.RED}[X] Exiting the module as {function_name} does not exist. Double check the name. Note the gs:// prefix is not included{UtilityTools.RESET}")
+            return -1
 
         else:
-            action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.setIamPolicy", {}).setdefault("functions_v2", set()).add(function_name)
+            if env_version == 1:
+                action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.setIamPolicy", {}).setdefault("functions_v1", set()).add(function_name)
+
+            else:
+                action_dict.setdefault(project_id, {}).setdefault("cloudfunctions.functions.setIamPolicy", {}).setdefault("functions_v2", set()).add(function_name)
 
     return status
 

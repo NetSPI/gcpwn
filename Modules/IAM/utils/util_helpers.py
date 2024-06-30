@@ -319,6 +319,11 @@ def organization_set_iam_policy(organization_client, organization_name, policy, 
         )
         organization_iam_policy = organization_client.set_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Organization {organization_name} does not exist.")
+
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.organizations.setIamPolicy" in str(e):
@@ -351,7 +356,11 @@ def folder_set_iam_policy(folder_client, folder_name, policy, debug = False):
 
         folder_iam_policy = folder_client.set_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Folder {folder_name} does not exist.")
 
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.folders.setIamPolicy" in str(e):
@@ -385,12 +394,16 @@ def project_set_iam_policy(project_client, project_name, policy, debug = False):
 
         project_iam_policy = project_client.set_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Project {project_name} does not exist.")
+
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.projects.setIamPolicy" in str(e):
             print(f"[X] 403: The user does not have resourcemanager.projects.setIamPolicy permissions")
 
-    # TODO note error can bethrow inf user already has role via direct OR Inheritance so catch that
     except Exception as e:
         print(f"The resourcemanager.projects.setIamPolicy operation failed for unexpected reasons. See below:")
         print(str(e))
@@ -418,6 +431,11 @@ def project_get_iam_policy(project_client, project_name, debug = False):
 
         project_iam_policy = project_client.get_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Project {project_name} does not exist.")
+
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.projects.getIamPolicy" in str(e):
@@ -437,19 +455,23 @@ def project_get_iam_policy(project_client, project_name, debug = False):
 def folder_get_iam_policy(folder_client, folder_name, debug = False):
 
     if debug:
-        print(f"[DEBUG] Getting IAM bindings for {organization_name} ...")
+        print(f"[DEBUG] Getting IAM bindings for {folder_name} ...")
    
     folder_iam_policy = None
 
     try:
-
 
         request = iam_policy_pb2.GetIamPolicyRequest(
             resource=folder_name
         )
 
         folder_iam_policy = folder_client.get_iam_policy(request=request)
+    
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Folder {folder_name} does not exist.")
 
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.folders.getIamPolicy" in str(e):
@@ -475,17 +497,24 @@ def organization_get_iam_policy(organization_client, organization_name, debug = 
 
     try:
 
-
         request = iam_policy_pb2.GetIamPolicyRequest(
             resource=organization_name
         )
 
         organization_iam_policy = organization_client.get_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Organization {organization_name} does not exist.")
+
+        return 404
 
     except Forbidden as e:
         if "does not have resourcemanager.organizations.getIamPolicy" in str(e):
             print(f"[X] 403: The user does not have resourcemanager.organizations.getIamPolicy permissions")
+        elif "denied on resource" in str(e) and "(or it may not exist)" in str(e):
+            print(f"[X] 403: The user does not have permissions on this organization (or it may not exist)")
+
 
     except Exception as e:
         print(f"The resourcemanager.organizations.getIamPolicy operation failed for unexpected reasons. See below:")
@@ -518,6 +547,12 @@ def instance_set_iam_policy(instance_client, instance_name, project_id, zone_id,
         
         instances_iam_policy = instance_client.set_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Instance {instance_name} does not exist.")
+
+        return 404
+
     except Forbidden as e:
         if "does not have compute.instances.setIamPolicy" in str(e):
             print(f"[X] 403: The user does not have cloudfunctions.functions.getIamPolicy permissions")
@@ -548,6 +583,12 @@ def instance_get_iam_policy(instance_client, instance_name, project_id, zone_id,
         # Make the request
         instances_iam_policy = instance_client.get_iam_policy(request=request)
 
+    except NotFound as e:
+        if "404" in str(e) and "does not exist" in str(e):
+            print(f"[X] 404: Instance {instance_name} does not exist.")
+
+        return 404
+
     except Forbidden as e:
         if "does not have compute.instances.getIamPolicy" in str(e):
             print(f"[X] 403: The user does not have compute.instances.getIamPolicy permissions")
@@ -572,9 +613,17 @@ def bucket_set_iam_policy(storage_client, bucket_name, policy, debug = False):
         bucket_object  = storage_client.bucket(bucket_name)
         status = bucket_object.set_iam_policy(policy)
     
+    except NotFound as e:
+        
+        if "404" in str(e) and "The specified bucket does not exist" in str(e):
+            print(f"[X] 404: Bucket {bucket_name} does not exist.")
+        
+        return 404
+
     except Forbidden as e:
         print("[X] User is not allowed to call storage.buckets.setIamPolicy on existing bucket.")
     
+
     except Exception as e:
         print("[X] The buckets set IAM policy has failed for uknonw reasons shown below:")
         print(str(e))
@@ -593,9 +642,17 @@ def bucket_get_iam_policy(storage_client, bucket_name, debug = False):
         bucket_object  = storage_client.bucket(bucket_name)
         bucket_iam_policy = bucket_object.get_iam_policy()
 
+    except NotFound as e:
+
+        if "404" in str(e) and "The specified bucket does not exist" in str(e):
+            print(f"[X] 404: Bucket {bucket_name} does not exist.")
+
+        return 404
+
     except Forbidden as e:
         if "does not have storage.buckets.getIamPolicy" in str(e):
             print(f"[X] 403: The user does not have storage.buckets.getIamPolicy permissions")
+
 
     except Exception as e:
         print(f"The storage.buckets.getIamPolicy operation failed for unexpected reasons. See below:")
@@ -621,6 +678,12 @@ def cloudfunction_set_iam_policy(function_client, function_name, policy, debug =
             policy=policy
         )
         functions_iam_policy = function_client.set_iam_policy(request=request)
+
+    except NotFound as e:
+        if "404" in str(e) and "was not found" in str(e):
+            print(f"[X] 404: Function {function_name} does not exist.")
+
+        return 404
 
     except Forbidden as e:
         if "does not have cloudfunctions.functions.setIamPolicy" in str(e):
@@ -649,7 +712,11 @@ def cloudfunction_get_iam_policy(function_client, function_name, debug = False):
             resource=function_name
         )
         functions_iam_policy = function_client.get_iam_policy(request=request)
+    except NotFound as e:
+        if "404" in str(e) and "The specified bucket does not exist" in str(e):
+            print(f"[X] 404: Bucket {bucket_name} does not exist.")
 
+        return 404
     except Forbidden as e:
         if "does not have cloudfunctions.functions.getIamPolicy" in str(e):
             print(f"[X] 403: The user does not have cloudfunctions.functions.getIamPolicy permissions")
@@ -681,6 +748,7 @@ def compute_instance_get_iam_policy(instance_client, project_id, instance_name, 
 
         # Make the request
         instances_iam_policy = instance_client.get_iam_policy(request=request)
+
 
     except Forbidden as e:
         if "does not have compute.instances.getIamPolicy" in str(e):

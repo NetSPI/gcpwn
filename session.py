@@ -760,16 +760,23 @@ class SessionUtility:
             return chosen_role
 
         suggested_roles.append("Different Role")
+        
         role_choice = self.choice_selector(suggested_roles,f"A list of roles are supplied below. Choose one or enter your own:")
+        
         if not role_choice:
             return None
 
         if role_choice == "Different Role":
             return self.choice_prompt("Provide the role name to attach in the format roles/role_name: ")
 
-        if role_choice and "(Default)" in role_choice:
-
-            return role_choice.split()[0] 
+        if role_choice:
+            
+            if "(Default)" in role_choice:
+            
+                return role_choice.split()[0] 
+                
+            else:
+                return role_choice
         
         else:
 
