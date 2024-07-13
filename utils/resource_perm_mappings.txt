@@ -5,3 +5,4 @@ bucket,storage_actions_allowed
 cloudfunction,function_actions_allowed
 computeinstance,compute_actions_allowed
 saaccounts,service_account_actions_allowed
+secrets,secret_actions_allowed

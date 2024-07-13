@@ -801,7 +801,6 @@ class DataController:
             return data
 
     def insert_actions(self, workspace_id, credname, permission_record, project_id=None, column_name=None):
-       
         row_exists = True
 
         try:

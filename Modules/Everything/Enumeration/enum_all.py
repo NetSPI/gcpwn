@@ -29,12 +29,13 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data returned")
     
-    parser.add_argument("--resource-manager", action="store_true", help="Do resource mananger modules")
-    parser.add_argument("--cloud-compute", action="store_true", help="Do cloud compute modules")
-    parser.add_argument("--cloud-functions", action="store_true", help="Do cloud functions modules")
-    parser.add_argument("--cloud-storage", action="store_true", help="Do cloud storage modules")
-    parser.add_argument("--cloud-iam", action="store_true", help="Do IAM modules")
-    
+    parser.add_argument("--resource-manager", action="store_true", help="Execute resource mananger modules")
+    parser.add_argument("--cloud-compute", action="store_true", help="Execute cloud compute modules")
+    parser.add_argument("--cloud-functions", action="store_true", help="Execute cloud functions modules")
+    parser.add_argument("--cloud-storage", action="store_true", help="Execute cloud storage modules")
+    parser.add_argument("--cloud-iam", action="store_true", help="Execute IAM modules")
+    parser.add_argument("--cloud-secretsmanager", action="store_true", help="Execute secrets manager modules")
+
 
     args = parser.parse_args(user_args)
 
@@ -153,6 +154,17 @@ def run_module(user_args, session, first_run = False, last_run = False):
             user_args = user_args + ["--iam"]
 
         run_other_module(session, user_args, "Modules.CloudStorage.Enumeration.enum_buckets")
+
+    if args.cloud_secretsmanager or every_flag_missing:
+        print("[*] Beginning Enumeration of SECRETS MANAGER Resources...")
+        if args.download:
+            user_args.extend(["--download"])
+
+        if args.iam:
+            user_args = user_args + ["--iam"]
+
+        run_other_module(session, user_args, "Modules.SecretsManager.Enumeration.enum_secrets")
+
 
     if args.cloud_iam or every_flag_missing:
         # IAM

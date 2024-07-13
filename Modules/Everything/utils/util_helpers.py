@@ -166,8 +166,11 @@ def generate_summary_of_permission_vulns(
                         }.get(resource_key, "")
                         
                         section_content = ""
+                        
+                        asset_names = sorted(gen_perms.keys())
 
-                        for asset_name, permission_list in gen_perms.items():
+                        for asset_name in asset_names:
+                            permission_list = gen_perms[asset_name]
                             asset_content = f"  - {asset_name}\n"
                             for permission in sorted(permission_list):
                                 asset_content += (
@@ -180,17 +183,21 @@ def generate_summary_of_permission_vulns(
                         if section_content:
                             formatted_string += f"- {base_permissions} Permissions\n{section_content}"
                     else:
-                        # TODO Make title better
                         header = f"- {resource_key.replace('_', ' ').title()} Permissions\n"
                         section_content = ""
 
                         for project_id, permission_list in gen_perms.items():
                             project_asset_string = ""
                             for permission_name, asset_descriptions in permission_list.items():
-                                permissions_asset_string = "".join(
-                                    f"      - {asset_name} ({asset_type})\n"
+                                # Collect asset names and sort them alphabetically
+                                sorted_assets = sorted(
+                                    (asset_name, asset_type)
                                     for asset_type, asset_list in asset_descriptions.items()
                                     for asset_name in asset_list if asset_list
+                                )
+                                permissions_asset_string = "".join(
+                                    f"      - {asset_name} ({asset_type})\n"
+                                    for asset_name, asset_type in sorted_assets
                                 )
                                 if permissions_asset_string:
                                     project_asset_string += (
@@ -652,6 +659,7 @@ def generate_summary_of_roles_or_vulns(
         "cloudfunction": "Cloud Function Summary\n",
         "computeinstance": "Cloud Compute Summary\n",
         "saaccounts": "Service Accounts Summary\n",
+        "secrets": "Secret Manager Summary\n",
     }
 
     for asset_type, all_assets in roles_and_assets.items():

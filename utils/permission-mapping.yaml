@@ -781,3 +781,16 @@
     - roles/servicemanagement.quotaViewer
     - roles/servicemanagement.serviceConfigAdmin
     - roles/servicemanagement.serviceController
+
+- "id": ["15"]
+  "main_permission": "15"
+  "issue": "Access SecretsManager Data"
+  "permission": "secretmanager.versions.access"
+  "alternate": "None"
+  "module_exists": False
+  "description": "You can list and get the secret entities and their versions, but versions.access is what gives you access to the actual secret values"
+  "instructions": "Run `modules run enum_secrets [--download]` if supported."
+  "roles":
+    - roles/owner
+    - roles/secretmanager.admin
+    - roles/secretmanager.secretAccessor

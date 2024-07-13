@@ -150,6 +150,20 @@ resource_manager_modules:
     author: "Scott (@WebbinRoot)"
     location: "Modules.ResourceManager.Exploit.exploit_project_setiampolicy"
 
+secrets_modules:
+  - module_name: "enum_secrets"
+    module_category: "Enumeration"
+    info_blurb: "Enumerate all secret names, secret versions, and potentially secret values depending on permissions."
+    version: "1 - 07/08/2024"
+    author: "Scott (@WebbinRoot)"
+    location: "Modules.SecretsManager.Enumeration.enum_secrets"
+  - module_name: "exploit_secrets_setiampolicy"
+    module_category: "Exploit"
+    info_blurb: "Set the IAM policy for the secrets."
+    version: "1 - 07/13/2024"
+    author: "Scott (@WebbinRoot)"
+    location: "Modules.SecretsManager.Exploit.exploit_secrets_setiampolicy"
+
 iam_modules:
   - module_name: "enum_policy_bindings"
     module_category: "Enumeration"

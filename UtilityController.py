@@ -59,6 +59,7 @@ class UtilityTools:
    
         system_paths = {
             "Storage": f"GatheredData/{workspace_name}/Storage/{file_name}",
+            "Secrets": f"GatheredData/{workspace_name}/SecretManager/{file_name}",
             "Compute Base": f"GatheredData/{workspace_name}/Compute/{file_name}",
             "Compute Serial": f"GatheredData/{workspace_name}/Compute/Serial/{file_name}",
             "Compute Screenshots": f"GatheredData/{workspace_name}/Compute/Screenshots/{file_name}",

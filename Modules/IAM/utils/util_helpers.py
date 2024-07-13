@@ -1,5 +1,5 @@
 import argparse, json, importlib
-from google.cloud import iam_admin_v1, iam_credentials_v1, compute_v1, functions_v2, storage, resourcemanager_v3
+from google.cloud import iam_admin_v1, iam_credentials_v1, compute_v1, functions_v2, storage, resourcemanager_v3, secretmanager_v1
 from google.iam.v1 import iam_policy_pb2 
 from UtilityController import *
 import os
@@ -663,6 +663,83 @@ def bucket_get_iam_policy(storage_client, bucket_name, debug = False):
         print(f"[DEBUG] Successfully completed buckets getIamPolicy ..")
 
     return bucket_iam_policy
+
+
+
+
+
+def secret_set_iam_policy(secret_client, secret_name, policy, debug = False):
+
+    if debug:
+        print(f"[DEBUG] Setting IAM bindings for {secret_name} ...")
+   
+    secret_iam_policy = None
+
+    try:
+
+        request = iam_policy_pb2.SetIamPolicyRequest(
+            resource=secret_name,
+            policy=policy
+        )
+        secret_iam_policy = secret_client.set_iam_policy(request=request)
+
+    except NotFound as e:
+      
+
+        return 404
+
+    except Forbidden as e:
+        if "does not have secretmanager.secrets.setIamPolicy" in str(e):
+            print(f"[X] 403: The user does not have cloudfunctions.functions.setIamPolicy permissions")
+
+    except Exception as e:
+        print(f"The secretmanager.secrets.setIamPolicy operation failed for unexpected reasons. See below:")
+        print(str(e))
+
+
+    if debug:
+        print(f"[DEBUG] Successfully completed functions getIamPolicy ..")
+
+    return secret_iam_policy
+
+def secret_get_iam_policy(secret_client, secret_name, debug = False):
+
+    if debug:
+        print(f"[DEBUG] Getting IAM bindings for {secret_name} ...")
+   
+    secret_iam_policy = None
+
+    try:
+
+        request = iam_policy_pb2.GetIamPolicyRequest(
+            resource=secret_name
+        )
+        secret_iam_policy = secret_client.get_iam_policy(request=request)
+
+    except NotFound as e:
+        if "404" in str(e) and "The specified bucket does not exist" in str(e):
+            print(f"[X] 404: Bucket {bucket_name} does not exist.")
+
+        return 404
+    except Forbidden as e:
+        if "does not have secretmanager.secrets.getIamPolicy" in str(e):
+            print(f"[X] 403: The user does not have secretmanager.secrets.getIamPolicy permissions")
+
+    except Exception as e:
+        print(f"The secretmanager.secrets.getIamPolicy operation failed for unexpected reasons. See below:")
+        print(str(e))
+
+
+    if debug:
+        print(f"[DEBUG] Successfully completed functions getIamPolicy ..")
+
+    return secret_iam_policy
+
+
+
+
+
+
 
 def cloudfunction_set_iam_policy(function_client, function_name, policy, debug = False):
 
