@@ -10,25 +10,28 @@ status_mapping = {
 def build_tree(session, project_client, folder_client, parent_id, all_folder_info, all_project_info, debug=False):
 
     # List projects under the parent
+    
     projects = list_projects(project_client, parent_id, debug=debug)
-    for project in projects:
-        
-        project_status = status_mapping.get(project.state, "UNKNOWN_STATE") if project.state is not None else "UNKNOWN_STATE"
+    if projects:
+        for project in projects:
+            
+            project_status = status_mapping.get(project.state, "UNKNOWN_STATE") if project.state is not None else "UNKNOWN_STATE"
 
-        all_project_info.add(f"{project.name} ({project.display_name}) - {project.state}" if project.display_name else f"{project.name}")  
-        save_metadata_gcp(session, project, "project")
+            all_project_info.add(f"{project.name} ({project.display_name}) - {project.state}" if project.display_name else f"{project.name}")  
+            save_metadata_gcp(session, project, "project")
 
     # List folders under the parent
     folders = list_folders(folder_client, parent_id, debug=debug)
-    for folder in folders:
-        
-        folder_status = status_mapping.get(folder.state, "UNKNOWN_STATE") if folder.state is not None else "UNKNOWN_STATE"
+    if folders:
+        for folder in folders:
+            
+            folder_status = status_mapping.get(folder.state, "UNKNOWN_STATE") if folder.state is not None else "UNKNOWN_STATE"
 
-        all_folder_info.add(f"{folder.name} ({folder.display_name}) - {folder_status}" if folder.display_name else f"{folder.name}")  
-        save_metadata_gcp(session, folder, "folder")
-        
-        # Recursively build the tree for child folders and projects
-        build_tree(session, project_client, folder_client, folder.name, all_folder_info, all_project_info, debug=debug)
+            all_folder_info.add(f"{folder.name} ({folder.display_name}) - {folder_status}" if folder.display_name else f"{folder.name}")  
+            save_metadata_gcp(session, folder, "folder")
+            
+            # Recursively build the tree for child folders and projects
+            build_tree(session, project_client, folder_client, folder.name, all_folder_info, all_project_info, debug=debug)
 
 def save_metadata_gcp(session, data_object, resource_type):
 
