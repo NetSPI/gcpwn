@@ -89,58 +89,116 @@ class UtilityTools:
         return data
 
     @staticmethod
-    def summary_wrapup(resource_name = None, project_id = None, resource_list = None, resource_top = None, resource_count = None, resource_second = None, resource_dictionary = None, module_summary_save = None):
-        no_resources = False
-        formatted_string = ""
+    def color_text_output(text, color):
+        return f"{color}{text}{UtilityTools.RESET}"
+    @staticmethod
+    def bold_text_output(text):
+        return f"{UtilityTools.BOLD}{text}{UtilityTools.RESET}"
     
-        if resource_list != None:
-            num_of_resources = len(resource_list)
-            if num_of_resources == 0:
+    # Example usage:
+    # UtilityTools.summary_wrapup(
+    #     resource_type="storage buckets",
+    #     project_id="example-project",
+    #     resource_list=["bucket1", "bucket2", "bucket3"]
+    # )
+    # UtilityTools.summary_wrapup(
+    #     summary_title="Compute Projects",
+    #     nested_resource_dict={"project1": {"instance1": ["metadata1", "metadata2"], "instance2": ["metadata1", "metadata2"]}, "project2": ["metadata1", "metadata2"]}
+    # )
+
+    @staticmethod
+    def print_403_api_disabled(service_type, project_id):
+        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 403:{UtilityTools.RESET}{UtilityTools.RED} {service_type} API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
+
+    @staticmethod
+    def print_403_api_denied(permission_name, resource_name = None, project_id = None):
+        if project_id:
+            printout = "project " + project_id
+        elif resource_name:
+            printout = resource_name
+
+        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 403:{UtilityTools.RESET}{UtilityTools.RED} User does not have {permission_name} permissions on {printout}{UtilityTools.RESET}")
+
+    @staticmethod
+    def print_404_resource(resource_name):
+        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 404:{UtilityTools.RESET}{UtilityTools.RED} {resource_name} was not found")
+
+    @staticmethod
+    def print_500(resource_name, permission, error):
+        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}{UtilityTools.RED} {permission} failed for {resource_name}. See below:")
+        print(str(error))
+
+
+
+    @staticmethod
+    def summary_wrapup(title=None, project_id=None, resource_list=None, total_resources=None, nested_resource_dict=None, footer=None, output_file_path=None):
+        no_resources = False
+        resources_found = False
+        summary_output = ""
+
+        if resource_list is not None:
+            num_resources = len(resource_list)
+            if num_resources == 0:
                 no_resources = True
-                formatted_string = f"[SUMMARY] GCPwn found or retrieved NO {resource_name}"
-                if project_id: formatted_string = formatted_string + f" in {project_id}"
+                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found or retrieved NO {title}")
+                if project_id:
+                    summary_output += UtilityTools.bold_text_output(UtilityTools.color_text_output(f" in {project_id}", UtilityTools.RED))
             else:
-                formatted_string = f"[SUMMARY] GCPwn found {num_of_resources} {resource_name}"
-                if project_id: formatted_string = formatted_string + f" in {project_id}"
+                resources_found = True
+                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {num_resources} {title}")
+                if project_id:
+                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f" in {project_id}"), UtilityTools.GREEN)
+                for resource in resource_list:
+                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f"\n   - {resource}"), UtilityTools.GREEN)
 
-                for resource_name in resource_list:
-                    formatted_string = formatted_string + UtilityTools.color_text_output(f"\n   - {resource_name}", UtilityTools.GREEN)
+        elif nested_resource_dict is not None:
+            def format_nested_dict(d, indent=0):
+                lines = []
+                for key, value in d.items():
+                    lines.append(" " * indent + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"- {key}"), UtilityTools.GREEN))
+                    if isinstance(value, dict):
+                        lines.extend(format_nested_dict(value, indent + 2))
+                    else:
+                        for item in value:
+                            # Split the item by newline and add appropriate indentation
+                            item_lines = item.split('\n')
+                            for i, item_line in enumerate(item_lines):
+                                if i == 0:
+                                    lines.append(" " * (indent + 2) + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"- {item_line}"), UtilityTools.GREEN))
+                                else:
+                                    lines.append(" " * (indent + 4) + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"{item_line}"), UtilityTools.GREEN))
+                return lines
 
-        elif resource_dictionary != None:
-            
-            num_of_top_level_resources = len(resource_dictionary.keys())
-            if num_of_top_level_resources == 0:
+            num_top_level_resources = len(nested_resource_dict)
+            if num_top_level_resources == 0:
                 no_resources = True
-                formatted_string = f"[SUMMARY] GCPwn found or retrieved  NO {resource_top}"
-                if project_id: formatted_string = formatted_string + f" in {project_id}"
-   
+                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found or retrieved NO {title}")
+                if project_id:
+                    summary_output += UtilityTools.bold_text_output(UtilityTools.color_text_output(f" in {project_id}", UtilityTools.RED))
             else:
-                if resource_count:
-                    formatted_string =  f"[SUMMARY] GCPwn found {resource_count} {resource_top}"
-                    if project_id: formatted_string = formatted_string + f" in {project_id}"
-
+                resources_found = True
+                if total_resources:
+                    summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {total_resources} {title}")
                 else:
-                    formatted_string =  f"[SUMMARY] GCPwn found {num_of_top_level_resources} {resource_top}"
-                    if project_id: formatted_string = formatted_string + f" in {project_id}"
+                    summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {num_top_level_resources} {title}")
+                if project_id:
+                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f" in {project_id}"), UtilityTools.GREEN)
 
+                summary_output += "\n" + "\n".join(format_nested_dict(nested_resource_dict))
 
-
-                for index, resource_list in resource_dictionary.items():
-                    formatted_string = formatted_string + f"\n   - {index}"
-                    if len(resource_list) != 0:
-                        for resource_name in resource_list[:10]:
-                            formatted_string = formatted_string + f"\n     - {resource_name}"
-            
         if no_resources:
-            formatted_string = UtilityTools.color_text_output(formatted_string, UtilityTools.RED)
+            summary_output = UtilityTools.color_text_output(summary_output, UtilityTools.RED)
         else:
-            formatted_string = UtilityTools.color_text_output(formatted_string, UtilityTools.GREEN)
+            summary_output = UtilityTools.color_text_output(summary_output, UtilityTools.GREEN)
 
-        print(formatted_string)
+        if resources_found and footer:
+            summary_output += f"\n{UtilityTools.color_text_output(UtilityTools.bold_text_output(footer), UtilityTools.GREEN)}"
 
-        if module_summary_save:
-            with open(module_summary_save, "w") as f:
-                f.write(formatted_string)
+        print(summary_output)
+
+        if output_file_path:
+            with open(output_file_path, "a") as f:  # Open file in append mode
+                f.write(summary_output + "\n")  # Ensure new lines are added
 
     @staticmethod
     def log_action(workspace_name, action):

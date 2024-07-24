@@ -6,13 +6,13 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser = argparse.ArgumentParser(description="Enumerate Compute Instance Options", allow_abbrev=False)
 
     zones_group = parser.add_mutually_exclusive_group()
-    zones_group.add_argument("--all-zones", action="store_true", required=False,help="Try every zone in txt files")
+    zones_group.add_argument("--all-zones", action="store_true", required=False,help="Try every zone in txt files in ./utils/zones.txt")
     zones_group.add_argument("--zones-list",required=False,help="Zones in list format of zone1,zone2,zone3")
-    zones_group.add_argument("--zones-file",required=False,help="File with each zone on newline")
+    zones_group.add_argument("--zones-file",required=False,help="File name with each zone on newline")
 
     exclusive_instance_group = parser.add_mutually_exclusive_group(required=False)
     exclusive_instance_group.add_argument("--instance-names", type=str,  help="Instance names to check in the format projects/[project_id]/zones/[zone]/instances/[instance_name]")
-    exclusive_instance_group.add_argument("--instance-names-file", type=str, help="File name to get instance names to check in format projects/[project_id]/zones/[zone]/instances/[instance_name] per line")
+    exclusive_instance_group.add_argument("--instance-names-file", type=str, help="File name with each instance on newline in format projects/[project_id]/zones/[zone]/instances/[instance_name]")
 
     parser.add_argument("--iam",action="store_true",required=False,help="Call TestIAMPermissions on Compute Instances")
     
@@ -21,22 +21,26 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--output",type=str,required=False,help="Output file to save screenshot/serial if you don't want to use default")
 
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform minimal set of API calls (usually just List API calls)")
-
+    
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data returned")
     
     args = parser.parse_args(user_args)
 
     debug, project_id = args.debug, session.project_id
-    action_dict = {}
+    action_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+
     # Get zone if specified
     zones = None
-    if args.all_zones: zones = get_all_instance_zones(session, project_id, all_zones = True)
-    elif args.zones_list: zones = get_all_instance_zones(session, project_id, zones_list = args.zones_list)
-    elif args.zones_file: zones = get_all_instance_zones(session, project_id, zones_file = args.zones_file)
+    if args.all_zones:
+        zones = get_all_instance_zones(session, project_id, all_zones=True)
+    elif args.zones_list:
+        zones = get_all_instance_zones(session, project_id, zones_list=args.zones_list)
+    elif args.zones_file:
+        zones = get_all_instance_zones(session, project_id, zones_file=args.zones_file)
 
     # Set up scope for call to specified project
     instance_client = compute_v1.InstancesClient(credentials = session.credentials)    
-    
     print(f"[*] Checking {project_id} for instances...")
 
     # All instances for saving, all_instances_output for output
@@ -50,9 +54,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
         
             for zone in zones:
 
-                if debug:
-                    print(f"[DEBUG] Working through zone {zone}", end="\r")
-
                 instances = list_instances(instance_client, project_id, zone, debug = debug)
                 
                 # If compute is not enabled don't bother going through rest of zones, just break
@@ -61,7 +62,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
                 # If instances were found same permissions and save to all_instances for later looping
                 if instances: 
 
-                    action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('compute.instances.list')
+                    action_dict['project_permissions'][project_id].add('compute.instances.list')
                     all_instances.setdefault(project_id, {})[zone] = instances
 
         # No specific zones = defualt API call to get instances in all zones
@@ -73,7 +74,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
             # Returns all instances in all zones per API documentation
             every_instance = list_aggregated_instances(instance_client, project_id, debug = debug)
 
-            if every_instance:
+
+            if every_instance and every_instance != "Not Enabled":
 
                 action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('compute.instances.list')
 
@@ -132,7 +134,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
                 if not args.minimal_calls:
                     print(f"[***] GET Instance")
-                    instance_get = get_instance(instance_client, instance_name, project_id, zone, debug=False)
+                    instance_get = get_instance(instance_client, instance_name, project_id, zone, debug=debug)
                     
                     if instance_get:
                         
@@ -186,25 +188,33 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     # TODO Make this more efficient at some point
     # Use all_instances if no user input
-    if not args.instance_names and not args.instance_names_file:
+    
+    all_instances_key_values = {}
+    if all_instances:
+        if not args.instance_names and not args.instance_names_file:
 
-        for project_id, instance_only_info in all_instances.items():
+            for project_id, instance_only_info in all_instances.items():
 
-            # Summary portion
-            total_instances = sum(len(arr) for arr in instance_only_info.values())
-            
-            all_instances_key_values = {key: [obj.name for obj in value] for key, value in instance_only_info.items()}
+                # Summary portion
+                total_instances = sum(len(arr) for arr in instance_only_info.values())
+                
+                all_instances_key_values = {key: [obj.name for obj in value] for key, value in instance_only_info.items()}
 
-            UtilityTools.summary_wrapup(resource_top = "Instances",resource_count = total_instances, resource_dictionary = all_instances_key_values, project_id = project_id)
+        # Use all_instances_output if user input
+        else:
 
-    # Use all_instances_output if user input
-    else:
+            for project_id, instance_only_info in all_instances_output.items():
 
-        for project_id, instance_only_info in all_instances_output.items():
+                # Summary portion
+                total_instances = sum(len(arr) for arr in instance_only_info.values())
+                
+                all_instances_key_values = {key: [obj for obj in value] for key, value in instance_only_info.items()}
 
-            # Summary portion
-            total_instances = sum(len(arr) for arr in instance_only_info.values())
-            
-            all_instances_key_values = {key: [obj for obj in value] for key, value in instance_only_info.items()}
+    
+    UtilityTools.summary_wrapup(
+        title="Compute Instance(s)",
+        nested_resource_dict=all_instances_key_values,
+        project_id = project_id,        
+        output_file_path = args.txt
+    )
 
-            UtilityTools.summary_wrapup(resource_top = "Instances",resource_count = total_instances, resource_dictionary = all_instances_key_values, project_id = project_id)

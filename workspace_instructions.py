@@ -70,7 +70,7 @@ def help_banner():
         data <table_name> --columns column1,column2 --csv [OUTPUT_FILE]   Save column data to CSV.
                  
         help                                Display this page of information       
-        exit/quit                           Exit Pacu
+        exit/quit                           Exit GCPwn
 
     Other command info:
         gcloud/bq/gsutil <command>            Run GCP CLI tool. It is recommended if you want to add a set of creds while in GCPwn
@@ -380,7 +380,10 @@ class CommandProcessor:
             self.session.global_project_list.remove(project_id)
             self.session.data_master.remove_project_ids(self.workspace_id, [project_id])
             if project_id == self.session.project_id:
-                self.session.project_id = self.session.global_project_list[-1]
+                if len(self.session.global_project_list) > 0:
+                    self.session.project_id = self.session.global_project_list[-1]
+                else:
+                    self.session.project_id = None
         else:
             print("[X] The project ID specified does not exist")
 

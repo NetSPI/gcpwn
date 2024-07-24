@@ -12,6 +12,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     exclusive_roles_group = parser.add_mutually_exclusive_group(required=False)
     exclusive_roles_group.add_argument("--roles", type=str,  help="Role names to process in the  form projects/[project_id]/roles/[role_name]")
     exclusive_roles_group.add_argument("--roles-file", type=str, help="File name to get roles from in the format '--bucket-file /file/path/buckets.txt'")
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
 
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
 
@@ -83,6 +84,10 @@ def run_module(user_args, session, first_run = False, last_run = False):
                     all_custom_roles.add(f"{role.title} ({role.name})")
                     action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('iam.roles.get')
 
+    UtilityTools.summary_wrapup(
+        title="Custom Role(s)",
+        resource_list = sorted(all_custom_roles),        
+        output_file_path = args.txt
+    )
 
-    UtilityTools.summary_wrapup(resource_name = "Custom Role(s)", resource_list = all_custom_roles)
     session.insert_actions(action_dict, project_id)

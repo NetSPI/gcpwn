@@ -29,6 +29,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     parser.add_argument("--iam",action="store_true",required=False,help="Call TestIAMPermissions on Compute Instances")
     parser.add_argument("--download",action="store_true",required=False,help="Download all secret VALUES to a local CSV")
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
 
     # Debug/non-module specific
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
@@ -244,7 +245,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
                                         df.to_csv(destination_filename, mode='a', header=False, index=False)
             
             session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
-
     for secret_project_id, secret_only_info in final_output_secrets.items():
 
         # Summary portion
@@ -252,10 +252,14 @@ def run_module(user_args, session, first_run = False, last_run = False):
         
         all_secret_key_info = {
             key: [
-                f"{k}: {v}" for k, v in sorted(value.items(), key=lambda item: (item[0] == 'latest', item[0] if item[0] != 'latest' else ''))
+                f"{k}: {v if v is not None else '<value_not_found>'}" for k, v in sorted(value.items(), key=lambda item: (item[0] == 'latest', item[0] if item[0] != 'latest' else ''))
             ]
             for key, value in secret_only_info.items()
         }
 
-        UtilityTools.summary_wrapup(resource_top = "Secrets",resource_count = total_versions, resource_dictionary = all_secret_key_info, project_id = secret_project_id)
-    
+        UtilityTools.summary_wrapup(
+            title="Secret(s)",
+            nested_resource_dict = all_secret_key_info, 
+            project_id = secret_project_id,        
+            output_file_path = args.txt
+        )    

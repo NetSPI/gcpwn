@@ -36,6 +36,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--cloud-iam", action="store_true", help="Execute IAM modules")
     parser.add_argument("--cloud-secretsmanager", action="store_true", help="Execute secrets manager modules")
 
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
+
 
     args = parser.parse_args(user_args)
 
@@ -44,9 +46,14 @@ def run_module(user_args, session, first_run = False, last_run = False):
     debug = args.debug
 
     more = False
+    header = f"[***********] Beginning enumeration for {session.project_id} [***********]"
+    
+    print(header)
+    if args.txt:
+        with open(args.txt, "a") as f:  # Open file in append mode
+            f.write(header + "\n")  # Ensure new lines are added
 
-    print(f"[***********] Beginning enumeration for {session.project_id} [***********]")
-
+    print(f"[*]"+"-"*120+"[*]") 
 
     if first_run and (args.resource_manager or every_flag_missing):
 
@@ -65,6 +72,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
             if args.all_permissions:
                 user_args = user_args + ["--all-permissions"]
+        
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
 
         run_other_module(session, user_args, "Modules.ResourceManager.Enumeration.enum_resources")
 
@@ -86,6 +96,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         if args.zones_list:
             user_args.extend(["--zones-list", args.zones_list])
+
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
 
         if args.download:
 
@@ -116,7 +129,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         if debug:
             user_args = ["-v"]
-        
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]        
         if args.regions_list:
             user_args.extend(["--regions-list", args.regions_list])
         
@@ -139,10 +153,15 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         user_args = []
 
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
+
         module = importlib.import_module("Modules.CloudStorage.Enumeration.enum_hmac_keys")
         module.run_module(user_args, session)
 
-        
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]     
+
         if args.download:
             user_args.extend(["--download"])
 
@@ -157,6 +176,10 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     if args.cloud_secretsmanager or every_flag_missing:
         print("[*] Beginning Enumeration of SECRETS MANAGER Resources...")
+        
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
+
         if args.download:
             user_args.extend(["--download"])
 
@@ -173,11 +196,16 @@ def run_module(user_args, session, first_run = False, last_run = False):
         user_args = []
         if args.iam:
             user_args = user_args + ["--iam"]
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
         run_other_module(session, user_args, "Modules.IAM.Enumeration.enum_service_accounts")
 
         user_args = []
+        if args.txt:
+            user_args = user_args + ["--txt",args.txt]
         run_other_module(session, user_args, "Modules.IAM.Enumeration.enum_custom_roles",)
-
+        
+        user_args = []
         if last_run and more != True:
             run_other_module(session, user_args, "Modules.IAM.Enumeration.enum_policy_bindings")
 

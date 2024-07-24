@@ -41,6 +41,8 @@ google-cloud-resource-manager == 1.12.3
 
 google-cloud-runtimeconfig == 0.34.0 
 
+google-cloud-storage-transfer == 1.11.4
+
 google-cloud-service-directory == 1.11.3 
 
 google-cloud-spanner == 3.46.0 

@@ -76,7 +76,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--all-permissions",action="store_true",required=False,help="Check thousands of permissions via testiampermissions")
 
     parser.add_argument("--no-recursive",action="store_true",required=False,help="Don't call search on project/folders via recursion")
-    
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
+
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data returned")
 
     args = parser.parse_args(user_args)
@@ -293,8 +294,11 @@ def run_module(user_args, session, first_run = False, last_run = False):
     session.sync_projects()
     session.insert_actions(action_dict,project_id)
 
-    UtilityTools.summary_wrapup(resource_name = "Organization(s)", resource_list = all_org_info)
-    UtilityTools.summary_wrapup(resource_name = "Folder(s)", resource_list = all_folder_info)
-    UtilityTools.summary_wrapup(resource_name = "Project(s)", resource_list = all_project_info)
+    UtilityTools.summary_wrapup(title = "Organization(s)", resource_list = all_org_info,        
+        output_file_path = args.txt)
+    UtilityTools.summary_wrapup(title = "Folder(s)", resource_list = all_folder_info,        
+        output_file_path = args.txt)
+    UtilityTools.summary_wrapup(title = "Project(s)", resource_list = all_project_info,        
+        output_file_path = args.txt)
 
 

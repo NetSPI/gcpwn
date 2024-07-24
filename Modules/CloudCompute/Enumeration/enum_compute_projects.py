@@ -1,42 +1,43 @@
 from Modules.CloudCompute.utils.util_helpers import *
 
-## user_args is passed from the previous module, pass this into the , blob_max_size = args.parser if you are doing the non-standalone callable version
+# Project ID is specified via "project-ids" and will be in session.project_id
 def run_module(user_args, session, first_run = False, last_run = False):
     
     parser = argparse.ArgumentParser(description="Enumerate Compute Projects", allow_abbrev=False)
+    
+    parser.add_argument("--txt", type=str, required=False, help="Save the stdout summary to a text file")
+
     parser.add_argument("-v","--debug",action="store_true", required=False, help="Get verbose data returned")
+    
     args = parser.parse_args(user_args)
 
-    debug, project_id = args.debug, session.project_id
-    action_dict, project_name = {}, {}
+    debug = args.debug
+    compute_project_id = session.project_id
+
+    action_dict = defaultdict(lambda: defaultdict(set))
+    project_metadata = defaultdict(list)
     
-    compute_project_client = compute_v1.ProjectsClient(credentials = session.credentials)    
+    compute_project_client = compute_v1.ProjectsClient(credentials = session.credentials)   
     
-    print(f"[*] Checking Cloud Compute Project {project_id}...")
+    print(f"[*] Checking Cloud Compute Project {compute_project_id}...")
 
-    compute_project_get = get_compute_project(compute_project_client, project_id, debug=False)
-    
-    resource_count = 0
+    compute_project_get = get_compute_project(compute_project_client, compute_project_id, debug=False)
 
-    if compute_project_get:
+    if compute_project_get and compute_project_get != "Not Enabled":
 
-        metadata = []
-        resource_count += 1
-        for item in compute_project_get.common_instance_metadata.items:
-            key, value = item.key, item.value
-            metadata.append(f"KEY: {key} - VALUE: {value}")
-        
-        project_name[compute_project_get.name] = metadata[:10]
+        metadata_items = compute_project_get.common_instance_metadata.items
+        project_metadata[compute_project_get.name] = [f"KEY: {item.key}\nVALUE: {item.value}" for item in metadata_items]
 
-        action_dict.setdefault("project_permissions", {}).setdefault(project_id, set()).add("compute.projects.get")
-        
-        # Save to two tables due to Resource Manager Project & Compute Project
+        action_dict["project_permissions"][compute_project_id].add("compute.projects.get")
+
         save_compute_project(compute_project_get, session)
         save_compute_project_to_resource(compute_project_get, session)
-        
-    if resource_count:
-        print(f"{UtilityTools.BOLD}[*] Only first few metadata characters shown, run `data tables cloudcompute-projects --columns project_id,common_instance_metadata` to see all of metadata. Use --csv to export it to a csv.{UtilityTools.RESET}")
-    
-    UtilityTools.summary_wrapup(resource_top = "Compute Project(s) potentially with metadata", resource_count = resource_count, resource_dictionary = project_name)
-    
-    session.insert_actions(action_dict,project_id, column_name = "compute_actions_allowed")
+
+    UtilityTools.summary_wrapup(
+        title="Compute Project(s) with potential metadata shown below.",
+        nested_resource_dict=project_metadata,
+        footer = "*Review any truncated data with 'data tables cloudcompute-projects --columns project_id,common_instance_metadata [--csv filename]'",        
+        output_file_path = args.txt
+    )
+
+    session.insert_actions(action_dict, compute_project_id, column_name="compute_actions_allowed")

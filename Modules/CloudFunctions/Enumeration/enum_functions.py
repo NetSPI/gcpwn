@@ -25,6 +25,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--iam",action="store_true",required=False,help="Run testIAMPermissions on function")
     
     parser.add_argument("--download",action="store_true",required=False,help="Attempt to download function source code")
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
     
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform minimal set of API calls (usually just List API calls)")
 
@@ -206,5 +207,11 @@ def run_module(user_args, session, first_run = False, last_run = False):
                     print(f"[*] There are no build config details for {function_name}. You might need to manually download the data via another module (enum_buckets or enum_repos).")
     
 
-    UtilityTools.summary_wrapup(resource_name = "Function(s)", resource_list = sorted(resources_to_print), project_id = project_id)
+    UtilityTools.summary_wrapup(
+        title="Function(s)",
+        resource_list = sorted(resources_to_print),
+        project_id = project_id,        
+        output_file_path = args.txt
+    )
+
     session.insert_actions(action_dict, project_id, column_name = "function_actions_allowed")

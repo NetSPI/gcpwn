@@ -284,3 +284,28 @@ databases:
           secret_value
         ]
         primary_keys: [name]
+      - table_name: "storagetransfer-transferjobs"
+        columns: [
+          name,
+          description,
+          project_id,
+          transfer_spec,
+          notification_config,
+          logging_config,
+          schedule,
+          event_stream,
+          status,
+          creation_time,
+          last_modification_time,
+          deletion_time,
+          latest_operation_name
+        ]
+        primary_keys: [name, project_id]
+      - table_name: "storagetransfer-agentpools"
+        columns: [
+          name,
+          display_name,
+          state,
+          bandwidth_limit
+        ]
+        primary_keys: [name]

@@ -128,7 +128,7 @@ def start_instance(instance_client, project_id: str, zone: str, instance_name: s
 
     return start_status
 
-########### Compute Instance Zones
+########### COMPUTE INSTANCE ZONE GATHERER
 
 def get_all_instance_zones(
         session: SessionUtility, 
@@ -367,9 +367,42 @@ def save_instance(instance, session, project_id):
 
     session.insert_data(table_name, save_data)
 
-########### Create/Update Instances
+########### Compute Project API Calls
 
-# Arguments for created instance mainly taken from: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/compute.instances.create.py
+def get_compute_project(compute_project_client, project_id, debug=False):
+
+    if debug: print(f"[DEBUG] Getting compute project {project_id} ...")
+
+    compute_project = None
+
+    try:
+
+        request = compute_v1.GetProjectRequest(
+            project=project_id
+        )
+
+        compute_project = compute_project_client.get(request=request)
+
+    except Forbidden as e:
+        if "does not have compute.projects.get" in str(e):
+            UtilityTools.print_403_api_denied("compute.projects.get permissions", project_id = project_id)
+
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
+
+    except NotFound as e:
+        if f"{project_id}' was not found" in str(e):
+            UtilityTools.print_404_resource(project_id)
+
+    except Exception as e:
+        UtilityTools.print_500(project_id, "compute.projects.get", e)
+
+    return compute_project
+
+########### Compute Instance API Calls
+
+# Ref for arguments: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/compute.instances.create.py
 def create_instance(
         instance_client, 
         instance_name, 
@@ -382,55 +415,36 @@ def create_instance(
 
     try:
 
-        print(f" [*] Creating instance {instance_name} in zone {instance_zone}")
+        access = compute_v1.AccessConfig(type_=compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name, name="External NAT")
 
-        access = compute_v1.AccessConfig()
-        access.type_ = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
-        access.name = "External NAT"
-
-        # 7 bucks a month
         body = {
             'name': instance_name,
             'machine_type': f'zones/{instance_zone}/machineTypes/e2-micro',
-            'network_interfaces': [
-                {
-                    'access_configs':[access],
-                    'network': f'global/networks/default'
+            'network_interfaces': [{
+                'access_configs': [access],
+                'network': 'global/networks/default'
+            }],
+            'disks': [{
+                'auto_delete': True,
+                'boot': True,
+                'initialize_params': {
+                    'source_image': 'projects/debian-cloud/global/images/family/debian-12'
                 }
-            ],
-            'disks': [
-                {
-                    'auto_delete': True,
-                    'boot': True,
-                    'initialize_params':{
-                        'source_image':f'projects/debian-cloud/global/images/family/debian-12'
-                    }
-                }
-            ]
+            }]
         }
 
-        # TODO allow scope submission
         if sa_email:
+            body['service_accounts'] = [{
+                "email": sa_email,
+                "scopes": ["https://www.googleapis.com/auth/cloud-platform"]
+            }]
 
-            body['service_accounts'] = []
-
-            added_creds = {
-                "email":sa_email,
-                "scopes":["https://www.googleapis.com/auth/cloud-platform"]
-            }
-
-            body['service_accounts'].append(added_creds)
-
-           
         if startup_script_data:
-
             body['metadata'] = {
-                'items':[
-                    {
-                        'key': 'startup-script',
-                        'value': f'{startup_script_data}'
-                    }
-                ]
+                'items': [{
+                    'key': 'startup-script',
+                    'value': startup_script_data
+                }]
             }
 
         request = compute_v1.InsertInstanceRequest(
@@ -439,31 +453,23 @@ def create_instance(
             instance_resource=body
         )
 
+        print(f"[*] Creating the [{instance_zone}] {instance_name} in {project_id}...")
 
-        print(f"Creating the {instance_name} instance in {instance_zone}...")
-
-        try:
-            # Make the request
-            operation = instance_client.insert(request=request)
-            response = wait_for_extended_operation(operation, "instance creation")
-
-            print(f"Instance {instance_name} created.")
-
-        except Exception as e:
-            print(str(e))
+        # Make the request
+        operation = instance_client.insert(request=request)
+        response = wait_for_extended_operation(operation, "instance creation")
+        print(f"{UtilityTools.Green}[*] Instance {instance_name} created.{UtilityTools.RESET}")
 
         return 1
 
     except Exception as e:
-        print("[X] Something failed while trying to create the instance. See the error code below:")
-        print(str(e))
+        UtilityTools.print_500(instance_name, "compute.instances.create", e)
         return -1
 
 
 def set_instance_metadata(instance_client, instance_name, project_id, zone_id, metadata_object, debug = False):
     
-    if debug:
-        print(f"[DEBUG] Updating metadata for {instance_name} ...")
+    if debug: print(f"[DEBUG] Updating metadata for [{zone_id}] {instance_name} in {project_id} ...")
    
     instance_metadata = None
 
@@ -475,17 +481,18 @@ def set_instance_metadata(instance_client, instance_name, project_id, zone_id, m
             metadata_resource = metadata_object
         )
 
-
         # Make the request
         instance_metadata = instance_client.set_metadata(request=request)
 
     except Forbidden as e:
         if "does not have compute.instances.setCommonInstanceMetadata" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.setCommonInstanceMetadata permissions{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("compute.instances.setCommonInstanceMetadata", resource_id = instance_name)
+        
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
 
     except Exception as e:
-        print(f"The compute.instances.setCommonInstanceMetadata operation failed for unexpected reasons. See below:")
-        print(str(e))
+        UtilityTools.print_500(instance_name, "compute.instances.setCommonInstanceMetadata", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed instances update instance metadata ..")
@@ -495,8 +502,7 @@ def set_instance_metadata(instance_client, instance_name, project_id, zone_id, m
 
 def set_instance_project_metadata(instance_projects_client, project_id, metadata_object, debug = False):
     
-    if debug:
-        print(f"[DEBUG] Updating metadata for {project_id} ...")
+    if debug: print(f"[DEBUG] Updating metadata for {project_id} ...")
    
     project_metadata = None
 
@@ -505,18 +511,24 @@ def set_instance_project_metadata(instance_projects_client, project_id, metadata
             project=project_id,
             metadata_resource = metadata_object
         )
-
-
         # Make the request
         project_metadata = instance_projects_client.set_common_instance_metadata(request=request)
 
     except Forbidden as e:
         if "does not have compute.projects.setCommonInstanceMetadata" in str(e):
-            print(f"[X] 403: The user does not have compute.projects.setCommonInstanceMetadata permissions")
+            UtilityTools.print_403_api_denied("compute.projects.setCommonInstanceMetadata", project_id = project_id)
+        
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+
+    except NotFound as e:
+
+        if "was not found" in str(e):
+            UtilityTools.print_404_resource(project_id)
 
     except Exception as e:
-        print(f"The compute.projects.setCommonInstanceMetadata operation failed for unexpected reasons. See below:")
-        print(str(e))
+        UtilityTools.print_500(project_id, "compute.projects.setCommonInstanceMetadata", e)
+
 
     if debug:
         print(f"[DEBUG] Successfully completed instances update project metadata ..")
@@ -733,20 +745,24 @@ def instance_get_serial(instance_client, instance_name, project_id, zone_id, wor
             
     except Forbidden as e:
         if "does not have compute.instances.getSerialPortOutput" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: Serial Download failed for {instance_name}. The user does not have compute.instances.getSerialPortOutput permissions{UtilityTools.RESET}")
+           UtilityTools.print_403_api_denied("compute.instances.getSerialPortOutput", resource_id = instance_name)
+        
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
 
     except NotFound as e:
 
         if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
         
         if "is not ready" in str(e) and "The resource" in str(e):
             print(f"{UtilityTools.RED}[X] 400: Serial Download failed for {instance_name}. The VM was \"not ready\" and might be turned off.{UtilityTools.RESET} ")
         else:
-            print(f"The compute.instances.getSerialPortOutput operation failed for unexpected reasons. See below:")
-            print(str(e))
+            
+            UtilityTools.print_500(instance_name, "compute.instances.getSerialPortOutput", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed instances getSerialOutput ..")
@@ -786,13 +802,18 @@ def instance_get_screenshot(instance_client, instance_name, project_id, zone_id,
                 f.write(image_data)
 
     except Forbidden as e:
+
         if "does not have compute.instances.getScreenshot" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.getScreenshot permissions{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("compute.instances.getScreenshot", resource_id = instance_name)
+        
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
     
     except NotFound as e:
 
         if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
         
@@ -803,8 +824,7 @@ def instance_get_screenshot(instance_client, instance_name, project_id, zone_id,
             print(f"{UtilityTools.RED}[X] 400: Screenshot failed for {instance_name}. The VM was \"not ready\" and might be turned off.{UtilityTools.RESET} ")
         
         else:
-            print(f"The compute.instances.getScreenshot operation failed for unexpected reasons. See below:")
-            print(str(e))
+            UtilityTools.print_500(instance_name, "compute.instances.getScreenshot", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed instances getScreenshot ..")
@@ -814,8 +834,8 @@ def instance_get_screenshot(instance_client, instance_name, project_id, zone_id,
 # Returns all instancesa across all zones while list_instances specificies zone.
 def list_aggregated_instances(instances_client, project_id, debug=False):
 
-    if debug:
-        print(f"[DEBUG] Listing instances for project {project_id} ...")
+    if debug: print(f"[DEBUG] Listing instances across all zones for Project ID: {project_id}...")
+
 
     all_instances = []
 
@@ -836,62 +856,31 @@ def list_aggregated_instances(instances_client, project_id, debug=False):
     except Forbidden as e:
       
         if "does not have compute.instances.list" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.list permissions on project {project_id}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("compute.instances.list", project_id = project_id)
         
         elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Compute API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
-
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
         
         return None
 
     except NotFound as e:
         if "was not found" in str(e) and f"{project_id}" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: {project_id} does not appear to exist.{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(project_id)
             
         return None
+
     except Exception as e:
-        print(f"The compute.instances.list aggregated operation failed for unexpected reasons for {project_id}. See below:")
-        print(str(e))
+        
+        UtilityTools.print_500(project_id, "compute.instances.list", e)
         return None
 
     return all_instances
 
-def get_compute_project(compute_project_client, project_id, debug=False):
-
-    if debug:
-        print(f"[DEBUG] Getting compute project {project_id} ...")
-    
-    compute_project = None
-
-    try:
-
-        request = compute_v1.GetProjectRequest(
-            project=project_id
-        )
-
-        compute_project = compute_project_client.get(request=request)
-
-    except Forbidden as e:
-        if "does not have compute.projects.get" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.projects.get permissions on project {project_id}{UtilityTools.RESET}")
-
-        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Compute API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
-
-    except NotFound as e:
-        if f"{project_id}' was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] The supplied project-id was not found (404). Double check the project ID name{UtilityTools.RESET}")
-
-    except Exception as e:
-        print(f"The compute.projects.get operation failed for unexpected reasons for {project_id}. See below:")
-        print(str(e))
-
-    return compute_project
 
 def list_instances(instances_client, project_id, zone, debug=False):
     
-    if debug:
-        print(f"[DEBUG] Listing instances for project {project_id} zone {zone} ...")
+    if debug: print(f"[DEBUG] Listing instances for [{zone}] Project ID: {project_id}...")
     
     instance_list = []
 
@@ -906,11 +895,10 @@ def list_instances(instances_client, project_id, zone, debug=False):
         
     except Forbidden as e:
         if "does not have compute.instances.list" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.list permissions on project {project_id}{UtilityTools.RESET}")
-        
+            UtilityTools.print_403_api_denied("compute.instances.list permissions", project_id = project_id)
 
         elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Compute API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_disabled("Compute", project_id)
             return "Not Enabled"
 
         return None
@@ -918,21 +906,18 @@ def list_instances(instances_client, project_id, zone, debug=False):
     except NotFound as e:
 
         if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(project_id)
         return None
 
     except Exception as e:
-        print(f"The compute.instances.list operation failed for unexpected reasons for {project_id}. See below:")
-        print(str(e))
+        UtilityTools.print_500(project_id, "compute.instances.list", e)
         return None
 
     return instance_list
 
 def get_instance(instances_client, instance_name, project_id, zone, debug=False):
-    
 
-    if debug:
-        print(f"[DEBUG] Getting instances for project {project_id} zone {zone} ...")
+    if debug: print(f"[DEBUG] Getting [{zone}] {instance_name} in {project_id}...")
 
     instance_metdata = None
 
@@ -945,27 +930,25 @@ def get_instance(instances_client, instance_name, project_id, zone, debug=False)
             zone=zone,
         )
 
-
         # Make the request
         instance_metdata = instances_client.get(request=request)
+
+    except Forbidden as e:
+        
+        if "does not have compute.instances.get" in str(e):
+            UtilityTools.print_403_api_denied("compute.instances.get", resource_name = instance_name)
+
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
 
     except NotFound as e:
 
         if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
-
-    except Forbidden as e:
-        if "does not have compute.instances.get" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.get permissions on project {project_id}{UtilityTools.RESET}")
-
-        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Compute API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
-
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
-        print(f"The compute.instances.get operation failed for unexpected reasons for {project_id}. See below:")
-        print(str(e))
 
+        UtilityTools.print_500(instance_name, "compute.instances.get", e)
 
     if debug:
         print(f"[DEBUG] Succcessfully completed get_instance ...")
@@ -1055,34 +1038,18 @@ def check_instance_permissions(instance_client, project_id, instance_name, zone,
     except Forbidden as e:
 
         if f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Compute API does not appear to be enabled for project {project_id}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_disabled("Compute", project_id)
 
     except NotFound as e:
 
         if "was not found" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: The resource does not appear to exist in {project_id}.{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
-        print(f"The testIAMPermissions operation failed for unexpected reasons for {instance_name}. See below:")
-        print(str(e))
+        UtilityTools.print_500(instance_name, "testIamPermissions API Call", e)
 
     return authenticated_permissions
 
-def check_instance_format(input_string):
-    pattern = r'^projects/[^/]+/zones/[^/]+/instances/[^/]+$'
-    if re.match(pattern, input_string):
-        return 1
-    else:
-        print("[X] Input string does not follow the correct format. It should be in the format: projects/{project_name}/zones/{zone_name}/instances/{instance_name}")
-        return None
-
-def check_sa_format(input_string: str):
-    pattern = r'^projects/[^/]+/serviceAccounts/[^/]+$'
-    if re.match(pattern, input_string):
-        return 1
-    else:
-        print("[X] Input string does not follow the correct format. It should be in the format: projects/{project_id}/serviceAccounts/{serviceAccount}")
-        return None
 
 def update_instance(
         instance_client, 

@@ -39,6 +39,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--list-hmac-secrets",required=False, action="store_true", help="Good regex to match for downloading files")
     parser.add_argument("--validate-buckets", required=False,action="store_true", help="Specify file path with list of blobs")
 
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
+
+
     # Debug/non-module specific
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data during the module run")
 
@@ -269,37 +272,47 @@ def run_module(user_args, session, first_run = False, last_run = False):
             if blob_list:
                 max_len = len(blob_list)
 
-            for index, blob in enumerate(blob_list):
-                
-                # If blob is user supplied string, cast to blob object for later use
-                blob_name = blob.name
-
-                if bucket_name in all_buckets.keys() and len(all_buckets[bucket_name]) <= 10:
-                    all_buckets[bucket_name].append(blob_name)
-
-                if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
-                    blob_meta = get_blob(bucket,blob_name, debug = debug)
-                    if blob_meta:
-                        save_blob(blob_meta, session)
-                        action_dict.setdefault(project_id, {}).setdefault("storage.objects.get", {}).setdefault("buckets", set()).add(bucket_name) if bucket_name not in action_dict.get(project_id, {}).get("storage.objects.get", {}).get("buckets", set()) else None
-
+            try:
+                for index, blob in enumerate(blob_list):
                     
-                if args.download:
-                    
-                    if args.access_id and args.hmac_secret and blob_name[-1] != "/":
-                        hmac_download_blob(storage_client,args.access_id, args.hmac_secret, bucket_name, blob_name,project_id, debug=debug, output_folder = OUTPUT_DIRECTORY)
-                    else:
-                        download_blob(storage_client, bucket,blob, project_id, debug = debug,output_folder = OUTPUT_DIRECTORY, user_regex_pattern = args.good_regex, blob_size_limit = args.file_size)
-                    
-                    if args.time_limit:
-                        time_limit = args.time_limit
-                        elapsed_time = time.time() - start_time
-                        if elapsed_time > int(time_limit):
-                            print(f"[-] Time limit of {time_limit} reached for download for bucket {bucket_name}")
-                            break
-                # Print the counter
-                print(f"[***] Processed {index + 1} of {max_len} blobs", end='\r')
-                sys.stdout.flush()  # Ensure the print is updated in plac
+                    # If blob is user supplied string, cast to blob object for later use
+                    blob_name = blob.name
 
-    UtilityTools.summary_wrapup(resource_top = "Buckets (with up to 10 blobs shown each)",resource_dictionary = all_buckets,project_id = project_id)
+                    if bucket_name in all_buckets.keys() and len(all_buckets[bucket_name]) <= 10:
+                        all_buckets[bucket_name].append(blob_name)
+
+                    if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
+                        blob_meta = get_blob(bucket,blob_name, debug = debug)
+                        if blob_meta:
+                            save_blob(blob_meta, session)
+                            action_dict.setdefault(project_id, {}).setdefault("storage.objects.get", {}).setdefault("buckets", set()).add(bucket_name) if bucket_name not in action_dict.get(project_id, {}).get("storage.objects.get", {}).get("buckets", set()) else None
+
+                        
+                    if args.download:
+                        
+                        if args.access_id and args.hmac_secret and blob_name[-1] != "/":
+                            hmac_download_blob(storage_client,args.access_id, args.hmac_secret, bucket_name, blob_name,project_id, debug=debug, output_folder = OUTPUT_DIRECTORY)
+                        else:
+                            download_blob(storage_client, bucket,blob, project_id, debug = debug,output_folder = OUTPUT_DIRECTORY, user_regex_pattern = args.good_regex, blob_size_limit = args.file_size)
+                        
+                        if args.time_limit:
+                            time_limit = args.time_limit
+                            elapsed_time = time.time() - start_time
+                            if elapsed_time > int(time_limit):
+                                print(f"[-] Time limit of {time_limit} reached for download for bucket {bucket_name}")
+                                break
+                    # Print the counter
+                    print(f"[***] Processed {index + 1} of {max_len} blobs. Enter Ctrl+C to exit blob counts for this bucket...", end='\r')
+                    sys.stdout.flush()  # Ensure the print is updated in plac
+            
+            except KeyboardInterrupt:
+                print("[*] Ended blob enumeration. Moving onto next bucket...")
+
+    UtilityTools.summary_wrapup(
+        title="Buckets (with up to 10 blobs shown each)",
+        nested_resource_dict=all_buckets,
+        project_id=project_id,
+        footer = "*See all blobs with 'data tables cloudstorage-bucketblobs --columns bucket_name,name [--csv filename]'",
+        output_file_path = args.txt
+    )
     session.insert_actions(action_dict,project_id, column_name = "storage_actions_allowed")

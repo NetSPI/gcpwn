@@ -195,3 +195,11 @@ iam_modules:
     version: "1 - 06/01/2024"
     author: "Scott (@WebbinRoot)"
     location: "Modules.IAM.Exploit.exploit_service_account_keys"
+
+storage_transfer_modules:
+  - module_name: "enum_transfer_jobs"
+    module_category: "Enumeration"
+    info_blurb: "Enumerate all transfer jobs. Collect secrets/recon from other data sources in other cloud providers."
+    version: "1 - 07/15/2024"
+    author: "Scott (@WebbinRoot)"
+    location: "Modules.StorageTransfer.Enumeration.enum_transfer_jobs"

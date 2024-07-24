@@ -4,10 +4,23 @@ from UtilityController import UtilityTools
 def interact_with_module(session, module_path,module_args, project_ids = None, zones_choices = None):
 
     try: 
+        
+        
+
+        # Check if creds are none and print error message before entering function.
+        if "Unauthenticated" not in module_path and session.credentials is None:
+            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Cannot run module as credentials are 'None'. Please load in credentials or run an unauthenticated module.{UtilityTools.RESET}")
+            return -1
+
+
+
 
         module_import_path = module_path.replace("/",".")
         module = importlib.import_module(module_import_path)
 
+        if "-h" in module_args:
+            module.run_module(module_args, session)
+            
         one_project_only = False
 
         project_list = []
@@ -30,11 +43,11 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
             project_list = session.config_project_list
 
         # Depending on some items set proejct ID to just current project iD
-        elif any(module_indicator in module_import_path for module_indicator in module_indicators_of_no_project_prompt):
+        elif any(module_indicator in module_import_path for module_indicator in module_indicators_of_no_project_prompt) and session.project_id != None:
                
             project_list = [session.project_id]
 
-        elif not project_ids:
+        elif not project_ids and session.project_id != None:
 
             project_list = [session.project_id]
             
@@ -62,13 +75,12 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
 
             project_list = None
 
-        # Start looping through projects
+        if "Unauthenticated" not in module_path and project_list == None:
+            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Cannot run module without default project_id specified. Either specify one with '--project-ids <project_id1>,<project_id2>' or set it via 'projects set <project_id>.{UtilityTools.RESET}")
+            return -1
+
         original_project_id = session.project_id
         current_project_length = len(project_list)
-
-        if "Unauthenticated" not in module_path and session.credentials is None:
-            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Cannot run module as credentials are 'None'. Please load in credentials or run an unauthenticated module.{UtilityTools.RESET}")
-            return -1
 
         for index, project_id in enumerate(project_list):
 
@@ -77,6 +89,8 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
             session.project_id = project_id
             first_run = (index == 0)
             last_run = (index == len(project_list) - 1)
+            
+            print(f"[*]"+"-"*120+"[*]") 
 
             callback = module.run_module(module_args, session, first_run = first_run, last_run = last_run)
             # If callback in enum_all and user didnt specify project dis
@@ -95,7 +109,10 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
                     current_project_length = new_project_length
             
             UtilityTools.log_action(session.workspace_directory_name, f"[END_MODULE] Exiting {module_path.split('/')[-1]} module for {project_id}...")
-        
+            
+            if index == len(project_list)-1:
+                print(f"[*]"+"-"*120+"[*]") 
+
         # Reset session at end to default project
         session.project_id = original_project_id
 

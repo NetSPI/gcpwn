@@ -9,6 +9,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser = argparse.ArgumentParser(description="Enumerate IAM Policy", allow_abbrev=False)
     
     parser.add_argument("--iam", action="store_true", help="SA names to proceed with in the format '--buckets bucket1,bucket2,bucket3'")
+    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
 
     exclusive_sa_group = parser.add_mutually_exclusive_group(required=False)
     exclusive_sa_group.add_argument("--sa-accounts", type=str,  help="SA names to proceed with in the format '--buckets bucket1,bucket2,bucket3'")
@@ -91,6 +92,11 @@ def run_module(user_args, session, first_run = False, last_run = False):
                             save_service_account_key(service_account_key, session)
                             action_dict.setdefault(project_id, {}).setdefault("iam.serviceAccountKeys.get", {}).setdefault("service account", set()).add(email)
     
-    UtilityTools.summary_wrapup(resource_name = "Service Account(s)", resource_list = sorted(sa_printout_list), project_id = project_id)
+    UtilityTools.summary_wrapup(
+        title="Service Account(s)",
+        resource_list = sorted(sa_printout_list), 
+        project_id = project_id,        
+        output_file_path = args.txt
+    )
 
     session.insert_actions(action_dict, project_id, column_name = "service_account_actions_allowed")
