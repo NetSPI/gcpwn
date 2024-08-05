@@ -11,10 +11,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     debug = args.debug
 
-
     action_dict = {}
 
-   
     organization_client = resourcemanager_v3.OrganizationsClient(credentials = session.credentials)
     project_client = resourcemanager_v3.ProjectsClient(credentials = session.credentials)
     folder_client = resourcemanager_v3.FoldersClient(credentials=session.credentials)
@@ -73,7 +71,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         storage_client = storage.Client(credentials = session.credentials, project = project_id)    
         
         bucket_iam_policy = bucket_get_iam_policy(storage_client, bucket_name, debug=debug)
-        if bucket_iam_policy:
+        if bucket_iam_policy and bucket_iam_policy != 404:
             action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.getIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
             parse_iam_bindings_by_members(bucket_iam_policy._bindings, session, "bucket", bucket_name, bucket_project_id, policy_type = "google.api_core.iam.Policy")
 
@@ -92,7 +90,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         function_stored_entry = f"[{function_location}] {function_simple_name}"
 
         function_iam_policy = cloudfunction_get_iam_policy(function_client, function_name, debug=debug)
-        if function_iam_policy:
+        if function_iam_policy and function_iam_policy != 404:
 
             if function_version == 2:
                 action_dict.setdefault(function_project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v2", set()).add(function_stored_entry)
@@ -112,7 +110,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         zone_id = instance_data["zone"].split("/")[-1]
         
         instance_iam_policy = compute_instance_get_iam_policy(instance_client, instance_project_id, instance_name, zone_id, debug=debug)
-        if instance_iam_policy:
+        if instance_iam_policy and instance_iam_policy != 404:
 
             action_dict.setdefault(instance_project_id, {}).setdefault("compute.instances.getIamPolicy", {}).setdefault("instances", set()).add(instance_name)
 
@@ -131,7 +129,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         sa_email = account["email"]
         
         sa_iam_policy = sa_get_iam_policy(iam_client, sa_name, debug=debug)
-        if sa_iam_policy:
+        if sa_iam_policy and sa_iam_policy != 404:
             action_dict.setdefault(sa_project_id, {}).setdefault("iam.serviceAccounts.getIamPolicy", {}).setdefault("service account", set()).add(sa_name)
 
             parse_iam_bindings_by_members(sa_iam_policy.bindings, session, "saaccounts", sa_name, sa_project_id)
@@ -144,7 +142,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         secret_project_id = secret["project_id"]
         secret_name  = secret["name"]
         secret_iam_policy = secret_get_iam_policy(secret_client, secret_name, debug=debug)
-        if secret_iam_policy:
+        if secret_iam_policy and secret_iam_policy != 404:
           
             action_dict.setdefault(secret_project_id, {}).setdefault("secretmanager.secrets.getIamPolicy", {}).setdefault("secrets", set()).add(secret_name.split("/")[-1])
 
@@ -155,5 +153,3 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     # Users are gathered via IAM table
     session.sync_users()
-
-    #  TODO bug not saving all getIampermissions for each resource

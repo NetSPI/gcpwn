@@ -5,6 +5,7 @@ import json
 import requests
 import textwrap
 import ast
+from UtilityController import *
 
 from Modules.IAM.utils.util_helpers import cloudfunction_get_iam_policy,cloudfunction_set_iam_policy
 
@@ -325,14 +326,14 @@ def create_function(
 
         except Forbidden as e:
             if "does not have cloudfunctions.functions.create" in str(e):
-                print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.create permissions for the v1 function{UtilityTools.RESET}")
+                UtilityTools.print_403_api_denied("cloudfunctions.functions.create [v1]", resource_name = function_name)
             
             elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-                print(f"{UtilityTools.RED}[X] 403 The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
+                UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
 
         except Exception as e:
-            print(f"The V1 cloudfunctions.functions.create operation failed for unexpected reasons. See below:")
-            print(str(e))
+            UtilityTools.print_500(instance_name, "cloudfunctions.functions.create [v1]", e)
+
 
     elif version == "2":
 
@@ -382,15 +383,17 @@ def create_function(
 
 
         except Forbidden as e:
+
             if "does not have cloudfunctions.functions.create" in str(e):
-                print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.create permissions for the v2 function{UtilityTools.RESET}")
+                UtilityTools.print_403_api_denied("cloudfunctions.functions.create [v2]", resource_name = function_name)
             
             elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-                print(f"{UtilityTools.RED}[X] 403 The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
+                UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
 
         except Exception as e:
-            print(f"The V2 cloudfunctions.functions.create operation failed for unexpected reasons. See below:")
-            print(str(e))
+
+            UtilityTools.print_500(instance_name, "cloudfunctions.functions.create [v2]", e)
+
 
     print(f"[*] Successfully created {function_name}")
 
@@ -442,15 +445,17 @@ def update_function(
 
 
         except Forbidden as e:
+
             if "does not have cloudfunctions.functions.update" in str(e):
-                print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.update permissions for the v1 function{UtilityTools.RESET}")
+
+                UtilityTools.print_403_api_denied("cloudfunctions.functions.update [v1]", resource_name = function_name)
 
             elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-                print(f"{UtilityTools.RED}[-] 403 The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
+                UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
 
         except Exception as e:
-            print(f"The V1 cloudfunctions.functions.update operation failed for unexpected reasons. See below:")
-            print(str(e))    
+            
+            UtilityTools.print_500(instance_name, "cloudfunctions.functions.update [v1]", e)
 
     elif version == "2":
         
@@ -499,17 +504,19 @@ def update_function(
             update_status = response
 
         except Forbidden as e:
+
             if "does not have cloudfunctions.functions.update" in str(e):
-                print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.update permissions for the v2 function{UtilityTools.RESET}")
+                UtilityTools.print_403_api_denied("cloudfunctions.functions.update [v2]", resource_name = function_name)
 
             elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-                print(f"{UtilityTools.RED}[X] 403 The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
+                UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
 
         except Exception as e:
-            print(f"The V1 cloudfunctions.functions.update operation failed for unexpected reasons. See below:")
-            print(str(e))   
+
+            UtilityTools.print_500(instance_name, "cloudfunctions.functions.update [v2]", e)
 
     print("[*] Successfully uploaded the designated function")
+
     return update_status
 
 
@@ -521,8 +528,7 @@ def call_function(
         debug: Optional[str] = False
     )-> Union[Policy, None]:
 
-    if debug:
-        print(f"[*] Calling {function_name}...")
+    if debug: print(f"[*] Calling {function_name} [v{version}]...")
 
     response_data = None
 
@@ -539,18 +545,18 @@ def call_function(
             # Handle the response
             response_data = response.result
 
-
-
         except Forbidden as e:
             if "does not have cloudfunctions.functions.invoke" in str(e):
-                print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.invoke permissions for the v1 function{UtilityTools.RESET}")
+                
+                UtilityTools.print_403_api_denied("cloudfunctions.functions.invoke [v1]", resource_name = function_name)
 
             elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-                print(f"{UtilityTools.RED}[X] 403 The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
-            print(str(e))
+
+                UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
+                
         except Exception as e:
-            print(f"The V1 cloudfunctions.functions.invoke operation failed for unexpected reasons. See below:")
-            print(str(e))        
+
+            UtilityTools.print_500(instance_name, "cloudfunctions.functions.invoke [v1]", e)  
         
     # Manual Build with REST APIs due to no API for V2 functions (Can't use V1 client)
     elif version == "2":   
@@ -611,18 +617,15 @@ def call_function(
                         "name": "Hello World"
                     }
 
-
-
                     response = requests.post(url, headers=headers, data=json.dumps(data), timeout=70)
                     response_data = response.text
 
 
         except Exception as e:
-            print(f"{UtilityTools.RED}The V2 cloudfunctions.functions.invoke operation failed for unexpected reasons. See below:{UtilityTools.RESET}")
-            print(str(e))
 
-    if debug:
-        print(f"[DEBUG] Successfully completed functions cloudfunctions.functions.invoke ..")
+            UtilityTools.print_500(project, "cloudfunctions.functions.invoke [v2 - custom]", e)  
+
+    if debug: print(f"[DEBUG] Successfully completed functions cloudfunctions.functions.invoke ..")
 
     return response_data
 
@@ -662,8 +665,7 @@ def list_functions(
         debug: Optional[bool] = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Listing functions for project {parent} ...")
+    if debug: print(f"[DEBUG] Listing functions for project {parent} ...")
     
     function_list = []
 
@@ -677,26 +679,24 @@ def list_functions(
 
     except Forbidden as e:
         
-        if "does not have storage.buckets.get access" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403: The user does not have storage.functions.list permissions on {parent}{UtilityTools.RESET}")
-        
-            return None
-            
-        elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403 The Cloud Functions API is not enabled for {parent}{UtilityTools.RESET}")
+        if "does not have cloudfunctions.functions.list" in str(e):
+            UtilityTools.print_403_api_denied("cloudfunctions.functions.list", project_id = parent)
 
+        elif f"Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
+            UtilityTools.print_403_api_disabled("Cloud Functions", parent.split("/")[1])
             return "Not Enabled"
 
         return None
 
+    except NotFound as e:
+        if f"was not found" in str(e):
+            UtilityTools.print_404_resource(parent.split("/")[1])
+
     except Exception as e:
-        print("An unknown exception occurred when trying to call list_functions as follows:\n" + str(e))
+        UtilityTools.print_500(parent.split("/")[1], "cloudfunctions.functions.list", e)
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called list_functions for {parent} ...")
+    if debug: print(f"[DEBUG] Successfully called list_functions for {parent} ...")
     
     return function_list
 
@@ -706,8 +706,7 @@ def get_function(
         debug: Optional[bool] = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Getting function {function_name} ...")
+    if debug: print(f"[DEBUG] Getting function {function_name} ...")
     
     function_meta = None
 
@@ -724,23 +723,24 @@ def get_function(
         if "400 Malformed name" in str(e):
             print(f"[X] Function name {function_name} is malformed. Make sure to do the format projects/*/locations/*/functions/*")
 
-    except NotFound as e:
-        if "404 Resource" in str(e):
-            print(f"{UtilityTools.RED}[X] 404: Function {function_name} was not found{UtilityTools.RESET}")
-
     except Forbidden as e:
+
         if "does not have cloudfunctions.functions.get access to the Google Cloud project" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have cloudfunctions.functions.get permissions on function {function_name}{UtilityTools.RESET}")
+            
+            UtilityTools.print_403_api_denied("cloudfunctions.functions.get", resource_name = function_name)
         
         elif "Cloud Functions API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The Cloud Functions API is not enabled for this project{UtilityTools.RESET}")    
+
+            UtilityTools.print_403_api_disabled("Cloud Functions", function_name)
+
+    except NotFound as e:
+        if "404 Resource" in str(e):
+            UtilityTools.print_404_resource(function_name)
 
     except Exception as e:
-        print("[X] Something went wrong when trying to get the function. See details below:")
-        print(str(e))
+        UtilityTools.print_500(function_name, "cloudfunctions.functions.get", e)
 
-    if debug:
-        print(f"[DEBUG] Successfully called list_functions for {function_name} ...")    
+    if debug: print(f"[DEBUG] Successfully called list_functions for {function_name} ...")    
 
     # Handle the response
     

@@ -701,7 +701,6 @@ def add_instance_iam_member(instance_client, instance_name, project_id, zone, me
         print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
         return -1
 
-
     status = instance_set_iam_policy(instance_client, instance_name, project_id, zone, policy, debug=debug)
     
     if status:
@@ -714,7 +713,6 @@ def add_instance_iam_member(instance_client, instance_name, project_id, zone, me
 
     return status
     
-
 def instance_get_serial(instance_client, instance_name, project_id, zone_id, workspace_name, output = None,  debug = False):
 
     if debug:
@@ -760,6 +758,7 @@ def instance_get_serial(instance_client, instance_name, project_id, zone_id, wor
         
         if "is not ready" in str(e) and "The resource" in str(e):
             print(f"{UtilityTools.RED}[X] 400: Serial Download failed for {instance_name}. The VM was \"not ready\" and might be turned off.{UtilityTools.RESET} ")
+        
         else:
             
             UtilityTools.print_500(instance_name, "compute.instances.getSerialPortOutput", e)
@@ -894,6 +893,7 @@ def list_instances(instances_client, project_id, zone, debug=False):
         instance_list = list(instances_client.list(request=request)) 
         
     except Forbidden as e:
+
         if "does not have compute.instances.list" in str(e):
             UtilityTools.print_403_api_denied("compute.instances.list permissions", project_id = project_id)
 
