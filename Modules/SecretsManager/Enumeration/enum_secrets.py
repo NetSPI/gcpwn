@@ -55,7 +55,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
         parent = f"projects/{secret_project_id}"
 
         secrets_list_output = list_secrets(secret_client, parent, debug = debug)
-        if secrets_list_output:
+        if secrets_list_output  and secrets_list_output != "Not Enabled":
             secrets_list.setdefault(secret_project_id, []).extend(secrets_list_output)
             action_dict.setdefault('project_permissions', {}).setdefault(secret_project_id, set()).add('secretmanager.secrets.list')
             for secret in secrets_list_output:
@@ -93,7 +93,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
             secret_project_id = key.split("/")[1]
             secrets_list.setdefault(secret_project_id, []).append(key)
 
-    if secrets_list:  
+    if secrets_list and secrets_list != "Not Enabled":  
 
         for secret_project_id, secrets in secrets_list.items():
 

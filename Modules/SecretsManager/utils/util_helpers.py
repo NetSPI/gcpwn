@@ -13,6 +13,9 @@ from google.api_core.exceptions import InvalidArgument
 
 from google.iam.v1 import iam_policy_pb2 
 
+# Utilities
+from UtilityController import *
+
 def save_secret(secret, session, secret_project_id):
 
     table_name = 'secretsmanager-secrets'
@@ -210,41 +213,43 @@ def list_secrets(
         debug = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Listing secrets for project {parent} ...")
+    if debug: print(f"[DEBUG] Listing secrets for project {parent} ...")
     
     secrets_list = []
 
     try:
-
         request = secretmanager_v1.ListSecretsRequest(
             parent=parent,
         )
 
         secrets_list = list(secret_client.list_secrets(request=request))
-
     except Forbidden as e:
-        
-        if "does not have secretmanager.secrets.list access" in str(e):
+
+        if "Permission 'secretmanager.secrets.list' denied for resource" in str(e):
             
-            print(f"{UtilityTools.RED}[X] 403: The user does not have secretmanager.secrets.list permissions on {parent}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("secretmanager.secrets.list", resource_name = parent)
         
             return None
             
-        elif "Secrets Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
+        elif "Secret Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
             
-            print(f"{UtilityTools.RED}[X] 403 The Secrets Manager API is not enabled for {parent}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_disabled("Secrets Manager", parent)
 
             return "Not Enabled"
 
         return None
 
+    except NotFound as e:
+
+        if f"was not found" in str(e):
+            UtilityTools.print_404_resource(parent)
+
     except Exception as e:
-        print("An unknown exception occurred when trying to call list_secrets as follows:\n" + str(e))
+        
+        UtilityTools.print_500(parent, "secretmanager.secrets.list", e)
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called list_secrets for {parent} ...")
+    if debug: print(f"[DEBUG] Successfully called list_secrets for {parent} ...")
     
     return secrets_list
 
@@ -255,8 +260,7 @@ def get_secret(
         debug = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Getting secret for project {parent} ...")
+    if debug: print(f"[DEBUG] Getting secret for project {secret_name} ...")
     
     secret_meta = None
 
@@ -268,33 +272,35 @@ def get_secret(
 
         secret_meta = secret_client.get_secret(request=request)
 
-    except NotFound as e:
-        if "404 Secret" in str(e):
-            print(f"{UtilityTools.RED}[X] 404 The secret is not found for {secret_name}{UtilityTools.RESET}")
-        return 404
+
 
     except Forbidden as e:
         
         if "does not have secretmanager.secrets.get access" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403: The user does not have secretmanager.secrets.get permissions on {parent}{UtilityTools.RESET}")
-        
-            return None
-            
-        elif "Secrets Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403 The Secrets Manager API is not enabled for {parent}{UtilityTools.RESET}")
+
+            UtilityTools.print_403_api_denied("secretmanager.secrets.get", resource_name = secret_name)
+                    
+        elif "Secret Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
+
+            UtilityTools.print_403_api_disabled("Secrets Manager", secret_name)
 
             return "Not Enabled"
 
         return None
 
+    except NotFound as e:
+        if "404 Secret" in str(e):
+            UtilityTools.print_404_resource(secret_name)
+
+        return 404
+
     except Exception as e:
-        print("An unknown exception occurred when trying to call list_secrets as follows:\n" + str(e))
+
+        UtilityTools.print_500(secret_name, "secretmanager.secrets.get", e)
+
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called list_secrets for {parent} ...")
+    if debug: print(f"[DEBUG] Successfully called list_secrets for {secret_name} ...")
     
     return secret_meta
 
@@ -305,8 +311,7 @@ def list_secret_versions(
         debug = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Listing secret versions for project {parent} ...")
+    if debug: print(f"[DEBUG] Listing secret versions for project {parent} ...")
     
     secrets_list_versions = []
 
@@ -321,28 +326,28 @@ def list_secret_versions(
         
         if "does not have secretmanager.versions.list access" in str(e):
             
-            print(f"{UtilityTools.RED}[X] 403: The user does not have secretmanager.versions.list permissions on {parent}{UtilityTools.RESET}")
-        
-            return None
-            
-        elif "Secrets Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403 The Secrets Manager API is not enabled for {parent}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("secretmanager.versions.list access", resource_name = parent)
+                    
+        elif "Secret Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
+
+            UtilityTools.print_403_api_disabled("Secrets Manager", parent)
 
             return "Not Enabled"
 
         return None
+
     except NotFound as e:
         if "404 Secret" in str(e):
-            print(f"{UtilityTools.RED}[X] 404 The secret is not found for {parent}{UtilityTools.RESET}")
+            UtilityTools.print_404_resource(parent)
+
         return 404
 
     except Exception as e:
-        print("An unknown exception occurred when trying to call list_secret_versions as follows:\n" + str(e))
+        UtilityTools.print_500(secret_name, "secretmanager.versions.list", e)
+        
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called list_secret_versions for {parent} ...")
+    if debug: print(f"[DEBUG] Successfully called list_secret_versions for {parent} ...")
     
     return secrets_list_versions
 
@@ -365,33 +370,35 @@ def get_secret_version(
 
         secret_meta_version = secret_client.get_secret_version(request=request)
 
-    except NotFound as e:
-        if "404 Secret" in str(e):
-            print(f"{UtilityTools.RED}[X] 404 The secret version is not found for {secret_name_version}{UtilityTools.RESET}")
-        return 404
 
     except Forbidden as e:
         
         if "does not have secretmanager.versions.get access" in str(e):
             
-            print(f"{UtilityTools.RED}[X] 403: The user does not have secretmanager.versions.get permissions on {parent}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("secretmanager.versions.get access", resource_name = secret_name_version)
         
             return None
             
-        elif "Secrets Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403 The Secrets Manager API is not enabled for {parent}{UtilityTools.RESET}")
+        elif "Secret Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
+                        
+            UtilityTools.print_403_api_disabled("Secrets Manager", secret_name_version)
 
             return "Not Enabled"
 
         return None
 
+    except NotFound as e:
+        if "404 Secret" in str(e):
+            UtilityTools.print_404_resource(secret_name_version)
+
+        return 404
+
     except Exception as e:
-        print("An unknown exception occurred when trying to call get_secret_version as follows:\n" + str(e))
+
+        UtilityTools.print_500(secret_name_version, "secretmanager.versions.get", e)
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called get_secret_version for {secret_name_version} ...")
+    if debug: print(f"[DEBUG] Successfully called get_secret_version for {secret_name_version} ...")
     
     return secret_meta_version
 
@@ -402,8 +409,7 @@ def access_secret_value(
         debug = False
     ):
 
-    if debug:
-        print(f"[DEBUG] Getting secret version value for {secret_name_version} ...")
+    if debug: print(f"[DEBUG] Getting secret version value for {secret_name_version} ...")
     
     secret_meta_version_value = None
 
@@ -419,28 +425,26 @@ def access_secret_value(
     except Forbidden as e:
         
         if "does not have secretmanager.versions.access access" in str(e):
+
+            UtilityTools.print_403_api_denied("secretmanager.versions.access", resource_name = secret_name_version)
+                    
+        elif "Secret Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
             
-            print(f"{UtilityTools.RED}[X] 403: The user does not have secretmanager.versions.access permissions on {parent}{UtilityTools.RESET}")
-        
-            return None
-            
-        elif "Secrets Manager API has not been used in project" in str(e) and "before or it is disabled" in str(e):
-            
-            print(f"{UtilityTools.RED}[X] 403 The Secrets Manager API is not enabled for {parent}{UtilityTools.RESET}")
+            UtilityTools.print_403_api_disabled("Secrets Manager", secret_name_version)
 
             return "Not Enabled"
 
         return None
 
     except Exception as e:
-        print("An unknown exception occurred when trying to call get_secret_version as follows:\n" + str(e))
+
+        UtilityTools.print_500(secret_name_version, "secretmanager.versions.access", e)
+
         return None
 
-    if debug:
-        print(f"[DEBUG] Successfully called get_secret_version for {secret_name_version} ...")
+    if debug: print(f"[DEBUG] Successfully called get_secret_version for {secret_name_version} ...")
     
     return secret_meta_version_value
-
 
 def check_secret_permissions(secret_client, secret_name, debug = False):
     
