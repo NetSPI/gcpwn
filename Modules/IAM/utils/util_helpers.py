@@ -11,6 +11,9 @@ from google.api_core.exceptions import NotFound
 from google.api_core.exceptions import Forbidden
 from google.protobuf.json_format import MessageToDict
 
+# Utilities
+from UtilityController import *
+
 ########## Parse Bindings
 def parse_iam_bindings_by_members(bindings, session, type_of_resource, name, project_id, policy_type = None):
     try:        
@@ -141,11 +144,11 @@ def iam_disable_service_account_key(iam_client, sa_name, debug=False):
 
     except Forbidden as e:
         if "does not have iam.serviceAccountKeys.disable" in str(e):
-            print(f"[X] 403: The user does not have iam.serviceAccountKeys.disable permissions")
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.disable", resource_name = sa_name)
+
 
     except Exception as e:
-        print(f"The iam.serviceAccountKeys.disable operation failed for unexpected reasons. See below:")
-        print(str(e))
+        UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.disable", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed IAM disable_service_account_key ..")
@@ -169,11 +172,10 @@ def iam_enable_service_account_key(iam_client, sa_name, debug=False):
 
     except Forbidden as e:
         if "does not have iam.serviceAccountKeys.enable" in str(e):
-            print(f"[X] 403: The user does not have iam.serviceAccountKeys.enable permissions")
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.enable", resource_name = sa_name)
 
     except Exception as e:
-        print(f"The iam.serviceAccountKeys.enable operation failed for unexpected reasons. See below:")
-        print(str(e))
+        UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.enable", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed IAM enable_service_account_key ..")
@@ -197,12 +199,12 @@ def iam_generate_service_account_key(iam_client, sa_name, debug=False):
         name_account_key = iam_client.create_service_account_key(request=request)
 
     except Forbidden as e:
+        
         if "does not have iam.serviceAccountKeys.create" in str(e):
-            print(f"[X] 403: The user does not have iam.serviceAccountKeys.create permissions")
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.create", resource_name = sa_name)
 
     except Exception as e:
-        print(f"The iam.serviceAccountKeys.create operation failed for unexpected reasons. See below:")
-        print(str(e))
+        UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create", e)
 
     if debug:
         print(f"[DEBUG] Successfully completed IAM generate_service_account_key ..")

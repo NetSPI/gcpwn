@@ -79,12 +79,11 @@ def wait_for_extended_operation(
 
 def stop_instance(instance_client, project_id: str, zone: str, instance_name: str):
 
+    if debug: print(f"[DEBUG] Shutting down {instance_name} ...")
+
     stop_status = None
 
     try:
-
-        print(f"Shutting down {instance_name}...")
-        
 
         request = compute_v1.StopInstanceRequest(
             instance=instance_name,
@@ -97,16 +96,25 @@ def stop_instance(instance_client, project_id: str, zone: str, instance_name: st
     
     except Forbidden as e:
         if "does not have compute.instances.stop" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.stop permissions{UtilityTools.RESET}")
+            UtilityTools.print_403_api_denied("compute.instances.stop", resource_name = instance_name)
+        
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+
+    except NotFound as e:
+
+        if "was not found" in str(e):
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
-        print(f"Could not stop {instance_name} for following reasons:")
-        print(str(e))
+
+        UtilityTools.print_500(instance_name, "compute.instances.stop", e)
 
     return stop_status
 
 def start_instance(instance_client, project_id: str, zone: str, instance_name: str):
 
+    if debug: print(f"[DEBUG] Starting {instance_name} ...")
 
     start_status = None
 
@@ -115,16 +123,25 @@ def start_instance(instance_client, project_id: str, zone: str, instance_name: s
         operation = instance_client.start(
             project=project_id, zone=zone, instance=instance_name
         )
-
         start_status = wait_for_extended_operation(operation, "instance start")
 
     except Forbidden as e:
+        
         if "does not have compute.instances.start" in str(e):
-            print(f"{UtilityTools.RED}[X] 403: The user does not have compute.instances.start permissions{UtilityTools.RESET}")
+
+            UtilityTools.print_403_api_denied("compute.instances.start", resource_name = instance_name)
+
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+
+    except NotFound as e:
+
+        if "was not found" in str(e):
+            UtilityTools.print_404_resource(instance_name)
 
     except Exception as e:
-        print(f"Could not stop {instance_name} for following reasons:")
-        print(str(e))
+        UtilityTools.print_500(instance_name, "compute.instances.start", e)
 
     return start_status
 
@@ -156,7 +173,6 @@ def get_all_instance_zones(
 
 
 ########### SAVE OPERATIONS FOR COMPUTE INSTANCES
-
 def save_compute_project_to_resource(compute_project, session):
     table_name = 'abstract-tree-hierarchy'
     save_data = {}
@@ -453,15 +469,24 @@ def create_instance(
             instance_resource=body
         )
 
-        print(f"[*] Creating the [{instance_zone}] {instance_name} in {project_id}...")
+        print(f"[*] Creating {instance_name} [{instance_zone}] in {project_id}. Note this might take a minute...")
 
         # Make the request
         operation = instance_client.insert(request=request)
         response = wait_for_extended_operation(operation, "instance creation")
-        print(f"{UtilityTools.Green}[*] Instance {instance_name} created.{UtilityTools.RESET}")
+     
+        print(f"{UtilityTools.GREEN}[*] Instance {instance_name} created.{UtilityTools.RESET}")
 
         return 1
 
+    except Forbidden as e:
+        if "does not have compute.instances.create" in str(e):
+            UtilityTools.print_403_api_denied("compute.instances.create permissions", project_id = project_id)
+
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
+        
     except Exception as e:
         UtilityTools.print_500(instance_name, "compute.instances.create", e)
         return -1

@@ -210,11 +210,9 @@ def run_module(user_args, session, first_run = False, last_run = False):
                 
                 all_instances_key_values = {key: [obj for obj in value] for key, value in instance_only_info.items()}
 
-    
     UtilityTools.summary_wrapup(
         title="Compute Instance(s)",
         nested_resource_dict=all_instances_key_values,
         project_id = project_id,        
         output_file_path = args.txt
     )
-

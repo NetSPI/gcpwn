@@ -126,9 +126,7 @@ class UtilityTools:
     @staticmethod
     def print_500(resource_name, permission, error):
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}{UtilityTools.RED} {permission} failed for {resource_name}. See below:")
-        print(str(error))
-
-
+        print(str(error) + f"{UtilityTools.RESET}")
 
     @staticmethod
     def summary_wrapup(title=None, project_id=None, resource_list=None, total_resources=None, nested_resource_dict=None, footer=None, output_file_path=None):

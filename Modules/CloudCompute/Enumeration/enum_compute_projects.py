@@ -6,7 +6,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser = argparse.ArgumentParser(description="Enumerate Compute Projects", allow_abbrev=False)
     
     parser.add_argument("--txt", type=str, required=False, help="Save the stdout summary to a text file")
-
     parser.add_argument("-v","--debug",action="store_true", required=False, help="Get verbose data returned")
     
     args = parser.parse_args(user_args)
