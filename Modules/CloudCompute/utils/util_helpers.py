@@ -77,7 +77,8 @@ def wait_for_extended_operation(
 
     return result
 
-def stop_instance(instance_client, project_id: str, zone: str, instance_name: str):
+# Note calling stop instance on an instance already stopped returns None
+def stop_instance(instance_client, project_id: str, zone: str, instance_name: str, debug = False):
 
     if debug: print(f"[DEBUG] Shutting down {instance_name} ...")
 
@@ -93,7 +94,9 @@ def stop_instance(instance_client, project_id: str, zone: str, instance_name: st
 
         operation = instance_client.stop(request=request)
         stop_status = wait_for_extended_operation(operation, f"{instance_name} stopping")
-    
+        if stop_status == None:
+            stop_status = 1
+
     except Forbidden as e:
         if "does not have compute.instances.stop" in str(e):
             UtilityTools.print_403_api_denied("compute.instances.stop", resource_name = instance_name)
@@ -112,7 +115,7 @@ def stop_instance(instance_client, project_id: str, zone: str, instance_name: st
 
     return stop_status
 
-def start_instance(instance_client, project_id: str, zone: str, instance_name: str):
+def start_instance(instance_client, project_id: str, zone: str, instance_name: str, debug = False):
 
     if debug: print(f"[DEBUG] Starting {instance_name} ...")
 
@@ -124,6 +127,8 @@ def start_instance(instance_client, project_id: str, zone: str, instance_name: s
             project=project_id, zone=zone, instance=instance_name
         )
         start_status = wait_for_extended_operation(operation, "instance start")
+        if start_status == None:
+            start_status = 1
 
     except Forbidden as e:
         
@@ -1087,104 +1092,121 @@ def update_instance(
         debug=False
     ):
 
+    print(f"[*] Stopping {instance_name} [{instance_zone}] in {project_id}. Note this might take a minute...")
+
+    # 1. Stop Instance
+    result = stop_instance(instance_client, project_id, instance_zone, instance_name)
+    if result:
+            action_dict.setdefault(project_id, {}).setdefault("compute.instances.stop", {}).setdefault("instances", set()).add(instance_name)            
+    else:
+        return "Fail Stop"
+
+    # 2. Update Instance (Involves GetInstance for Fingerprint)
     try:
 
-        # Will return None if the instance is already shut down
-        result = stop_instance(instance_client, project_id, instance_zone, instance_name)
+        output = get_instance(instance_client, instance_name, project_id, instance_zone, debug=False)
+        
+        if output:
 
-        if result:
-                action_dict.setdefault(project_id, {}).setdefault("compute.instances.stop", {}).setdefault("instances", set()).add(instance_name)            
+            action_dict.setdefault(project_id, {}).setdefault("compute.instances.get", {}).setdefault("instances", set()).add(instance_name)            
+            fingerprint = output.fingerprint
 
-        try:
+        else:
+            return "Fail Fingerprint"
 
-            output = get_instance(instance_client, instance_name, project_id, instance_zone, debug=False)
-            if output:
-                action_dict.setdefault(project_id, {}).setdefault("compute.instances.get", {}).setdefault("instances", set()).add(instance_name)            
+        # TODO See if can mask this in anyway, does not seem to be the case.
+        access = compute_v1.AccessConfig()
+        access.type_ = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
+        access.name = "External NAT"
 
-                fingerprint = output.fingerprint
-
-            else:
-                print("[X] Cannot fetch instance and determine fingerprint for update. Exiting...")
-                return None
-
-            # TODO See if can mask this in anyway, does not seem to be the case.
-            access = compute_v1.AccessConfig()
-            access.type_ = compute_v1.AccessConfig.Type.ONE_TO_ONE_NAT.name
-            access.name = "External NAT"
-
-            body = {
-                'name': instance_name,
-                'fingerprint':f'{fingerprint}',
-                'machine_type': f'zones/{instance_zone}/machineTypes/e2-micro',
-                'disks': [
-                    {
-                        'auto_delete': True,
-                        'boot': True,
-                        'initialize_params':{
-                            'source_image':f'projects/debian-cloud/global/images/family/debian-12'
-                        }
+        body = {
+            'name': instance_name,
+            'fingerprint':f'{fingerprint}',
+            'machine_type': f'zones/{instance_zone}/machineTypes/e2-micro',
+            'disks': [
+                {
+                    'auto_delete': True,
+                    'boot': True,
+                    'initialize_params':{
+                        'source_image':f'projects/debian-cloud/global/images/family/debian-12'
                     }
-                ],
-                'network_interfaces': [
+                }
+            ],
+            'network_interfaces': [
+                {
+                    'access_configs':[access],
+                    'network': f'global/networks/default'
+                }
+            ]
+        }
+
+        if startup_script_data:
+
+            body['metadata'] = {
+                'items':[
                     {
-                        'access_configs':[access],
-                        'network': f'global/networks/default'
+                        'key': 'startup-script',
+                        'value': f'{startup_script_data}'
                     }
                 ]
             }
 
-            if startup_script_data:
+        # Update Service Account to try to get new creds
+        if sa_email:
 
-                body['metadata'] = {
-                    'items':[
-                        {
-                            'key': 'startup-script',
-                            'value': f'{startup_script_data}'
-                        }
-                    ]
-                }
+            body['service_accounts'] = []
 
-            # Update Service Account to try to get new creds
-            if sa_email:
+            added_creds = {
+                "email":sa_email,
+                "scopes":["https://www.googleapis.com/auth/cloud-platform"]
+            }
 
-                body['service_accounts'] = []
+            body['service_accounts'].append(added_creds)
 
-                added_creds = {
-                    "email":sa_email,
-                    "scopes":["https://www.googleapis.com/auth/cloud-platform"]
-                }
+        # This will FAIL if you don't pass in a fingerprint for some reason
+        # https://cloud.google.com/compute/docs/instances/update-instance-properties
+        request = compute_v1.UpdateInstanceRequest(
+            instance = instance_name,
+            instance_resource=body,
+            project=project_id,
+            zone=instance_zone
+        )
+    
+        # Make the request
 
-                body['service_accounts'].append(added_creds)
-
-            # This will FAIL if you don't pass in a fingerprint for some reason
-            # https://cloud.google.com/compute/docs/instances/update-instance-properties
-            request = compute_v1.UpdateInstanceRequest(
-                instance = instance_name,
-                instance_resource=body,
-                project=project_id,
-                zone=instance_zone
-            )
-      
-            # Make the request
-            print(f"Updating instance {instance_name}...")
-            operation = instance_client.update_unary(request=request)
-            response = wait_for_extended_operation(operation, "instance update")
-            if response:
-                action_dict.setdefault(project_id, {}).setdefault("compute.instances.update", {}).setdefault("instances", set()).add(instance_name)            
-
-        except Exception as e:
-            print(str(e))
-
-        # START VM  
-        response = start_instance(instance_client, project_id, instance_zone, instance_name)   
-        if response:
-            action_dict.setdefault(project_id, {}).setdefault("compute.instances.start", {}).setdefault("instances", set()).add(instance_name)            
+        print(f"[*] Updating {instance_name} [{instance_zone}] in {project_id} with fingerprint {fingerprint}. Note this might take a minute...")
         
- 
-        return 1
+        operation = instance_client.update_unary(request=request)
+        time.sleep(20)
+        #response = wait_for_extended_operation(operation, "instance update")
+
+        if operation:
+            action_dict.setdefault(project_id, {}).setdefault("compute.instances.update", {}).setdefault("instances", set()).add(instance_name)            
+
+    except Forbidden as e:
+        
+        if "does not have compute.instances.update" in str(e):
+            UtilityTools.print_403_api_denied("compute.instances.update permissions", project_id = project_id)
+            return "Fail Update"
+
+        elif f"Compute Engine API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+            UtilityTools.print_403_api_disabled("Compute", project_id)
+            return "Not Enabled"
 
     except Exception as e:
-        import traceback
-        print("[X] Something failed while trying to update the instance. See the error code below:")
-        print(traceback.format_exc())
-        return -1
+
+        UtilityTools.print_500(instance_name, "compute.instances.update", e)
+        return "Fail Update"
+
+    print(f"[*] Starting {instance_name} [{instance_zone}] in {project_id}. Note this might take a minute...")
+
+    # 3. Start Instance Again
+    response = start_instance(instance_client, project_id, instance_zone, instance_name)   
+    
+    if response:
+        action_dict.setdefault(project_id, {}).setdefault("compute.instances.start", {}).setdefault("instances", set()).add(instance_name)            
+    
+    else:
+        return "Fail Start"
+
+    return 1
