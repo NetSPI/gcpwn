@@ -1208,7 +1208,6 @@ def update_instance(
     
     else:
         return "Fail Start"
-
     return 1
 
 # check instance format used in the exploit module to add ssh keys
