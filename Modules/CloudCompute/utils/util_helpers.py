@@ -1210,3 +1210,13 @@ def update_instance(
         return "Fail Start"
 
     return 1
+
+# check instance format used in the exploit module to add ssh keys
+def check_instance_format(instance_format):
+    # Regular expression to match the required format
+    pattern = r"^projects/[^/]+/zones/[^/]+/instances/[^/]+$"
+
+    # Match the string with the pattern
+    if re.match(pattern, instance_format):
+        return True
+    return False
