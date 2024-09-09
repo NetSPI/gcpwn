@@ -62,7 +62,21 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
         elif args.access_keys_file:
 
-            hmac_list_rudimentary = [line.strip() for line in open(args.access_keys_file, "r").readlines()] 
+            key_file = args.access_keys_file
+
+            try:
+
+                hmac_list_rudimentary = [line.strip() for line in open(key_file, "r").readlines()] 
+                
+            except FileNotFoundError:
+                print(f"{UtilityTools.RED}[X] File {key_file} does not appear to exist. Exiting...{UtilityTools.RESET}")
+                return -1
+
+        # Validate User Input
+        status, incorrect_input = UtilityTools.validate_input_format(hmac_list_rudimentary, 4)
+        if status != 0: 
+            print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/hmacKeys/[access_key_id] Please try again...{UtilityTools.RESET}")
+            return -1
 
         for hmac_key_path in hmac_list_rudimentary:
 

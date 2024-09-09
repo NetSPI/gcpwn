@@ -21,7 +21,7 @@ def get_all_unique_node_names(session, show_deleted=False):
         data = session.get_data("abstract-tree-hierarchy", columns=["name", "display_name", "project_id", "state"], conditions="state == 1")
     return data
 
-def run_module(user_args, session, first_run=False, last_run=False):
+def run_module(user_args, session, first_run=False, last_run=False, output_format = ["table"]):
     parser = argparse.ArgumentParser(description="Generate MatPlotLib Graph", allow_abbrev=False)
     parser.add_argument("-v", "--debug", action="store_true")
     parser.add_argument("--show-deleted", action="store_true")

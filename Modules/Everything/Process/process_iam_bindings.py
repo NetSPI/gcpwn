@@ -112,7 +112,7 @@ def consolidate_convience_roles(session, convience_members, bindings):
     return all_convience_summary
 
 
-def run_module(user_args, session, first_run=False, last_run=False):
+def run_module(user_args, session, first_run=False, last_run=False, output_format = ["table"]):
     parser = argparse.ArgumentParser(description="Consolidate all IAM Bindings into 1 Member Rows", allow_abbrev=False)
     parser.add_argument("-v", "--debug", action="store_true", required=False, help="Get verbose data returned")
     parser.add_argument("--txt", action="store_true", help="Output in TXT format")

@@ -45,14 +45,13 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
     parser = argparse.ArgumentParser(description="Enumerate HMAC Keys Options", allow_abbrev=False)
     
     exclusive_access_key_group = parser.add_mutually_exclusive_group(required=False)
-    exclusive_access_key_group.add_argument("--secrets", type=str, help="Secrets to check in the format projects/[project_id]/secrets/[secret_name]")
-    exclusive_access_key_group.add_argument("--secrets-file", type=str, help="File name to get secrets in format projects/[project_id]/secrets/[secret_name] per line")
+    exclusive_access_key_group.add_argument("--secret-names", type=str, help="Secrets to check in the format projects/[project_id]/secrets/[secret_name]")
+    exclusive_access_key_group.add_argument("--secret-names-file", type=str, help="File name to get secrets in format projects/[project_id]/secrets/[secret_name] per line")
     parser.add_argument("--version-range", type=parse_range,  help="Range of secret versions to try (ex. 1-100)")
 
     parser.add_argument("--iam",action="store_true",required=False,help="Call TestIAMPermissions on Compute Instances")
     parser.add_argument("--download",action="store_true",required=False,help="Download all secret VALUES to a local CSV")
  
-
     # Debug/non-module specific
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
 
@@ -60,38 +59,20 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
     args = parser.parse_args(user_args)
     
-    debug = args.debug
-
+    debug, project_id = args.debug, session.project_id
     action_dict, secrets_list = {}, {}
     
     secret_client = secretmanager_v1.SecretManagerServiceClient(credentials = session.credentials)   
 
-    if not (args.secrets or args.secrets_file):
+    if args.secret_names or args.secret_names_file:
         
+        if args.secret_names:
 
-        secret_project_id = session.project_id
+            secrets_list_rudimentary = args.secret_names.split(",")
 
-        parent = f"projects/{secret_project_id}"
+        elif args.secret_names_file:
 
-        secrets_list_output = list_secrets(secret_client, parent, debug = debug)
-        if secrets_list_output  and secrets_list_output != "Not Enabled":
-
-            secrets_list.setdefault(secret_project_id, {}).update({HashableSecret(secret): {} for secret in secrets_list_output})
-            action_dict.setdefault('project_permissions', {}).setdefault(secret_project_id, set()).add('secretmanager.secrets.list')
-
-        else:
-            secrets_list.setdefault(secret_project_id, {})
-            
-
-    else:
-
-        if args.secrets:
-
-            secrets_list_rudimentary = args.secrets.split(",")
-
-        elif args.secrets_file:
-
-            secrets_file = args.secrets_file
+            secrets_file = args.secret_names_file
 
             try:
 
@@ -107,178 +88,192 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/secrets/[secret_name] Please try again...{UtilityTools.RESET}")
             return -1
 
-        for key in secrets_list_rudimentary:
+        for secret_name in secrets_list_rudimentary:
 
-            secret_project_id = key.split("/")[1]
-            secrets_list.setdefault(secret_project_id, []).append(key)
-    
-    if secrets_list and secrets_list != "Not Enabled":  
+            _, secret_project_id, _, common_secret_name = secret_name.split("/")
+            secret_value = HashableSecret(Instance(name = secret))
+            secret_value.validated = False
+            secrets_list.setdefault(secret_project_id, set([])).add(secret_value)  
 
-        for secret_project_id, secret_list in secrets_list.items():
+    else:
 
-            if debug: 
+        parent = f"projects/{project_id}"
 
-                if len(secret_list) != 0:
-                    num_of_secrets = len(secret_list)
-                    print(f"[DEBUG] {num_of_secrets} secrets were found")
+        every_secret = list_secrets(secret_client, parent, debug = debug)
+
+        if every_secret == "Not Enabled" or every_secret == None:
+            secrets_list.setdefault(project_id, {})
+
+        else:
+
+            # Set action_dict whether instances are found or API worked but still empty list
+            action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('secretmanager.secrets.list')
+
+            # Handle case where every_instance is empty
+            if not every_secret:
+                secrets_list.setdefault(project_id, {})
+
+            else:
+                secrets_list.setdefault(project_id, {}).update({HashableSecret(secret): {} for secret in every_secret})
+                for secret in every_secret:
+                    save_secret(secret, session, project_id)
+
+    for secret_project_id, secret_list in secrets_list.items():
+
+        if debug: 
+
+            if len(secret_list) != 0:
+                num_of_secrets = len(secret_list)
+                print(f"[DEBUG] {num_of_secrets} secrets were found")
+            
+            else:
+                print(f"[DEBUG]  No instances were found")
+
+        for secret in secret_list:
+
+            validated = secret.validated
+            secret_name = secret.name
+
+            print(f"[**] [{secret_project_id}] Reviewing {secret_name}")
+
+            if not args.minimal_calls:
+
+                print(f"[***] GET Base Secret Entity")
+                secret_get = get_secret(secret_client, secret_name, debug=debug)
                 
-                else:
-                    print(f"[DEBUG]  No instances were found")
+                if secret_get:
+                    if secret_get == 404:
+                        continue
 
-            for secret in secret_list:
+                    else:
 
-                validated = secret.validated
-
-                if not args.secrets and not args.secrets_file:
-                    save_secret(secret, session, secret_project_id)
-
-                    secret_name = secret.name
-
-                else:
-
-                    secret_name = secret
-
-                print(f"[**] [{secret_project_id}] Reviewing {secret_name}")
-
-                if not args.minimal_calls:
-
-                    print(f"[***] GET Base Secret Entity")
-                    secret_get = get_secret(secret_client, secret_name, debug=debug)
-                    
-                    if secret_get:
-                        if secret_get == 404:
-                            continue
-
-                        else:
-
-                            # Add permission to dictionary and save GET response
-                            action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.secrets.get', {}).setdefault('secrets', set()).add(secret_get.name.split("/")[-1])
-                            save_secret(secret_get, session, secret_project_id)
-                            
-                            if args.secrets or args.secrets_file and validated == False:
-
-                                validated = True
-                                temp = secrets_list[secret_project_id].pop(sa)
-                                secrets_list[secret_project_id][secret_get] = temp
-
-                if args.iam:
-                    print(f"[***] TEST Secret Permissions")
-                    
-                    authenticated_permissions = check_secret_permissions(secret_client, secret_name, debug = debug)
-                    
-                    for permission in authenticated_permissions:
+                        # Add permission to dictionary and save GET response
+                        action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.secrets.get', {}).setdefault('secrets', set()).add(secret_get.name.split("/")[-1])
+                        save_secret(secret_get, session, secret_project_id)
                         
-                        if args.secrets or args.secrets_file and validated == False:
+                        if args.secret_names or args.secret_names_file and validated == False:
+
                             validated = True
-                            secrets_list[secret_project_id][secret].validated = True 
+                            temp = secrets_list[secret_project_id].pop(sa)
+                            secrets_list[secret_project_id][secret_get] = temp
 
-                        action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secrets', set()).add(secret.name.split("/")[-1])
-
-                print(f"[***] LIST Secret Versions")
-
-                secret_versions_list = []
-                if args.version_range:
-                    all_version_numbers = args.version_range
-                    for number in all_version_numbers:
-                        secret_versions_list.append(f"{secret_name}/versions/{number}")
+            if args.iam:
+                print(f"[***] TEST Secret Permissions")
                 
-                else:
-                    secret_versions_list = list_secret_versions(secret_client, secret_name)
+                authenticated_permissions = check_secret_permissions(secret_client, secret_name, debug = debug)
+                
+                for permission in authenticated_permissions:
+                    
+                    if args.secret_names or args.secret_names_file and validated == False:
+                        validated = True
+                        secrets_list[secret_project_id][secret].validated = True 
 
-                    if secret_versions_list:
-                        if not args.secrets and not args.secrets_file:
-                            version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
-                            for version in version_nums:
-                                secrets_list.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
+                    action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secrets', set()).add(secret.name.split("/")[-1])
 
+            print(f"[***] LIST Secret Versions")
+
+            secret_versions_list = []
+            if args.version_range:
+                all_version_numbers = args.version_range
+                for number in all_version_numbers:
+                    secret_versions_list.append(f"{secret_name}/versions/{number}")
+            
+            else:
+                secret_versions_list = list_secret_versions(secret_client, secret_name)
 
                 if secret_versions_list:
+                    if not args.secret_names and not args.secret_names_file:
+                        version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
+                        for version in version_nums:
+                            secrets_list.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
 
-                    for secret_version in secret_versions_list:
+
+            if secret_versions_list:
+
+                for secret_version in secret_versions_list:
+                    
+                    if not args.version_range:
+                        save_secret_version(secret_version, session, secret_project_id)
+                        secret_version_name = secret_version.name
+                    
+                    else:
+                        secret_version_name = secret_version
+                    
+                    version_num = secret_version_name.split('/')[5]
+
+
+                    secret_version_condensed_name = secret_version_name.split("/")[3] + f" (Version: {version_num})"
+
+                    #print(f"[**] [{secret_project_id}] Reviewing {secret_version_name}")
+
+                    if not args.minimal_calls:
+
+                        print(f"[****] GET Secret Version {version_num}")
+                        secret_get_version = get_secret_version(secret_client, secret_version_name, debug=debug)
                         
-                        if not args.version_range:
-                            save_secret_version(secret_version, session, secret_project_id)
-                            secret_version_name = secret_version.name
-                        
-                        else:
-                            secret_version_name = secret_version
-                        
-                        version_num = secret_version_name.split('/')[5]
-
-
-                        secret_version_condensed_name = secret_version_name.split("/")[3] + f" (Version: {version_num})"
-
-                        #print(f"[**] [{secret_project_id}] Reviewing {secret_version_name}")
-
-                        if not args.minimal_calls:
-
-                            print(f"[****] GET Secret Version {version_num}")
-                            secret_get_version = get_secret_version(secret_client, secret_version_name, debug=debug)
-                            
-                            if secret_get_version:
-                                if secret_get_version == 404:
-                                    continue
-                                else:
-                                    # Add permission to dictionary and save GET response
-                                    action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.versions.get', {}).setdefault('secret version', set()).add(secret_version_condensed_name)
-                                    save_secret_version(secret_get_version, session, secret_project_id)
-                                    if args.version_range:
-                                        secrets_list[secret_project_id][secret][version_num] = None
-
-                        if args.iam:
-                            print(f"[****] TEST Secret Version Permissions")
-                            
-                            authenticated_permissions = check_secret_version_permissions(secret_client, secret_version_name, debug = debug)
-                            
-                            for permission in authenticated_permissions:
-                                
+                        if secret_get_version:
+                            if secret_get_version == 404:
+                                continue
+                            else:
+                                # Add permission to dictionary and save GET response
+                                action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.versions.get', {}).setdefault('secret version', set()).add(secret_version_condensed_name)
+                                save_secret_version(secret_get_version, session, secret_project_id)
                                 if args.version_range:
                                     secrets_list[secret_project_id][secret][version_num] = None
 
-                                
-                                action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secret version', set()).add(secret_version_condensed_name)
+                    if args.iam:
+                        print(f"[****] TEST Secret Version Permissions")
+                        
+                        authenticated_permissions = check_secret_version_permissions(secret_client, secret_version_name, debug = debug)
+                        
+                        for permission in authenticated_permissions:
+                            
+                            if args.version_range:
+                                secrets_list[secret_project_id][secret][version_num] = None
 
-                        # TODO maybe make this optional in future?
-                        print(f"[****] GETTING Secret Values For {version_num}")
-                        secret_value = access_secret_value(secret_client, secret_version_name, debug = debug)
+                            
+                            action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secret version', set()).add(secret_version_condensed_name)
 
-                        if secret_value:
-                            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[****] SECRET VALUE RETRIEVED FOR {version_num}{UtilityTools.RESET}")
-                            action_dict.setdefault(secret_project_id, {}).setdefault("secretmanager.versions.access", {}).setdefault('secret version', set()).add(secret_version_condensed_name)
+                    # TODO maybe make this optional in future?
+                    print(f"[****] GETTING Secret Values For {version_num}")
+                    secret_value = access_secret_value(secret_client, secret_version_name, debug = debug)
 
-                            if secret_value.payload.data:
-                                
-                                # secret_project_id
-                                # secret_version_condensed_name
-                                secret_value_data = secret_value.payload.data
-                                
-                                secrets_list[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
-                                
-                                entry = {
-                                    "primary_keys_to_match":{
-                                        "name": secret_version_name
-                                    },
-                                    "data_to_insert":{
-                                        "secret_value":secret_value_data
-                                    }
+                    if secret_value:
+                        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[****] SECRET VALUE RETRIEVED FOR {version_num}{UtilityTools.RESET}")
+                        action_dict.setdefault(secret_project_id, {}).setdefault("secretmanager.versions.access", {}).setdefault('secret version', set()).add(secret_version_condensed_name)
+
+                        if secret_value.payload.data:
+                            
+                            # secret_project_id
+                            # secret_version_condensed_name
+                            secret_value_data = secret_value.payload.data
+                            
+                            secrets_list[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
+                            
+                            entry = {
+                                "primary_keys_to_match":{
+                                    "name": secret_version_name
+                                },
+                                "data_to_insert":{
+                                    "secret_value":secret_value_data
                                 }
-                                session.insert_data('secretsmanager-secretversions', entry, update_only = True )
-                                if args.download:
-                                    destination_filename = UtilityTools.get_save_filepath(session.workspace_directory_name, "secrets_data_file.csv", "Secrets")
-                                    data = {
-                                        "secret_project_id": [secret_project_id],
-                                        "secret_name_version": [secret_version_condensed_name],
-                                        "secret_value_data": [secret_value_data]
-                                    }                              
-                                    df = pd.DataFrame(data)
-                                    if not os.path.isfile(destination_filename):
-                                        # File doesn't exist, so write (create) it
-                                        df.to_csv(destination_filename, index=False)
-                                    else:
-                                        # File exists, so append to it
-                                        df.to_csv(destination_filename, mode='a', header=False, index=False)
-            
-            session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
+                            }
+                            session.insert_data('secretsmanager-secretversions', entry, update_only = True )
+                            if args.download:
+                                destination_filename = UtilityTools.get_save_filepath(session.workspace_directory_name, "secrets_data_file.csv", "Secrets")
+                                data = {
+                                    "secret_project_id": [secret_project_id],
+                                    "secret_name_version": [secret_version_condensed_name],
+                                    "secret_value_data": [secret_value_data]
+                                }                              
+                                df = pd.DataFrame(data)
+                                if not os.path.isfile(destination_filename):
+                                    # File doesn't exist, so write (create) it
+                                    df.to_csv(destination_filename, index=False)
+                                else:
+                                    # File exists, so append to it
+                                    df.to_csv(destination_filename, mode='a', header=False, index=False)
+        session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
 
     for project, secrets in secrets_list.items():
         

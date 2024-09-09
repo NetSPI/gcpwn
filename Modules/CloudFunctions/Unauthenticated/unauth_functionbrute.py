@@ -55,7 +55,7 @@ def read_wordlist(filename):
         exit(1)
 
 # Entrypoint
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
     
     # Set up static variables
     project_id = session.project_id

@@ -223,7 +223,7 @@ def anonymous_and_all_authenticated_users_catch(session,
 # session - Contains current workspace ID, database handlers, and permissions if needed
 # last_project - Flag letting you know if this is the last project the module is running on, only True if more than one project is provided and you are on last project
 ## user_args is passed from the previous module, pass this into the , blob_max_size = args.parser if you are doing the non-standalone callable version
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
 
     # Set up Argparser to handle flag arguments
