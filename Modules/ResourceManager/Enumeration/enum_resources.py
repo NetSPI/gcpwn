@@ -1,37 +1,88 @@
 from Modules.ResourceManager.utils.util_helpers import *
 
+class HashableResource:
+
+    r_type = None
+    r_state = None
+
+    # default validated to true unless otherwise noted
+    def __init__(self, resource, resource_type = None, validated = True):
+        self._resource = resource
+        self.validated = validated
+        self.r_type = resource_type
+        if resource.state == 0:
+            self.r_state = "STATE_UNSPECIFIED"
+        elif resource.state and resource.state == 1:
+            self.r_state = "ALIVE"
+        elif resource.state and resource.state == 2:
+            self.r_state = "DELETE_REQUESTED"
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash(self._resource.name)
+
+    def __eq__(self, other):
+        # Compare based on the name or any other combination of unique attributes
+
+        if isinstance(other, HashableHMACKeyMetadata) and self._resource.name == other._resource.name:
+            return True
+        else:
+            return False
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._resource, attr)
+
+    def __repr__(self):
+        # Make the string representation more informative by including both id and name
+        return f"HashableResource(name={self._resource.name})"
+
+
+
 status_mapping = {
     0: "STATE_UNSPECIFIED",
     1: f"{UtilityTools.GREEN}ACTIVE{UtilityTools.RESET}",
     2: f"{UtilityTools.RED}DELETE_REQUESTED{UtilityTools.RESET}"
 }
-
+             
 ##### Build Abstract Tree
-def build_tree(session, project_client, folder_client, parent_id, all_folder_info, all_project_info, debug=False):
+def build_tree(session, project_client, folder_client, parent_id, all_folder_info, all_project_info,
+                only_projects = False, 
+                only_folders = False, 
+                only_organizations = False,  
+                debug=False, object_list=None):
+    if object_list is None:
+        object_list = []
 
     # List projects under the parent
-    
     projects = list_projects(project_client, parent_id, debug=debug)
     if projects:
         for project in projects:
-            
             project_status = status_mapping.get(project.state, "UNKNOWN_STATE") if project.state is not None else "UNKNOWN_STATE"
 
-            all_project_info.add(f"{project.name} ({project.display_name}) - {project.state}" if project.display_name else f"{project.name}")  
-            save_metadata_gcp(session, project, "project")
+            if not (only_folders and only_projects and only_organizations) or only_projects:
+                save_metadata_gcp(session, project, "project")
+            
+            # Append the (object, type_of_object) tuple
+            object_list.append((project, "project"))
 
     # List folders under the parent
     folders = list_folders(folder_client, parent_id, debug=debug)
     if folders:
         for folder in folders:
-            
             folder_status = status_mapping.get(folder.state, "UNKNOWN_STATE") if folder.state is not None else "UNKNOWN_STATE"
 
-            all_folder_info.add(f"{folder.name} ({folder.display_name}) - {folder_status}" if folder.display_name else f"{folder.name}")  
-            save_metadata_gcp(session, folder, "folder")
+            # If user specified no flags or if so if one of them is only_folders
+            if not (only_folders and only_projects and only_organizations) or only_folders:
+                save_metadata_gcp(session, folder, "folder")
             
+            # Append the (object, type_of_object) tuple
+            object_list.append((folder, "folder"))
+
             # Recursively build the tree for child folders and projects
-            build_tree(session, project_client, folder_client, folder.name, all_folder_info, all_project_info, debug=debug)
+            build_tree(session, project_client, folder_client, folder.name, all_folder_info, all_project_info, debug=debug, object_list=object_list)
+
+    return object_list
 
 def save_metadata_gcp(session, data_object, resource_type):
 
@@ -63,7 +114,7 @@ def save_metadata_gcp(session, data_object, resource_type):
     # IAM table save list of users tied to role, if more users are added to the same role at later date we add them, to check permissions check if in list
     session.insert_data(table_name, save_data, if_column_matches  = if_column_matches)
 
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
     # Set up Argparser to handle flag arguments
     parser = argparse.ArgumentParser(description="Enumerate Resource Manager Resources (Orgs/Folders/Projects)", allow_abbrev=False)
@@ -76,7 +127,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--all-permissions",action="store_true",required=False,help="Check thousands of permissions via testiampermissions")
 
     parser.add_argument("--no-recursive",action="store_true",required=False,help="Don't call search on project/folders via recursion")
-    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
 
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data returned")
 
@@ -84,6 +134,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     project_id = session.project_id
     debug = args.debug
+
+    all_resources = set([])
 
     all_org_info, all_folder_info, all_project_info = set([]),set([]),set([])
 
@@ -94,6 +146,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     folder_client = resourcemanager_v3.FoldersClient(credentials=session.credentials)
 
     organization_list, projects_search, folders_search = None, None, None
+    r_manager_disabled = False
 
     # If nothing default to enumerating everything
     if not args.organizations and not args.projects and not args.folders:
@@ -114,7 +167,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
                     org_status = status_mapping.get(org.state, "UNKNOWN_STATE") if org.state is not None else "UNKNOWN_STATE"
 
-                    all_org_info.add(f"{org.name} ({org.display_name}) - {org_status}" if org.display_name else f"{org.name}")
+                    all_org_info.add(HashableResource(org, resource_type = "Org"))
                     
                     if args.iam: 
                     
@@ -166,11 +219,14 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         permissions = None
         projects_search = search_projects(project_client, debug=debug)
-        if projects_search:
+        if projects_search == "Not Enabled":
+            r_manager_disabled = True
+
+        if projects_search and projects_search != "Not Enabled":
             for project in projects_search:
 
                 project_status = status_mapping.get(project.state, "UNKNOWN_STATE") if project.state is not None else "UNKNOWN_STATE"
-                all_project_info.add(f"{project.name} ({project.display_name}) - {project_status}" if project.display_name else f"{project.name}")  
+                all_project_info.add(HashableResource(project, resource_type = "Project"))  
                 
                 if args.iam: 
 
@@ -228,7 +284,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
                 folder_status = status_mapping.get(folder.state, "UNKNOWN_STATE") if folder.state is not None else "UNKNOWN_STATE"
 
-                all_folder_info.add(f"{folder.name} ({folder.display_name}) - {folder_status}" if folder.display_name else f"{folder.name}")  
+                all_folder_info.add(HashableResource(folder, resource_type = "Folder"))  
                 save_metadata_gcp(session, folder, "folder")
                 if args.iam: 
 
@@ -276,7 +332,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
     # TODO Integrate action_dict with recursive loop here 
     # Use List Projects and List Folders from either an org node or a folder node and build out the rest of the tree
     # For the use case wehre the search operations above might be blocked but list would not be
-    if not args.no_recursive:
+    if not args.no_recursive and not r_manager_disabled:
 
         print("[*] Getting remainting projects/folders via recursive folder/project list calls starting with org node if possible")
         print("[*] NOTE: This might take a while depending on the size of the domain")
@@ -284,21 +340,39 @@ def run_module(user_args, session, first_run = False, last_run = False):
         if organization_list and len(organization_list) >= 1:
             for org in organization_list:
                 parent_id = org.name
-                build_tree(session, project_client, folder_client, parent_id, all_folder_info, all_project_info, debug=debug)
+                additional_objects = build_tree(session, project_client, folder_client, parent_id, all_folder_info, all_project_info, 
+                only_projects = args.projects, 
+                only_folders = args.folders, 
+                only_organizations = args.organizations, 
+                debug=debug)
         elif folders_search and len(folders_search) >= 1:
             for folder in folders_search:
                 parent_id = folder.name
-                build_tree(session, project_client, folder_client,parent_id, all_folder_info, all_project_info, debug=debug)
-
+                additional_objects = build_tree(session, project_client, folder_client,parent_id, all_folder_info, all_project_info,
+                only_projects = args.projects, 
+                only_folders = args.folders, 
+                only_organizations = args.organizations, 
+                debug=debug)
+    
     # Sync up any new projects that were found with workspace
     session.sync_projects()
     session.insert_actions(action_dict,project_id)
+    for res in all_org_info:
+        all_resources.add(HashableResource(res, resource_type="Org"))
+    for res in all_project_info:
+        all_resources.add(HashableResource(res, resource_type="Project"))
+    for res in all_folder_info:
+        all_resources.add(HashableResource(res, resource_type="Folder"))
 
-    UtilityTools.summary_wrapup(title = "Organization(s)", resource_list = all_org_info,        
-        output_file_path = args.txt)
-    UtilityTools.summary_wrapup(title = "Folder(s)", resource_list = all_folder_info,        
-        output_file_path = args.txt)
-    UtilityTools.summary_wrapup(title = "Project(s)", resource_list = all_project_info,        
-        output_file_path = args.txt)
+    UtilityTools.summary_wrapup(
+                project_id, 
+                "Resource Orgs/Folders/Projects", 
+                list(all_resources), 
+                ["name","display_name","parent","r_type","project_id","r_state"],
+                primary_resource = "Orgs/Folders/Projects",
+                primary_sort_key = "r_type",
+                output_format = output_format 
+            )
+
 
 

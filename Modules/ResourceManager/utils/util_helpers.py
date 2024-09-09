@@ -259,8 +259,6 @@ def check_folder_permissions(authenticated_folder_client, folder_name, permissio
 
     return authenticated_permissions          
 
-
-
 def check_organization_permissions(authenticated_org_client, org_name, permissions, authenticated = True, unauthenticated = False, debug = False):
     authenticated_permissions = []
 
@@ -275,7 +273,6 @@ def check_organization_permissions(authenticated_org_client, org_name, permissio
             # Make the request
             authenticated_permissions = authenticated_org_client.test_iam_permissions(request=request)
             authenticated_permissions = authenticated_permissions.permissions
-
 
         except NotFound as e:
             print(f"[-] 404  {bucket_name} does not appear to exist ")
@@ -361,17 +358,28 @@ def search_organizations(resource_client, debug=False):
     try:
 
         request = resourcemanager_v3.SearchOrganizationsRequest()
-
-
         organizations_list = list(resource_client.search_organizations(request=request))
-
-    except Forbidden as e:            
+       
+    except Forbidden as e:
         if "does not have resourcemanager.organizations.get" in str(e):
-            print(f"[-] The user does not have 'resourcemanager.organizations.get' to list organizations")    
-    
-    except Exception as e:
+            UtilityTools.print_403_api_denied("resourcemanager.organizations.get")
+        
+        elif f"Cloud Resource Manager API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+             UtilityTools.print_403_api_disabled("Resource Manager", "Current Organization")
+             return "Not Enabled"
         print(str(e))
-        print("[DEBUG] UNKNOWN EXCEPTION WHEN GETTING BLOB DETAILS")
+        return None
+
+    except NotFound as e:
+        if "was not found" in str(e):
+            UtilityTools.print_404_resource("CURRENT ORGANIZATION")
+            
+        return None
+
+    except Exception as e:
+        UtilityTools.print_500("Current Organization", "resourcemanager.organizations.get", e)
+        return None    
+
 
     if debug:
         print(f"[DEBUG] Successful completed list_organizations...")
@@ -391,13 +399,26 @@ def search_projects(project_client, debug=False):
         request = resourcemanager_v3.SearchProjectsRequest()
         projects_list = list(project_client.search_projects(request=request))
 
+
     except Forbidden as e:
         if "does not have resourcemanager.projects.get" in str(e):
-            print(f"[-] The user does not have 'resourcemanager.projects.get' to list organizations")    
+            UtilityTools.print_403_api_denied("resourcemanager.projects.get")
         
+        elif f"Cloud Resource Manager API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+             UtilityTools.print_403_api_disabled("Resource Manager", "Current Project")
+             return "Not Enabled"
+
+        return None
+
+    except NotFound as e:
+        if "was not found" in str(e) and f"{project_id}" in str(e):
+            UtilityTools.print_404_resource(project_id)
+            
+        return None
+
     except Exception as e:
-        print(str(e))
-        print("[DEBUG] UNKNOWN EXCEPTION WHEN GETTING BLOB DETAILS")    
+        UtilityTools.print_500("Current Project", "resourcemanager.projects.get", e)
+        return None    
     
     if debug:
         print(f"[DEBUG] Successfully completed search_projects...") 
@@ -416,13 +437,26 @@ def search_folders(folder_client, debug=False):
         request = resourcemanager_v3.SearchFoldersRequest()
         folders_list = list(folder_client.search_folders(request=request))
 
+
     except Forbidden as e:
         if "does not have resourcemanager.folders.get" in str(e):
-            print(f"[-] The user does not have 'resourcemanager.folders.get' to list organizations")  
+            UtilityTools.print_403_api_denied("resourcemanager.folders.get")
+        
+        elif f"Cloud Resource Manager API has not been used in project" in str(e) and "before or it is disabled. Enable it by visiting" in str(e):
+             UtilityTools.print_403_api_disabled("Resource Manager", "Current Project")
+             return "Not Enabled"
+
+        return None
+
+    except NotFound as e:
+        if "was not found" in str(e):
+            UtilityTools.print_404_resource("CURRENT FOLDER")
+            
+        return None
 
     except Exception as e:
-        print(str(e))
-        print("[DEBUG] UNKNOWN EXCEPTION WHEN GETTING BLOB DETAILS")    
+        UtilityTools.print_500("Current Folder", "resourcemanager.folders.get", e)
+        return None    
 
     if debug:
         print(f"[DEBUG] Successfully completed search_folders...") 

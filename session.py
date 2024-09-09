@@ -8,6 +8,8 @@ from UtilityController import *
 import google.auth.transport.requests
 import traceback
 
+from WorkspaceConfig import WorkspaceConfig
+
 from google.auth.exceptions import DefaultCredentialsError
 
 class SessionUtility:
@@ -23,7 +25,7 @@ class SessionUtility:
     email, access_token, scopes = None,None, []
     global_project_list = []
 
-    config_project_list, config_zones_list, config_regions_list = None, None, None
+    workspace_config = None
 
     def __init__(self, workspace_id, workspace_name, credname, auth_type, filepath=None, oauth_token=None, resume=None, adc_filepath = None, tokeninfo = False):
       
@@ -34,6 +36,10 @@ class SessionUtility:
         # Set Workspace ID for whole session object (integer stored as column in all tables)
         self.workspace_id = workspace_id
         self.workspace_name = workspace_name
+
+        # Set up config
+        self.workspace_config = WorkspaceConfig()
+        self.get_configs()
 
         # Set global project list to all project IDs stored for session. 
         # Taken from SELECT global_project_list FROM workspaces WHERE id = ?
@@ -804,3 +810,24 @@ class SessionUtility:
                 "email":member.replace("user:","")
             }
             self.insert_data("iam-principals",save_data)
+
+    def get_configs(self):
+
+        potential_config = self.data_master.get_workspace_config(self.workspace_id)
+        print("potential_config")
+        print(potential_config)
+        if potential_config:
+            self.workspace_config.from_json(potential_config)
+
+        else:
+            print("[X] Proceeding but no workspace configuration was loaded")
+
+    # Change attributes outside class then just sync eachtime
+    def set_configs(self):
+
+        new_config_settings = self.workspace_config.to_json_string()
+        self.data_master.set_workspace_config(self.workspace_id, new_config_settings)
+
+    def list_configs(self):
+
+        print(self.workspace_config.print_json_formatted())

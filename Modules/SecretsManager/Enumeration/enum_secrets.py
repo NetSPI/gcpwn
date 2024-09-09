@@ -1,5 +1,27 @@
 from Modules.SecretsManager.utils.util_helpers import *
 
+class HashableSecret:
+    def __init__(self, secret, validated = True):
+        self._secret = secret
+        self.validated = validated
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash(self._secret.name)
+
+    def __eq__(self, other):
+        # Compare based on the name or any other combination of unique attributes
+        return isinstance(other, HashableSecret) and self._secret.name == other._secret.name
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._secret, attr)
+
+    def __repr__(self):
+        # Optional: Make it easier to read the wrapped object
+        return f"HashableSecret({self._secret.name})"
+
+
 def parse_range(range_str):
     """
     Parse a range string (e.g., "1-5,7,latest") and return a list of numbers
@@ -17,7 +39,7 @@ def parse_range(range_str):
     return numbers
 
 # Entrypoint; Try-Catch Exists on Caller
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
     # Set up Argparser to handle flag arguments
     parser = argparse.ArgumentParser(description="Enumerate HMAC Keys Options", allow_abbrev=False)
@@ -29,7 +51,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     parser.add_argument("--iam",action="store_true",required=False,help="Call TestIAMPermissions on Compute Instances")
     parser.add_argument("--download",action="store_true",required=False,help="Download all secret VALUES to a local CSV")
-    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
+ 
 
     # Debug/non-module specific
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
@@ -42,9 +64,6 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     action_dict, secrets_list = {}, {}
     
-
-    final_output_secrets = {}
-
     secret_client = secretmanager_v1.SecretManagerServiceClient(credentials = session.credentials)   
 
     if not (args.secrets or args.secrets_file):
@@ -56,13 +75,13 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         secrets_list_output = list_secrets(secret_client, parent, debug = debug)
         if secrets_list_output  and secrets_list_output != "Not Enabled":
-            secrets_list.setdefault(secret_project_id, []).extend(secrets_list_output)
+
+            secrets_list.setdefault(secret_project_id, {}).update({HashableSecret(secret): {} for secret in secrets_list_output})
             action_dict.setdefault('project_permissions', {}).setdefault(secret_project_id, set()).add('secretmanager.secrets.list')
-            for secret in secrets_list_output:
-                final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret.name.split("/")[-1], {})
 
         else:
-            secrets_list = None
+            secrets_list.setdefault(secret_project_id, {})
+            
 
     else:
 
@@ -92,12 +111,23 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
             secret_project_id = key.split("/")[1]
             secrets_list.setdefault(secret_project_id, []).append(key)
-
+    
     if secrets_list and secrets_list != "Not Enabled":  
 
-        for secret_project_id, secrets in secrets_list.items():
+        for secret_project_id, secret_list in secrets_list.items():
 
-            for secret in secrets:
+            if debug: 
+
+                if len(secret_list) != 0:
+                    num_of_secrets = len(secret_list)
+                    print(f"[DEBUG] {num_of_secrets} secrets were found")
+                
+                else:
+                    print(f"[DEBUG]  No instances were found")
+
+            for secret in secret_list:
+
+                validated = secret.validated
 
                 if not args.secrets and not args.secrets_file:
                     save_secret(secret, session, secret_project_id)
@@ -120,13 +150,16 @@ def run_module(user_args, session, first_run = False, last_run = False):
                             continue
 
                         else:
+
                             # Add permission to dictionary and save GET response
                             action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.secrets.get', {}).setdefault('secrets', set()).add(secret_get.name.split("/")[-1])
                             save_secret(secret_get, session, secret_project_id)
                             
-                            if args.secrets or args.secrets_file:
-                                final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {})
+                            if args.secrets or args.secrets_file and validated == False:
 
+                                validated = True
+                                temp = secrets_list[secret_project_id].pop(sa)
+                                secrets_list[secret_project_id][secret_get] = temp
 
                 if args.iam:
                     print(f"[***] TEST Secret Permissions")
@@ -135,9 +168,10 @@ def run_module(user_args, session, first_run = False, last_run = False):
                     
                     for permission in authenticated_permissions:
                         
-                        if args.secrets or args.secrets_file:
-                            final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {})
-                        
+                        if args.secrets or args.secrets_file and validated == False:
+                            validated = True
+                            secrets_list[secret_project_id][secret].validated = True 
+
                         action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secrets', set()).add(secret.name.split("/")[-1])
 
                 print(f"[***] LIST Secret Versions")
@@ -155,7 +189,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
                         if not args.secrets and not args.secrets_file:
                             version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
                             for version in version_nums:
-                                final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {}).setdefault(version, None)
+                                secrets_list.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
 
 
                 if secret_versions_list:
@@ -189,7 +223,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
                                     action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.versions.get', {}).setdefault('secret version', set()).add(secret_version_condensed_name)
                                     save_secret_version(secret_get_version, session, secret_project_id)
                                     if args.version_range:
-                                        final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {}).setdefault(version_num, None)
+                                        secrets_list[secret_project_id][secret][version_num] = None
 
                         if args.iam:
                             print(f"[****] TEST Secret Version Permissions")
@@ -199,7 +233,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
                             for permission in authenticated_permissions:
                                 
                                 if args.version_range:
-                                    final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {}).setdefault(version_num, None)
+                                    secrets_list[secret_project_id][secret][version_num] = None
 
                                 
                                 action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secret version', set()).add(secret_version_condensed_name)
@@ -218,7 +252,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
                                 # secret_version_condensed_name
                                 secret_value_data = secret_value.payload.data
                                 
-                                final_output_secrets.setdefault(secret_project_id, {}).setdefault(secret_name.split("/")[-1], {})[version_num] = secret_value_data[:120].decode('utf-8')
+                                secrets_list[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
                                 
                                 entry = {
                                     "primary_keys_to_match":{
@@ -245,21 +279,33 @@ def run_module(user_args, session, first_run = False, last_run = False):
                                         df.to_csv(destination_filename, mode='a', header=False, index=False)
             
             session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
-    for secret_project_id, secret_only_info in final_output_secrets.items():
 
-        # Summary portion
-        total_versions = len(secret_only_info.keys())
+    for project, secrets in secrets_list.items():
         
-        all_secret_key_info = {
-            key: [
-                f"{k}: {v if v is not None else '<value_not_found>'}" for k, v in sorted(value.items(), key=lambda item: (item[0] == 'latest', item[0] if item[0] != 'latest' else ''))
-            ]
-            for key, value in secret_only_info.items()
-        }
+        for secret, version_dict in secrets.items():
+            temp_list = []
+            # Convert the version dictionary to a single string
+            for version, value in version_dict.items():
+                temp_list.append(f'{version}: {value}')
+
+            secrets_list[project][secret] = temp_list
+
+    for secret_project_id, secret_only_info in secrets_list.items():
+    
+        list(map(lambda secret: setattr(
+            secret._secret, 
+            'name', 
+            secret._secret.name.split("/")[-1]), 
+            secret_only_info
+        ))
+
 
         UtilityTools.summary_wrapup(
-            title="Secret(s)",
-            nested_resource_dict = all_secret_key_info, 
-            project_id = secret_project_id,        
-            output_file_path = args.txt
-        )    
+            secret_project_id, 
+            "Secrets Secrest/Versions", 
+            secret_only_info, 
+            ["name","expire_time"],
+            primary_resource = "Secret Names",
+            secondary_title_name = "versions",
+            output_format = output_format
+        ) 

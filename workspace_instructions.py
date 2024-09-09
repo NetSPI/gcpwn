@@ -57,9 +57,12 @@ def help_banner():
         projects set <project_name>         Set current project
         projects rm <project_name>          Remove project name
 
-
-        config set [zones | locations | projects] project1,project2,project3  Set a project list to be used by all modules to avoid prompt
-        config unset [zones | locations | projects]                           Set a zone list to be used by all modules to avoid prompts
+        global_configs [list]
+        global_configs set std-output [txt | csv | table]
+                          project-ids [project-id-1,project-id-2,...]
+                          zones [zone1,zone2,zone3,...] 
+                          regions [region1,region2,region3,...]
+        global_configs unset [output | project-ids | zones | regions]  Set a zone list to be used by all modules to avoid prompts
 
 
         danger [<credname>]            Show dangerous permissions & attack paths for current user
@@ -148,7 +151,8 @@ class CommandProcessor:
                     'swap': {'args': [('credname', {'nargs': '?', 'help': 'Specify credential name'})]}
                 }
             },
-            'configs': {
+
+            'global_configs': {
                 'subcommands': {
 
                     'set': {'args': [('type_of_entity', {'help': 'Specify zones/locations/projects/email to set for your session'}),
@@ -224,8 +228,8 @@ class CommandProcessor:
                 self.process_projects_command(args)
             elif args.subcommand == 'data':
                 self.process_data_command(args)
-            elif args.subcommand == 'configs':
-                self.process_config_command(args)
+            elif args.subcommand == 'global_configs':
+                self.process_global_configs_command(args)
             elif args.subcommand == 'modules':
                 self.process_modules_command(args)
 
@@ -446,25 +450,54 @@ class CommandProcessor:
             self.list_tables()
 
     ## Config Information/Logic
-    def process_config_command(self, args):
-        print(args.configs_subcommand)
-        if args.configs_subcommand == None:
-            self.print_config_snapshot()
-        elif args.configs_subcommand == "set":
-            if args.type_of_entity == "projects":
-                self.session.config_project_list = args.objects[0].split(",")
-            elif args.type_of_entity == "zones":
-                self.session.config_zones_list = args.objects[0].split(",")
-            elif args.type_of_entity == "locations":
-                self.session.config_regions_list = args.objects[0].split(",")
+    def process_global_configs_command(self, args):
+     
 
-        elif args.configs_subcommand == "unset":
+        if args.global_configs_subcommand == None or args.global_configs_subcommand == "list":
+            self.session.list_configs()
+
+        elif args.global_configs_subcommand == "set":
+
+            if args.type_of_entity == "std-output" and args.objects:
+                
+                std_output = args.objects[0].split(",")
+                for output in std_output:
+                    if output.lower() not in ["txt","csv","table"]:
+                        print(f"{std_output} is not supported. Please provide txt, csv, and/or table")
+                        return -1
+
+                self.session.workspace_config.preferred_output_formats = std_output
+
+            elif args.type_of_entity == "projects" and args.objects:
+                
+                project_ids = args.objects[0].split(",")
+                self.session.workspace_config.set_preferred_project_ids(project_ids)
+
+            elif args.type_of_entity == "zones" and args.objects:
+                
+                zones = args.objects[0].split(",")
+                self.session.workspace_config.set_preferred_zones(project_ids)
+
+            elif args.type_of_entity == "regions" and args.objects:
+                
+                regions = args.objects[0].split(",")
+                self.session.workspace_config.set_preferred_regions(project_ids)
+
+            self.session.set_configs()
+
+        elif args.global_configs_subcommand == "unset":
+
             if args.type_of_entity == "projects":
-                self.session.config_project_list = None
+
+                self.session.workspace_config.set_preferred_project_ids(None)
+
             elif args.type_of_entity == "zones":
-                self.session.config_zones_list = None
+
+                self.session.workspace_config.set_preferred_zones(None)
+
             elif args.type_of_entity == "locations":
-                self.session.config_regions_list = None
+
+                self.session.workspace_config.set_preferred_regions(None)
 
     def print_config_snapshot(self):
         print(f"Current Credname: {self.session.credname}")

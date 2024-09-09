@@ -1,6 +1,9 @@
 from datetime import datetime
 import yaml, os, re
-
+import pandas as pd
+from tabulate import tabulate
+import textwrap
+import shutil
 
 class UtilityTools:
 
@@ -128,75 +131,145 @@ class UtilityTools:
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}{UtilityTools.RED} {permission} failed for {resource_name}. See below:")
         print(str(error) + f"{UtilityTools.RESET}")
 
+    # Todo try nested dictionary next :D and nothing
+    # objects list
+    # Option 1: [Bucket1, Bucket2, Bucket3]
+    # Option 2: ["Bucket1": {blob1,blob2,blob3},"Bucket2":{blob1,blob2}]
+    # Properties: ["name","time_created"]
     @staticmethod
-    def summary_wrapup(title=None, project_id=None, resource_list=None, total_resources=None, nested_resource_dict=None, footer=None, output_file_path=None):
-        no_resources = False
-        resources_found = False
-        summary_output = ""
+    def summary_wrapup(project_id, service_account_name, objects_list, properties_list, primary_resource=None, secondary_title_name=None, max_width=None, output_format = ["table"], primary_sort_key=None):
+        table = ("table" in output_format)
+        txt = ("txt" in output_format)
+        csv = ("csv" in output_format)
+        # Dynamically get terminal width if max_width is not provided
+        min_width = 10  # Set a minimum width for the table
+        #TODO find a way to calculate this better
+        if max_width is None:
+            max_width = max(shutil.get_terminal_size().columns, min_width) - 30
 
-        if resource_list is not None:
-            num_resources = len(resource_list)
-            if num_resources == 0:
-                no_resources = True
-                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found or retrieved NO {title}")
-                if project_id:
-                    summary_output += UtilityTools.bold_text_output(UtilityTools.color_text_output(f" in {project_id}", UtilityTools.RED))
-            else:
-                resources_found = True
-                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {num_resources} {title}")
-                if project_id:
-                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f" in {project_id}"), UtilityTools.GREEN)
-                for resource in resource_list:
-                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f"\n   - {resource}"), UtilityTools.GREEN)
+        # Determine the number of resources found
+        num_resources = len(objects_list) if objects_list else 0
 
-        elif nested_resource_dict is not None:
-            def format_nested_dict(d, indent=0):
-                lines = []
-                for key, value in d.items():
-                    lines.append(" " * indent + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"- {key}"), UtilityTools.GREEN))
-                    if isinstance(value, dict):
-                        lines.extend(format_nested_dict(value, indent + 2))
-                    else:
-                        for item in value:
-                            # Split the item by newline and add appropriate indentation
-                            item_lines = item.split('\n')
-                            for i, item_line in enumerate(item_lines):
-                                if i == 0:
-                                    lines.append(" " * (indent + 2) + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"- {item_line}"), UtilityTools.GREEN))
-                                else:
-                                    lines.append(" " * (indent + 4) + UtilityTools.color_text_output(UtilityTools.bold_text_output(f"{item_line}"), UtilityTools.GREEN))
-                return lines
-
-            num_top_level_resources = len(nested_resource_dict)
-            if num_top_level_resources == 0:
-                no_resources = True
-                summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found or retrieved NO {title}")
-                if project_id:
-                    summary_output += UtilityTools.bold_text_output(UtilityTools.color_text_output(f" in {project_id}", UtilityTools.RED))
-            else:
-                resources_found = True
-                if total_resources:
-                    summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {total_resources} {title}")
-                else:
-                    summary_output = UtilityTools.bold_text_output(f"[SUMMARY] GCPwn found {num_top_level_resources} {title}")
-                if project_id:
-                    summary_output += UtilityTools.color_text_output(UtilityTools.bold_text_output(f" in {project_id}"), UtilityTools.GREEN)
-
-                summary_output += "\n" + "\n".join(format_nested_dict(nested_resource_dict))
-
-        if no_resources:
-            summary_output = UtilityTools.color_text_output(summary_output, UtilityTools.RED)
+        if num_resources == 0:
+            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] GCPwn found 0 {primary_resource} in project {project_id}{UtilityTools.RESET}")
         else:
-            summary_output = UtilityTools.color_text_output(summary_output, UtilityTools.GREEN)
+            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] GCPwn found {num_resources} {primary_resource} in project {project_id}{UtilityTools.RESET}")
 
-        if resources_found and footer:
-            summary_output += f"\n{UtilityTools.color_text_output(UtilityTools.bold_text_output(footer), UtilityTools.GREEN)}"
+        if not objects_list:
+            return
 
-        print(summary_output)
+        title = f"{UtilityTools.BOLD}{UtilityTools.GREEN}{project_id.upper()} : {service_account_name.upper()}{UtilityTools.RESET}"
 
-        if output_file_path:
-            with open(output_file_path, "a") as f:  # Open file in append mode
-                f.write(summary_output + "\n")  # Ensure new lines are added
+        table_data = []
+        header = properties_list[:]  # Copy the properties list for the header
+        
+        def wrap_text(text, width):
+            wrapper = textwrap.TextWrapper(width=width, break_long_words=True, break_on_hyphens=False)
+            return "\n".join(wrapper.wrap(text))
+
+        column_width = max(max_width // len(header),10)
+        if isinstance(objects_list, dict):
+            if secondary_title_name is None:
+                raise ValueError("secondary_title_name must be provided if objects_list is a dictionary.")
+           
+            header.append(secondary_title_name)
+
+            for obj, value in objects_list.items():
+               
+                row = {}
+                for prop in properties_list:
+                    value_str = str(getattr(obj, prop, "N/A"))
+                    if value_str == "":
+                        value_str = "[EMPTY]"
+                    if len(value_str) > 300:
+                        value_str = value_str[:300] + "[TRUNCATED]"
+                    row[prop] = value_str if txt else wrap_text(value_str, column_width) if not csv else value_str
+          
+                if isinstance(value, dict):
+                    # Format dictionary as a multi-line string for table output
+                    dict_str = "\n".join(f"{k}: {v}" for k, v in value.items())
+                    row[secondary_title_name] = dict_str
+                else:
+                    if not txt and not csv:
+                        row[secondary_title_name] = "\n".join([wrap_text("* " +item, column_width) for item in value]) if isinstance(value, list) else wrap_text(value, column_width)
+                    elif txt or csv:
+                        row[secondary_title_name] = "\n".join([item for item in value]) if isinstance(value, list) else value
+           
+                table_data.append(row)
+
+        elif isinstance(objects_list, list):
+            for obj in objects_list:
+                row = {}
+                for prop in properties_list:
+                    value_str = str(getattr(obj, prop, "N/A"))
+                    if value_str == "":
+                        value_str = "[EMPTY]"
+                    if len(value_str) > 300:
+                        value_str = value_str[:300] + "[TRUNCATED]"
+                    row[prop] = wrap_text(value_str, column_width) if not (csv or txt) else value_str
+                table_data.append(row)
+
+        if primary_sort_key and primary_sort_key in properties_list:
+            table_data.sort(key=lambda x: x.get(primary_sort_key, ""))
+        
+        output_data = []
+        header_line = " - ".join(properties_list)
+        output_data.append(header_line)
+
+        if isinstance(objects_list, dict):
+            for row in table_data:
+                line = " - ".join(row[prop] for prop in properties_list)
+                output_data.append(f"- {line}")
+                if isinstance(row[secondary_title_name], str):
+                    # Indent and prefix each blob with "*"
+                    for blob in row[secondary_title_name].splitlines():
+                        output_data.append(f"    * {blob}")
+                else:
+                    for item in row[secondary_title_name]:
+                        # Indent each blob in the list
+                        output_data.append(f"    * {item}")
+        elif isinstance(objects_list, list):
+            for row in table_data:
+                line = ", ".join(row[prop] for prop in properties_list)
+                output_data.append(f"- {line}")
+
+
+        if txt:
+            print("\n".join(output_data))
+            
+
+        if csv:
+          
+            df = pd.DataFrame(table_data, columns=header)
+            print(df.to_csv(index=False))
+        
+        if table:
+
+            header = [wrap_text(col, column_width) for col in header]
+            title_wrapper = textwrap.TextWrapper(width=max_width, break_long_words=False, break_on_hyphens=False)
+            wrapped_title = title_wrapper.fill(title)
+            df = pd.DataFrame(table_data, columns=header)
+
+            # Apply wrapping while keeping newlines in place
+            for col in df.columns:
+                df[col] = df[col].apply(lambda x: x.replace('\n', '\n') if isinstance(x, str) else x)
+
+            table = tabulate(df, headers='keys', tablefmt='grid', showindex=False)
+
+            table_width = len(table.splitlines()[0])
+
+            title_visible_length = len(re.sub(r'\x1b\[[0-9;]*m', '', wrapped_title))
+
+            bold_top_row = "┏" + "━" * (table_width - 2) + "┓"
+            centered_title = "┃" + wrapped_title.center(table_width - 2 + (len(wrapped_title) - title_visible_length)) + "┃"
+
+            table_lines = table.splitlines()
+            table_lines[0] = "┣" + "━" * (table_width - 2) + "┫"
+
+            final_output = bold_top_row + "\n" + centered_title + "\n" + "\n".join(table_lines)
+        
+            print(final_output)
+
 
     @staticmethod
     def log_action(workspace_name, action):

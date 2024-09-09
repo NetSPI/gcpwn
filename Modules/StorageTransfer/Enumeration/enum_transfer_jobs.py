@@ -7,7 +7,7 @@ from Modules.StorageTransfer.utils.util_helpers import *
 #    - URL 1
 #    - URL 2
 # Entrypoint; Try-Catch Exists on Caller
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
     # Set up Argparser to handle flag arguments
     parser = argparse.ArgumentParser(description="Enumerate Storage Transfer Jobs", allow_abbrev=False)

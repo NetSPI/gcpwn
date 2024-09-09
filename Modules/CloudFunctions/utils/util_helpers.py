@@ -775,7 +775,7 @@ def check_function_permissions(function_client, function_name):
         authenticated_permissions = function_client.test_iam_permissions(
             request=request
         )
-
+        print(authenticated_permissions)
         # Get list of allowed permissions
         authenticated_permissions = list(authenticated_permissions.permissions)
 

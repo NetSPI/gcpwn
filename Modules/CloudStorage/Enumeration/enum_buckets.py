@@ -2,23 +2,23 @@ from Modules.CloudStorage.utils.util_helpers import *
 import sys
 
 def validate_args(args):
-    if (args.blobs or args.blob_file) and not args.buckets:
+    if (args.blob_names or args.blob_names_file) and not args.bucket_names:
         print("When specifying 'blob' or 'blob-file', 'bucket' argument is required")
         return -1
     return 1
 
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False,output_format = ["table"], dependency = False):
 
-    # Set up Argparser to handle flag arguments
+    # Set up Argparse
     parser = argparse.ArgumentParser(description="Enumerate Buckets Options", allow_abbrev=False)
     
     exclusive_bucket_group = parser.add_mutually_exclusive_group(required=False)
-    exclusive_bucket_group.add_argument("--buckets", type=str,  help="Bucket names to proceed with in the format '--buckets bucket1,bucket2,bucket3'")
-    exclusive_bucket_group.add_argument("--bucket-file", type=str, help="File name to get bucket names from in the format '--bucket-file /file/path/buckets.txt'")
+    exclusive_bucket_group.add_argument("--bucket-names", type=str,  help="Bucket names to proceed with in the format '--buckets bucket1,bucket2,bucket3'")
+    exclusive_bucket_group.add_argument("--bucket-names-file", type=str, help="File name to get bucket names from in the format '--bucket-file /file/path/buckets.txt'")
     
     exclusive_blob_group = parser.add_mutually_exclusive_group(required = False)
-    exclusive_blob_group.add_argument("--blobs",type=str, help = "Bucket names to proceed with in the format '--blobs /blob1/name.txt,/blob2/name2.txt'")
-    exclusive_blob_group.add_argument("--blob-file", type=str, help="Specify file path with list of blobs")
+    exclusive_blob_group.add_argument("--blob-names",type=str, help = "Bucket names to proceed with in the format '--blobs /blob1/name.txt,/blob2/name2.txt'")
+    exclusive_blob_group.add_argument("--blob-names-file", type=str, help="Specify file path with list of blobs")
 
     # Exfiltrate data options
     parser.add_argument("--download",required=False,action="store_true", help="Attempt to download all blobs enumerated")
@@ -27,8 +27,8 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--good-regex", type=str, required=False, help="Good regex to match for downloading files")
     parser.add_argument("--time-limit",type=str,required=False,help="Set time limit per bucket in seconds, at which point program will move onto next bucket")
 
-    # Check if buckets are externally facing
     parser.add_argument("--external-curl",required=False, action="store_true", help="Good regex to match for downloading files")
+    
     parser.add_argument("--iam",required=False, action="store_true", help="Do IAM checks now on buckets. This is also done in the generic IAM modules.")
 
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
@@ -39,25 +39,13 @@ def run_module(user_args, session, first_run = False, last_run = False):
     parser.add_argument("--list-hmac-secrets",required=False, action="store_true", help="Good regex to match for downloading files")
     parser.add_argument("--validate-buckets", required=False,action="store_true", help="Specify file path with list of blobs")
 
-    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
-
 
     # Debug/non-module specific
     parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data during the module run")
 
     args = parser.parse_args(user_args)
-
-    if args.output:
-        OUTPUT_DIRECTORY = args.output 
-    else:
-        OUTPUT_DIRECTORY = UtilityTools.get_save_filepath(session.workspace_directory_name,"","Storage")
-
-    # Ensure if a blob argument is supplied a bucket argument is also supplied
-    if validate_args(args) == -1:
-        return -1
-
-    debug = args.debug
-
+    
+    # List HMAC secrets if applicable
     if args.list_hmac_secrets:
         hmac_secrets = get_all_hmac_secrets(session)
         if hmac_secrets:
@@ -67,108 +55,115 @@ def run_module(user_args, session, first_run = False, last_run = False):
                 print(f"   - {secret} \n      - {access_id} @ {sa_email}")
         return 1
 
+    # Ensure if a blob argument is supplied a bucket argument is also supplied
+    if validate_args(args) == -1:
+        return -1
 
+    # Set OUTPUT directory if different than default
+    if args.output:
+        OUTPUT_DIRECTORY = args.output 
+    else:
+        OUTPUT_DIRECTORY = UtilityTools.get_save_filepath(session.workspace_directory_name,"","Storage")
+
+    # Initialize Variables
+
+    debug, project_id = args.debug, session.project_id
     action_dict = {}
     all_buckets = {}
-        
-    # Default Project ID
-    project_id = session.project_id
+    bucket_validated = True
 
-    # Default Variable Names
-    bucket_list, bucket_name, blobs = None, None, None
-  
-    # Set up scope for call to specified project
+    # Set up initial storage client    
     storage_client = storage.Client(credentials = session.credentials, project = project_id)    
-    
-    print(f"[*] Checking {project_id} for buckets/blobs via LIST buckets...")
 
-    ### List all buckets either via API call or manually if supplied
-    if not (args.buckets or args.bucket_file):
+    # Standard Start Message
+    print(f"[*] Checking {project_id} for buckets...")
+
+    # Manual List + Automated List
+    if args.bucket_names or args.bucket_names_file:
+
+        bucket_validated = False
+
+        # STDIN
+        if args.bucket_names:
+            bucket_list = [storage_client.bucket(bucket_name) for bucket_name in args.bucket_names.split(",")]
+
+        # File
+        elif args.bucket_names_file:
+            bucket_list = [storage_client.bucket(bucket_name.strip()) for bucket_name in open(args.bucket_names_file, "r").readlines()]
+        
+        for bucket in bucket_list:
+            all_buckets[bucket] = []
+
+    else:
 
         # XML API HMAC Signature
         if args.access_id and args.hmac_secret:
+            
             bucket_list = hmac_list_buckets(storage_client, args.access_id, args.hmac_secret, project_id, debug=debug)
         
+        # Standard Auth Creds
         else:
+
             bucket_list = list_buckets(storage_client, debug = debug)
 
-        # Successful API call (aka no permission error)
-        if bucket_list:
+        if bucket_list == "Not Enabled" or bucket_list == None:
+            pass
+
+        else:
 
             if not (args.access_id and args.hmac_secret):
                 action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('storage.buckets.list')
-            
-            for bucket in bucket_list:
-                all_buckets[bucket.name] = []
-                if args.access_id and args.hmac_secret: save_bucket_xml(bucket, session)
-                else:  save_bucket(bucket, session)
-            
-    else:
 
-        if args.buckets:
+            if not bucket_list:
+                pass
 
-            bucket_list = [storage_client.bucket(bucket_name) for bucket_name in args.buckets.split(",")]
+            else:
 
-        elif args.bucket_file:
+                for bucket in bucket_list:
 
-            bucket_list = [storage_client.bucket(bucket_name.strip()) for bucket_name in open(args.bucket_file, "r").readlines()]
+                    all_buckets[bucket] = set([])
 
-        
-        # Added functionality if user chooses to filter out bad buckets or do like a pre-fetch check
-        if args.validate_buckets:
-            # Maybe in the future add a flag that opts out of saving otherwise seems good 
-            removed_indices = []
-            all_good = False
-            for i, bucket in enumerate(bucket_list):
-                if check_existence(bucket.name, debug = debug):
-                    save_bucket(bucket, session)
-                else:
-                    if not all_good:
-                        response = input(f"{bucket.name} does not appear to exist. Proceed with it included? (y/n/a): ").lower()
-                    if response == 'n':
-                        removed_indices.append(i)
-                    elif response == 'a' and not all_good:
-                        all_good = True
+                    if args.access_id and args.hmac_secret:
+                        save_bucket_xml(bucket, session)
                     else:
-                        pass
+                        save_bucket(bucket, session)
 
-            removed_items = [bucket_list.pop(idx) for idx in sorted(removed_indices, reverse=True)]
+    if debug: 
 
+        if len(all_buckets.keys()) != 0:
+            print(f"[DEBUG] {len(all_buckets.keys())} buckets were found")
         else:
-            
-            for bucket in bucket_list:
-                save_bucket(bucket, session)
-        
-        for bucket in bucket_list:
-            all_buckets[bucket.name] = []
-
-    # Break this into two separate branches, dont print error again if it failed in exception
-    if bucket_list == None:
-        return -1
+            print(f"[DEBUG]  No buckets were found")
 
     ### Enumerate through each bucket and check external curl, IAM, and bucket metadata where applicable
-    for bucket in bucket_list:
+    for bucket in all_buckets.keys():
 
         bucket_name = bucket.name 
 
         print(f"[**] Reviewing {bucket.name}")
 
-        # Check Get Bucket
+        # If not minimum calls or HMAC, GET bucket
         if not(args.access_id and args.hmac_secret) and not args.minimal_calls:
+
             print(f"[***] GET Bucket Object")
-            bucket_meta = get_bucket(storage_client, bucket_name, debug = debug)
-            if bucket_meta:
+            bucket_get = get_bucket(storage_client, bucket_name, debug = debug)
+
+            if bucket_get:
                 
                 action_dict.setdefault(project_id, {}).setdefault("storage.buckets.get", {}).setdefault("buckets", set()).add(bucket_name)
-                save_bucket(bucket, session)
+                
+                if (args.bucket_names or args.bucket_names_file) and bucket_validated == False:
+                    bucket_validated = True
+                    save_bucket(bucket, session)
 
         # Check External Curl
         if args.external_curl:
         
-            print(f"[***] TEST Curl Check")
+            print(f"[***] TEST External Curl")
              
             # Set bucket name
             bucket_url = "https://storage.googleapis.com/"+bucket_name
+            
             return_data = requests.get(bucket_url)
 
             if "Anonymous caller does not have storage.objects.list access to the Google Cloud Storage bucket" not in return_data.text:
@@ -189,7 +184,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
             if debug:
                 print(f"[DEBUG] Response for {bucket_url} was {return_data.text}")
 
-        # Check Bucket IAM
+        # Bucket Unauth & Auth TestIAMPermissions
         if args.iam:
             
             print(f"[***] TEST Bucket Permissions")
@@ -211,56 +206,62 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         print(f"[***] LIST Bucket Blobs")
 
-        # If no command line specifications provided for blob, list them
-        if not (args.blobs or args.blob_file): 
-            
+        if args.blob_names or args.blob_names_file:
+
+            blobs_validated = False
+
+            if args.blob_names:
+                blob_list = [blob_name for blob_name in args.blob_names.split(",")]
+
+            elif args.blob_names_file:
+                blob_list = [blob_name in open(args.blob_names_file, "r").readlines()]
+
+            blob_list = [bucket.blob(blob) for blob in blob_list]
+        
+        else: 
+        
             if args.access_id and args.hmac_secret:
                 blob_list = hmac_list_blobs(storage_client, args.access_id , args.hmac_secret, bucket_name, project_id, debug=False)
             else:
                 blob_list = list_blobs(storage_client, bucket_name, debug = debug)  
 
-            if blob_list:
-                if not (args.access_id and args.hmac_secret):
-                    action_dict.setdefault(project_id, {}).setdefault("storage.objects.list", {}).setdefault("buckets", set()).add(bucket_name)
+            if blob_list == "Not Enabled" or blob_list == None:
+                all_buckets[bucket] = set([])
 
-                for blob in blob_list:
-                    if (args.access_id and args.hmac_secret): save_blob_xml(blob, session)
-                    else:save_blob(blob, session)
-        
-        # use user-supplied arguments instead of automated list returned
-        else:
-            
-            if args.blobs:
+                # break as no use trying to continue with blob enumeration
+                break
 
-                if "," in args.blobs:
-                    blob_list = args.blobs.split(",")
+            else:
+
+                # Set permission at bucket level; not blobs yet
+                action_dict.setdefault(project_id, {}).setdefault("storage.objects.list", {}).setdefault("buckets", set()).add(bucket_name)
+
+                # Handle case where every_function is empty
+                if not blob_list:
+                    all_buckets[bucket] = set([])
+
                 else:
-                    blob_list = [args.blobs]
 
-            elif args.blob_file:
-                blob_file = open(args.blob_file, "r")
-                for line in blob_file.readlines():
-                    line = line.strip()
-                    blob_list = blob_list + [line]
+                    for blob in blob_list:
 
-            blob_list = [bucket.blob(blob) for blob in blob_list]
+                        if len(all_buckets[bucket]) <= 10 and blob.name[-1] != "/":
+                            all_buckets[bucket].add(blob.name)
 
-            for blob in blob_list:
-                save_blob(blob, session)
-
-        if blob_list and debug:
-            print(f"[DEBUG] Blob names identified/supplied for {project_id}:{bucket_name} are:")
-            for blob in blob_list:
-                print("     " + blob.name)
+                        if (args.access_id and args.hmac_secret): save_blob_xml(blob, session)
+                        else:save_blob(blob, session)
 
         # If blobs empty say no blobs, if blobs are there debug 
         if blob_list and len(blob_list) == 0:
             print(f"[**] No blobs fround for {bucket_name}...")
 
+            # if no blobs move onto next bucket
+            continue
+
         if blob_list:
 
             if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
                 print(f"[***] GET Bucket Blobs")
+                # TODO looks like this got missed? Addt his later
             
             if args.download:
                 print(f"[***] DOWNLOAD Bucket Blobs")
@@ -269,8 +270,7 @@ def run_module(user_args, session, first_run = False, last_run = False):
             if args.time_limit:
                 start_time = time.time()
                 
-            if blob_list:
-                max_len = len(blob_list)
+            max_len = len(blob_list)
 
             try:
                 for index, blob in enumerate(blob_list):
@@ -278,22 +278,19 @@ def run_module(user_args, session, first_run = False, last_run = False):
                     # If blob is user supplied string, cast to blob object for later use
                     blob_name = blob.name
 
-                    if bucket_name in all_buckets.keys() and len(all_buckets[bucket_name]) <= 10:
-                        all_buckets[bucket_name].append(blob_name)
-
                     if not(args.access_id and args.hmac_secret)  and not args.minimal_calls:
-                        blob_meta = get_blob(bucket,blob_name, debug = debug)
-                        if blob_meta:
-                            save_blob(blob_meta, session)
-                            action_dict.setdefault(project_id, {}).setdefault("storage.objects.get", {}).setdefault("buckets", set()).add(bucket_name) if bucket_name not in action_dict.get(project_id, {}).get("storage.objects.get", {}).get("buckets", set()) else None
-
                         
+                        blob_get = get_blob(bucket,blob_name, debug = debug)
+                        if blob_get:
+                            save_blob(blob_get, session)
+                            action_dict.setdefault(project_id, {}).setdefault("storage.objects.get", {}).setdefault("buckets", set()).add(bucket_name)
+
                     if args.download:
                         
                         if args.access_id and args.hmac_secret and blob_name[-1] != "/":
                             hmac_download_blob(storage_client,args.access_id, args.hmac_secret, bucket_name, blob_name,project_id, debug=debug, output_folder = OUTPUT_DIRECTORY)
                         else:
-                            download_blob(storage_client, bucket,blob, project_id, debug = debug,output_folder = OUTPUT_DIRECTORY, user_regex_pattern = args.good_regex, blob_size_limit = args.file_size)
+                            download_blob(storage_client, bucket,blob, project_id, debug = debug, output_folder = OUTPUT_DIRECTORY, user_regex_pattern = args.good_regex, blob_size_limit = args.file_size)
                         
                         if args.time_limit:
                             time_limit = args.time_limit
@@ -301,18 +298,27 @@ def run_module(user_args, session, first_run = False, last_run = False):
                             if elapsed_time > int(time_limit):
                                 print(f"[-] Time limit of {time_limit} reached for download for bucket {bucket_name}")
                                 break
+
                     # Print the counter
                     print(f"[***] Processed {index + 1} of {max_len} blobs. Enter Ctrl+C to exit blob counts for this bucket...", end='\r')
                     sys.stdout.flush()  # Ensure the print is updated in plac
-            
+                print("\n")
             except KeyboardInterrupt:
                 print("[*] Ended blob enumeration. Moving onto next bucket...")
 
-    UtilityTools.summary_wrapup(
-        title="Buckets (with up to 10 blobs shown each)",
-        nested_resource_dict=all_buckets,
-        project_id=project_id,
-        footer = "*See all blobs with 'data tables cloudstorage-bucketblobs --columns bucket_name,name [--csv filename]'",
-        output_file_path = args.txt
-    )
     session.insert_actions(action_dict,project_id, column_name = "storage_actions_allowed")
+
+    all_buckets_lists = {k: sorted(list(v)) for k, v in all_buckets.items()}
+
+    if not dependency:
+
+        UtilityTools.summary_wrapup(
+            project_id, 
+            "Cloud Storage Buckets/Blobs", 
+            all_buckets_lists, 
+            ["id","location"],
+            primary_resource = "Buckets",
+            secondary_title_name = "blobs",
+            output_format = output_format 
+        )
+

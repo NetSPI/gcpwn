@@ -1,26 +1,44 @@
 import importlib, traceback
+import time
 from UtilityController import UtilityTools
 
 def interact_with_module(session, module_path,module_args, project_ids = None, zones_choices = None):
 
     try: 
         
-        
-
         # Check if creds are none and print error message before entering function.
         if "Unauthenticated" not in module_path and session.credentials is None:
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Cannot run module as credentials are 'None'. Please load in credentials or run an unauthenticated module.{UtilityTools.RESET}")
             return -1
-
-
-
 
         module_import_path = module_path.replace("/",".")
         module = importlib.import_module(module_import_path)
 
         if "-h" in module_args:
             module.run_module(module_args, session)
-            
+
+        output_format =[]
+        # Handle output format selection; cmdline takes precedence
+        if "enum_" in module_import_path:
+            if "--txt" in module_args or "--csv" in module_args or "--table" in module_args:
+                if "--txt" in module_args:
+                    output_format.append("txt")
+                
+                if "--csv" in module_args:
+                    output_format.append("csv")
+                
+                if "--table" in module_args or ("--txt" not in module_args and "--csv" not in module_args):
+                    output_format.append("table")
+
+
+            elif session.workspace_config.preferred_output_formats:
+                output_format = [f"{fmt}" for fmt in session.workspace_config.preferred_output_formats]
+
+        flags_to_remove = ["--csv", "--txt", "--table"]
+        for flag in flags_to_remove:
+            if flag in module_args:
+                module_args.remove(flag)
+     
         one_project_only = False
 
         project_list = []
@@ -37,10 +55,16 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
         if project_ids:
             project_list = project_ids
 
-        # Next check if user has global setting set
-        elif session.config_project_list:
+        # Next check if user has global setting set; cmdline takes precedence
+        elif session.workspace_config.preferred_project_ids and not project_ids:
+            
+            print("[*] Proceeding with worskpace configuration for project IDs")
+            for project_id in session.workspace_config.preferred_project_ids:
+                print(f"[-]  {project_id}")
 
-            project_list = session.config_project_list
+            time.sleep(1)
+
+            project_list = session.workspace_config.preferred_project_ids
 
         # Depending on some items set proejct ID to just current project iD
         elif any(module_indicator in module_import_path for module_indicator in module_indicators_of_no_project_prompt) and session.project_id != None:
@@ -81,7 +105,7 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
 
         original_project_id = session.project_id
         current_project_length = len(project_list)
-
+   
         for index, project_id in enumerate(project_list):
 
             UtilityTools.log_action(session.workspace_directory_name , f"[START_MODULE] Entering {module_path.split('/')[-1]} module for {project_id}...")
@@ -90,9 +114,8 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
             first_run = (index == 0)
             last_run = (index == len(project_list) - 1)
             
-            print(f"[*]"+"-"*120+"[*]") 
 
-            callback = module.run_module(module_args, session, first_run = first_run, last_run = last_run)
+            callback = module.run_module(module_args, session, first_run = first_run, last_run = last_run, output_format = output_format)
             # If callback in enum_all and user didnt specify project dis
             if callback == 2 and "enum_all" in module_import_path and not project_ids and not one_project_only:
                 
@@ -110,8 +133,6 @@ def interact_with_module(session, module_path,module_args, project_ids = None, z
             
             UtilityTools.log_action(session.workspace_directory_name, f"[END_MODULE] Exiting {module_path.split('/')[-1]} module for {project_id}...")
             
-            if index == len(project_list)-1:
-                print(f"[*]"+"-"*120+"[*]") 
 
         # Reset session at end to default project
         session.project_id = original_project_id

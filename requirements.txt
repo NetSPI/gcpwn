@@ -27,7 +27,7 @@ google-cloud-error-reporting == 1.11.0
 
 google-cloud-firestore == 2.16.0 
 
-google-cloud-functions == 1.16.3 
+google-cloud-functions == 1.16.5
 
 google-cloud-language == 2.13.3 
 
@@ -40,6 +40,8 @@ google-cloud-pubsub == 2.21.1
 google-cloud-resource-manager == 1.12.3 
 
 google-cloud-runtimeconfig == 0.34.0 
+
+google-cloud-redis == 2.15.5
 
 google-cloud-storage-transfer == 1.11.4
 

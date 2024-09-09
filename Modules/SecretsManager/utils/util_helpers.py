@@ -223,6 +223,7 @@ def list_secrets(
         )
 
         secrets_list = list(secret_client.list_secrets(request=request))
+
     except Forbidden as e:
 
         if "Permission 'secretmanager.secrets.list' denied for resource" in str(e):
@@ -236,6 +237,10 @@ def list_secrets(
             UtilityTools.print_403_api_disabled("Secrets Manager", parent)
 
             return "Not Enabled"
+
+        elif "403 Permission denied on resource project" in str(e):
+
+            UtilityTools.print_403_api_denied("secretmanager.secrets.list", resource_name = parent)
 
         return None
 
@@ -252,7 +257,6 @@ def list_secrets(
     if debug: print(f"[DEBUG] Successfully called list_secrets for {parent} ...")
     
     return secrets_list
-
 
 def get_secret(
         secret_client, 

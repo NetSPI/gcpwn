@@ -1,6 +1,6 @@
 from Modules.IAM.utils.util_helpers import *
   
-def run_module(user_args, session, first_run = False, last_run = False):
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
     project_id = session.project_id
 

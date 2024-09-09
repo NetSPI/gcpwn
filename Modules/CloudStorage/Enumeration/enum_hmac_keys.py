@@ -1,18 +1,42 @@
 from Modules.CloudStorage.utils.util_helpers import *
 from google.cloud.storage.hmac_key import HMACKeyMetadata
 
-# Entrypoint; Try-Catch Exists on Caller
-def run_module(user_args, session, first_run = False, last_run = False):
+class HashableHMACKeyMetadata:
 
-    # Set up Argparser to handle flag arguments
+    # default validated to true unless otherwise noted
+    def __init__(self, hmac_key, validated = True):
+        self._hmac_key = hmac_key
+        self.validated = validated
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash(self._hmac_key.access_id)
+
+    def __eq__(self, other):
+        # Compare based on the name or any other combination of unique attributes
+
+        if isinstance(other, HashableHMACKeyMetadata) and self._hmac_key.access_id == other._hmac_key.access_id:
+            return True
+        else:
+            return False
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._hmac_key, attr)
+
+    def __repr__(self):
+        # Make the string representation more informative by including both id and name
+        return f"HashableInstance(id={self._hmac_key.access_id})"
+
+# Entrypoint; Try-Catch Exists on Caller
+def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
+
+    # Set up Argparse
     parser = argparse.ArgumentParser(description="Enumerate HMAC Keys Options", allow_abbrev=False)
     
     exclusive_access_key_group = parser.add_mutually_exclusive_group(required=False)
     exclusive_access_key_group.add_argument("--access-keys", type=str, help="Access Keys to check in the format projects/[project_id]/hmacKeys/[accesskey]")
     exclusive_access_key_group.add_argument("--access-keys-file", type=str, help="File name to get access keys in format projects/[project_id]/hmacKeys/[accesskey] per line")
-
-    parser.add_argument("--txt", type=str, required=False, help="Output file for final summary")
-
 
     # Debug/non-module specific
     parser.add_argument("--minimal-calls", action="store_true",  help="Perform just List calls or minimal set of API calls")
@@ -20,13 +44,15 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
     args = parser.parse_args(user_args)
     
-    debug = args.debug
-
-    action_dict, hmac_list_project = {}, {}
+    # Initialize Variables
+    debug, project_id = args.debug, session.project_id
+    action_dict, all_hmacs = {}, {}
     
-    # for summary
-    resources_to_print = set([])
+    # Set up initial HMAC client    
+    storage_client = storage.Client(credentials = session.credentials, project = project_id)  
 
+    # Standard Start Message
+    print(f"[*] Checking {project_id} for HMAC keys...")
 
     if args.access_keys or args.access_keys_file:
 
@@ -36,74 +62,87 @@ def run_module(user_args, session, first_run = False, last_run = False):
 
         elif args.access_keys_file:
 
-            key_file = args.access_keys_file
+            hmac_list_rudimentary = [line.strip() for line in open(args.access_keys_file, "r").readlines()] 
 
-            try:
+        for hmac_key_path in hmac_list_rudimentary:
 
-                hmac_list_rudimentary = [line.strip() for line in open(key_file)]
-                
-            except FileNotFoundError:
-                print(f"{UtilityTools.RED}[X] File {key_file} does not appear to exist. Exiting...{UtilityTools.RESET}")
-                return -1
+            _, hmac_project_id, _, access_id = function.split("/")
 
-        # Check if input is valid
-        status, incorrect_input = UtilityTools.validate_input_format(hmac_list_rudimentary, 4)
-        if status != 0: 
-            print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/hmacKeys/[access_key_id] Please try again...{UtilityTools.RESET}")
-            return -1
-
-        for key in hmac_list_rudimentary:
-
-            hmac_project_id, access_id = key.split("/")[1], key.split("/")[3]
-            hmac_list_project.setdefault(hmac_project_id, []).append(access_id)
+            hmac_hash = HashableHMACKeyMetadata(HMACKeyMetadata(access_id = access_id,project_id = hmac_project_id ))
+            hmac_hash.validated = False
             
+            all_hmacs.setdefault(hmac_project_id, set()).add(hmac_hash)
+    
     else:
+        if debug:
+            print(f"[DEBUG] Getting HMAC KEYS in {project_id}")
 
-        hmac_project_id = session.project_id
+        every_hmac_key = list_hmac_keys(storage_client, debug = debug)
+     
+        if every_hmac_key == "Not Enabled" or every_hmac_key == None:
+            all_hmacs.setdefault(project_id, set())
+
+        else:
+
+            # Set action_dict whether functions are found or API worked but still empty list
+            action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('storage.hmacKeys.list')
+
+            # Handle case where every_function is empty
+            if not every_hmac_key:
+                all_hmacs.setdefault(project_id, set())
+
+            else:
+
+                all_hmacs.setdefault(project_id, set()).update({HashableHMACKeyMetadata(hmac_key) for hmac_key in every_hmac_key})
+                for hmac_key in every_hmac_key:
+                    save_hmac_key(hmac_key, session, dont_change = ["secret"])
+
+    for hmac_project_id, hmac_list in all_hmacs.items():
 
         storage_client = storage.Client(credentials = session.credentials, project = hmac_project_id)    
-        hmac_list_output = list_hmac_keys(storage_client, debug = debug)
-        if hmac_list_output:
-            hmac_list_project.setdefault(hmac_project_id, []).extend(hmac_list_output)
-        else:
-            hmac_list_project = None
 
-    print(f"[*] Checking {hmac_project_id} for HMAC keys...")
+        if debug: 
 
+            if len(hmac_list) != 0:
+                print(f"[DEBUG] {len(hmac_list)} instances were found")
+            else:
+                print(f"[DEBUG]  No instances were found")
 
-    if hmac_list_project:  
+        for hmac in hmac_list: 
 
-        for hmac_project_id, hmac_list in hmac_list_project.items():
+            validated = hmac.validated
+            access_id = hmac.access_id
 
-            storage_client = storage.Client(credentials = session.credentials, project = hmac_project_id)    
+            print(f"[**] Reviewing {access_id}")                
+                                                            
+            if not args.minimal_calls:
 
-            for hmac in hmac_list: 
+                print(f"[***] GET HMAC Key")
+                hmac_get = get_hmac_key(storage_client, access_id, debug = debug)
 
-                if type(hmac) == HMACKeyMetadata:
+                if hmac_get:
                     
-                    string_to_store = f"[{hmac_project_id}] {hmac.access_id} - {hmac.state}\n     SA: {hmac.service_account_email}"
-                    resources_to_print.add(string_to_store)
-                    save_hmac_key(hmac, session, dont_change = ["secret"])
-                    action_dict.setdefault('project_permissions', {}).setdefault(hmac_project_id, set()).add('storage.hmacKeys.list')
-                    access_id = hmac.access_id
+                    if (args.access_keys or args.access_keys_file) and validated == False: 
+                        validated = True
+                        all_hmacs[project_id].discard(hmac)
+                        all_hmacs[project_id].add(HashableInstance(hmac_get))
 
-                else:
-                    string_to_store = f"{hmac_project_id} ({hmac}"
-                    access_id = hmac
-                                
-                if not args.minimal_calls:
-                    hmac_key_metadata = get_hmac_key(storage_client, access_id, debug = debug)
-                    if hmac_key_metadata:
-                        if args.access_keys or args.access_keys_file:
-                            string_to_store = f"[{hmac_project_id}] {hmac_key_metadata.access_id} - {hmac_key_metadata.state}\nSA: {hmac_key_metadata.service_account_email}"
-                            resources_to_print.add(string_to_store)
-                        action_dict.setdefault('project_permissions', {}).setdefault(hmac_project_id, set()).add('storage.hmacKeys.get')
-                        save_hmac_key(hmac_key_metadata, session, dont_change = ["secret"])
+                    action_dict.setdefault('project_permissions', {}).setdefault(hmac_project_id, set()).add('storage.hmacKeys.get')
+                    save_hmac_key(hmac_get, session, dont_change = ["secret"])
 
-    session.insert_actions(action_dict,hmac_project_id, column_name = "storage_actions_allowed")
-    UtilityTools.summary_wrapup(
-        title="HMAC Key(s) with corresponding service accounts (SAs)",
-        resource_list=sorted(resources_to_print),
-        project_id=hmac_project_id,
-        output_file_path = args.txt
-    )
+        session.insert_actions(action_dict,hmac_project_id, column_name = "storage_actions_allowed")
+        
+    if all_hmacs:
+
+        for project_id, hmac_only_info in all_hmacs.items():
+
+            UtilityTools.summary_wrapup(
+                    project_id, 
+                    "Cloud Storage HMAC Keys", 
+                    list(hmac_only_info), 
+                    ["access_id","secret","state","service_account_email"],
+                    primary_resource = "HMAC keys",
+                    output_format = output_format,
+                    primary_sort_key = "service_account_email"
+                )
+            

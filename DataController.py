@@ -1,4 +1,8 @@
 from google.cloud import resourcemanager_v3
+
+from WorkspaceConfig import WorkspaceConfig
+
+
 import yaml, sqlite3, os, json
 import traceback
 import ast
@@ -68,6 +72,45 @@ class DataController:
             print(str(e))
             return None
 
+    def get_workspace_config(self, workspace_id):
+        try:        
+            query = f"SELECT workspace_config FROM workspaces WHERE id = \"{workspace_id}\""
+            
+            self.workspace_cursor.execute(query)
+            result = self.workspace_cursor.fetchone()
+            
+            if result is not None:
+                return result[0]
+            else:
+                print(f"[X] No workspace configuration found for workspace_id {workspace_id}")
+                return None
+
+        except Exception as e:
+            print("[X] Failed in get_workspace_configs for following error")
+            print(str(e))
+            return None
+
+    def set_workspace_config(self, workspace_id, new_settings):
+        try:        
+            # Prepare the update query to overwrite the existing configuration
+            update_query = f"""
+            UPDATE workspaces
+            SET workspace_config = ?
+            WHERE id = ?
+            """
+            
+            # Execute the update query with the new settings
+            self.workspace_cursor.execute(update_query, (new_settings, workspace_id))
+            self.workspace_conn.commit()
+            
+            print(f"[*] Successfully updated workspace configuration for workspace_id {workspace_id}")
+            return True
+
+        except Exception as e:
+            print("[X] Failed in set_workspace_config for the following error")
+            print(str(e))
+            return False
+
     @staticmethod        
     def create_initial_workspace_session_database() -> Union[int, None]:
 
@@ -79,7 +122,7 @@ class DataController:
             workspace_conn = sqlite3.connect(DataController.workspace_database)
             workspace_cursor = workspace_conn.cursor()
             workspace_cursor.execute('''CREATE TABLE IF NOT EXISTS workspaces
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, global_project_list TEXT, data TEXT)''')
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, global_project_list TEXT, data TEXT, workspace_config TEXT)''')
             workspace_conn.commit()
             workspace_conn.close()
 
@@ -173,10 +216,13 @@ class DataController:
     @staticmethod
     def insert_workspace(name: str) -> Union[int, None]:
         try:
+            
+            workspace_config = WorkspaceConfig()
+            workspace_config_serialized = workspace_config.to_json_string()
 
             with sqlite3.connect(DataController.workspace_database) as workspace_conn:
                 cursor = workspace_conn.cursor()
-                cursor.execute("INSERT INTO workspaces (name) VALUES (?)", (name,))
+                cursor.execute("INSERT INTO workspaces (name, workspace_config) VALUES (?, ?)", (name,workspace_config_serialized))
                 workspace_conn.commit()
 
             return 1
