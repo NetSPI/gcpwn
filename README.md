@@ -1,10 +1,30 @@
-# Intro & Installation
 
+![GCPwnLogo](https://github.com/user-attachments/assets/1ad93c63-37f2-42fd-95e9-ec05966cb6b2)
+<br>
+[![licence badge]][licence] 
+[![stars badge]][stars] 
+[![forks badge]][forks] 
+[![issues badge]][issues]
+
+[licence badge]:https://img.shields.io/badge/license-BSD%203-blue.svg
+[stars badge]:https://img.shields.io/github/stars/NetSPI/gcpwn.svg
+[forks badge]:https://img.shields.io/github/forks/NetSPI/gcpwn.svg
+[issues badge]:https://img.shields.io/github/issues/NetSPI/gcpwn.svg
+
+[licence]:https://github.com/NetSPI/gcpwn/blob/main/LICENSE
+[stars]:https://github.com/NetSPI/gcpwn/stargazers
+[forks]:https://github.com/NetSPI/gcpwn/network
+[issues]:https://github.com/NetSPI/gcpwn/issues
 
 ## Hello World
-gcpwn was a tool built by [myself](https://www.linkedin.com/in/webbinroot/) while trying to learn GCP and leverages the newer [GRPC client libraries](https://cloud.google.com/python/docs/reference) created by google. It consists of numerous enumeration modules I wrote plus exploit modules leveraging research done by others in the space (ex. Rhino Security) along with some existing known standalone tools like GCPBucketBrute in an effort to make the tool a one-stop-shop for GCP testing. While other exploit scripts are generally one time use, **GCPwn stores both data and permissions as you are running through modules** organizing the data for you, and re-using it to make your life easier in terms of pentesting/tracking permissions.
+gcpwn was a tool built by [myself](https://www.linkedin.com/in/webbinroot/) while trying to learn GCP and leverages the newer [GRPC client libraries](https://cloud.google.com/python/docs/reference). It consists of numerous enumeration modules I wrote plus exploit modules leveraging research done by others in the space (ex. Rhino Security) along with some existing known standalone tools like GCPBucketBrute in an effort to make the tool a one-stop-shop for GCP testing. While other exploit scripts are generally one time use, **GCPwn stores both data and permissions as you are running through modules** organizing the data for you, and re-using it to make your life easier in terms of pentesting/tracking permissions.
 
-## Who is this for?
+## Author, Contributors, and License
+* Author: Scott Weston ([@webbinroot](https://x.com/webbinroot)), NetSPI
+* Required Dependencies: See Requirements.txt + Wiki Installation Guide
+* Dependencies Note: Tested mainly on Kali Linux; Docker installation available via Dockerfile
+
+#### Who is this for?
 
 This tool is mainly for pentesters, those just learning GCP security, and security researchers in general.
 
@@ -15,18 +35,18 @@ This tool is mainly for pentesters, those just learning GCP security, and securi
 ## Wiki Instructions
 
 Review the wiki at https://github.com/NetSPI/gcpwn/wiki for: 
-1. Installation Instructions & Folder Setup: How to set up the tool for first-time use and default folders used
-2. Authentication Management & Tokeninfo: Load in user and/or service credentials to get creds setup
-3. Managing Projects & Retrieving Resource Data: How to manage Project IDs and how to retrieve enumerated data from SQLite tables.
-4. Modules Guide: How to call a module + deep dive on each module
-5. Module Creation: How to add your own module via pull request (In Progress - Target Date 9/15/2024)
-5. Research Head Scratchers: Research topics/open questions (In Progress - Target Date 9/22/2024)
+1. **Installation Instructions & Folder Setup**: How to set up the tool for first-time use and default folders used
+2. **Authentication Management & Tokeninfo**: Load in user and/or service credentials to get creds setup
+3. **Managing Projects & Retrieving Resource Data**: How to manage Project IDs and how to retrieve enumerated data from SQLite tables.
+4. **Modules Guide**: How to call a module + deep dive on each module
+5. **Module Creation**: How to add your own module via pull request (In Progress - Target Date 9/15/2024)
+5. **Research Head Scratchers**: Research topics/open questions (In Progress - Target Date 9/22/2024)
 
 ## The TLDR
 
 #### Module Output
 
-The tool will auto-default to table stdout. Tool supports table, txt, and csv. If you are having problems with tables, can change global configs with
+The tool will auto-default to "table" stdout. Tool supports table, txt, and csv. If you are having problems with tables, can change global configs with the following:
 ```
 # See global configs
 global_configs
@@ -35,11 +55,14 @@ global_configs
 global_configs set std-output txt
 ```
 Or you can pass in `--txt`, `--table`, and/or `--csv` with each `modules run` command to change the stdoutput
+```
+modules run enum_buckets --txt
+```
 
 #### Data Output
 
 Data enumerated is stored in local tables in GCPwn. To see table output run
-````
+```
 # See all tables
 data tables
 
@@ -79,10 +102,11 @@ modules run analyze_vulns [--txt] [--csv]
 - Defcon 32 Cloud Village: https://www.youtube.com/watch?v=rxXyYo1n9cw
 - https://www.netspi.com/blog/technical-blog/cloud-pentesting/introduction-to-gcpwn-part-1/
 
-
 ## Who Will Approve My Pull Requests
 
 I will be watching issues/pulls for any cool new stuff, that being said I do have a day job so give me at least 24 hours or something :)
+
+If its a small issue, would prefer an Issue via Issues tab for a quick fix. 
 
 ## Credit
 
