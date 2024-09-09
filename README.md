@@ -1,5 +1,6 @@
 # Intro & Installation
 
+
 ## Hello World
 gcpwn was a tool built by [myself](https://www.linkedin.com/in/webbinroot/) while trying to learn GCP and leverages the newer [GRPC client libraries](https://cloud.google.com/python/docs/reference) created by google. It consists of numerous enumeration modules I wrote plus exploit modules leveraging research done by others in the space (ex. Rhino Security) along with some existing known standalone tools like GCPBucketBrute in an effort to make the tool a one-stop-shop for GCP testing. While other exploit scripts are generally one time use, **GCPwn stores both data and permissions as you are running through modules** organizing the data for you, and re-using it to make your life easier in terms of pentesting/tracking permissions.
 
@@ -13,18 +14,45 @@ This tool is mainly for pentesters, those just learning GCP security, and securi
 
 ## Wiki Instructions
 
-Review the wiki (In-Progress; Target date 6/30/2024) at https://github.com/NetSPI/gcpwn/wiki for: 
+Review the wiki at https://github.com/NetSPI/gcpwn/wiki for: 
 1. Installation Instructions & Folder Setup: How to set up the tool for first-time use and default folders used
 2. Authentication Management & Tokeninfo: Load in user and/or service credentials to get creds setup
 3. Managing Projects & Retrieving Resource Data: How to manage Project IDs and how to retrieve enumerated data from SQLite tables.
 4. Modules Guide: How to call a module + deep dive on each module
-5. Module Creation: How to add your own module via pull request
-5. Research Head Scratchers: Research topics/open questions
+5. Module Creation: How to add your own module via pull request (In Progress - Target Date 9/15/2024)
+5. Research Head Scratchers: Research topics/open questions (In Progress - Target Date 9/22/2024)
 
 ## The TLDR
-fwd:cloudsec 2024: https://www.youtube.com/watch?v=opvv9h3Qe0s ("GCPwn: A Pentesting Tool For GCP - Scott Weston")
 
-If you already have the tool installed and want quick commands to run, then you can usually run the `enum_all` module followed by `creds info` to view newly enumerated permissions. The `process_iam_bindings` module will then give you a TXT/CSV summary of policy bindings if they can be enumerated, and `analyze_vulns` will try to flag bad roles/permissions. See the common flags below.
+#### Module Output
+
+The tool will auto-default to table stdout. Tool supports table, txt, and csv. If you are having problems with tables, can change global configs with
+```
+# See global configs
+global_configs
+
+# Set global configs for preferred output
+global_configs set std-output txt
+```
+Or you can pass in `--txt`, `--table`, and/or `--csv` with each `modules run` command to change the stdoutput
+
+#### Data Output
+
+Data enumerated is stored in local tables in GCPwn. To see table output run
+````
+# See all tables
+data tables
+
+# See all table columns
+data tables <table_name> --columns
+
+# Get all data back and export to CSV file
+data <table_name> --columns column1,column2 --csv [OUTPUT_FILE]
+```
+
+#### What to Run
+
+Run  `enum_all` module followed by `creds info` to view newly enumerated permissions. The `process_iam_bindings` module will then give you a TXT/CSV summary of policy bindings if they can be enumerated, and `analyze_vulns` will try to flag bad roles/permissions. See the common flags below.
 
 **Enumerate Everything (Choose One that Best Fits)**
 ```
@@ -44,6 +72,13 @@ modules run process_iam_bindings [--txt] [--csv]
 # Analyze IAM Bindings + Other Items (like allUsers) if Applicable
 modules run analyze_vulns [--txt] [--csv]
 ```
+
+#### Resources
+
+- fwd:cloudsec 2024: https://www.youtube.com/watch?v=opvv9h3Qe0s ("GCPwn: A Pentesting Tool For GCP - Scott Weston")
+- Defcon 32 Cloud Village: https://www.youtube.com/watch?v=rxXyYo1n9cw
+- https://www.netspi.com/blog/technical-blog/cloud-pentesting/introduction-to-gcpwn-part-1/
+
 
 ## Who Will Approve My Pull Requests
 
