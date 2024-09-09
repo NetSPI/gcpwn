@@ -814,8 +814,7 @@ class SessionUtility:
     def get_configs(self):
 
         potential_config = self.data_master.get_workspace_config(self.workspace_id)
-        print("potential_config")
-        print(potential_config)
+    
         if potential_config:
             self.workspace_config.from_json(potential_config)
 
