@@ -1,7 +1,8 @@
 from datetime import datetime
 import yaml, os, re
 import pandas as pd
-from tabulate import tabulate
+from prettytable import PrettyTable
+#from tabulate import tabulate
 import textwrap
 import shutil
 
@@ -131,145 +132,172 @@ class UtilityTools:
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}{UtilityTools.RED} {permission} failed for {resource_name}. See below:")
         print(str(error) + f"{UtilityTools.RESET}")
 
-    # Todo try nested dictionary next :D and nothing
-    # objects list
-    # Option 1: [Bucket1, Bucket2, Bucket3]
-    # Option 2: ["Bucket1": {blob1,blob2,blob3},"Bucket2":{blob1,blob2}]
-    # Properties: ["name","time_created"]
+    # TODO: Export SQLITE tables to CSV
+    @staticmethod
+    def export_csv():
+        pass
+
+    # Data Input:
+    # 1. {
+    #     Object: [
+    #         Sub-Object 1
+    #         Sub-Object 2
+    #     ],
+    #     Object2: [
+    #         Sub_object 1
+    #     ]
+    # }
+    # 2. [Object1, Object2, etc]
+    # properties_list: ["name","time_created"]
+    # secondary_title_name: name of list of items (ex. blobs)
     @staticmethod
     def summary_wrapup(project_id, service_account_name, objects_list, properties_list, primary_resource=None, secondary_title_name=None, max_width=None, output_format = ["table"], primary_sort_key=None):
-        table = ("table" in output_format)
-        txt = ("txt" in output_format)
-        csv = ("csv" in output_format)
-        # Dynamically get terminal width if max_width is not provided
-        min_width = 10  # Set a minimum width for the table
-        #TODO find a way to calculate this better
-        if max_width is None:
-            max_width = max(shutil.get_terminal_size().columns, min_width) - 30
 
-        # Determine the number of resources found
-        num_resources = len(objects_list) if objects_list else 0
+        table, txt, csv = (fmt in output_format for fmt in ("table", "txt", "csv"))
 
-        if num_resources == 0:
+        # Cache data so if multiple output formats don't redo computation        
+        global all_rows
+        all_rows = []
+
+        def build_row(obj, properties_list):
+            row =[
+                (value_str[:300] + "[TRUNCATED]") if len(value_str := str(getattr(obj, prop, "N/A")) or "[EMPTY]") > 300 else value_str
+                for prop in properties_list
+            ]
+            return row
+
+        def build_all_rows(objects_list, properties_list, table_width, secondary_title_name):
+            
+            global all_rows
+            data = []
+            # If input is option 1
+            if isinstance(objects_list, dict):
+                column_headers = properties_list + [secondary_title_name]
+
+                if len(all_rows) == 0:
+
+                    for obj, value in objects_list.items():
+
+                            row = build_row(obj, properties_list)
+                            if len(value) > 0:
+                                final_custom_value = "* " + "\n* ".join(value)
+                            else:
+                                final_custom_value = "[EMPTY]"
+                            row.append(final_custom_value)
+                            data.append(row)
+                else:
+                    data = all_rows           
+                
+            # If input is option 2
+            elif isinstance(objects_list, list):
+                column_headers = properties_list
+                
+
+                if len(all_rows) == 0:
+
+                    for obj in objects_list:
+                        row = build_row(obj, properties_list)
+                        data.append(row)
+
+                else:
+                    data = all_rows  
+
+            all_rows = data
+            return all_rows, column_headers
+
+
+        def print_text(objects_list, properties_list, table_width, secondary_title_name):
+
+            data, column_headers = build_all_rows(objects_list, properties_list, table_width, secondary_title_name)
+
+            for row in data:
+                for index, header in enumerate(column_headers):
+                    if header == secondary_title_name:
+                        output = "\n" + row[index]
+                    else:
+                        output = row[index]
+                    print(header+": "+output)
+                print("\n")
+                
+
+        def print_table(objects_list, properties_list, table_width, secondary_title_name, min_col_width=10):
+            
+            table = None
+
+            data, column_headers = build_all_rows(objects_list, properties_list, table_width, secondary_title_name)
+            table = PrettyTable(column_headers)
+            for row in data:
+                table.add_row(row)
+
+            table.align = "l"
+            table.hrules = True
+            
+            # Step 1: Calculate column widths
+            col_widths = {
+            }
+            for i, col in enumerate(column_headers):
+                max_length_per_line = max(
+                    max(len(line) for line in str(row[i]).split("\n")) if row[i] else 0
+                    for row in data
+                )
+                col_widths[col] = max(min_col_width, len(col), max_length_per_line)
+
+            # Step 2: Determine the total width occupied by the table
+            border_space = len(column_headers) * 3 + 1  # PrettyTable border space
+            min_total_width = sum(col_widths.values()) + border_space
+
+            # Step 3: Adjust column sizes to fit within table width
+            while sum(col_widths.values()) + border_space > table_width:
+                largest_col = max(col_widths, key=col_widths.get)  # Find largest column
+                if col_widths[largest_col] > min_col_width:
+                    col_widths[largest_col] -= 1  # Reduce its width incrementally
+
+            # Step 4: Apply calculated widths
+            for col in column_headers:
+                table.max_width[col] = col_widths[col]
+
+            print(table)
+
+        def print_csv(objects_list, properties_list, table_width, secondary_title_name):
+
+            data, column_headers = build_all_rows(objects_list, properties_list, table_width, secondary_title_name)
+            
+            df = pd.DataFrame(data, columns=column_headers)
+            
+            print(df.to_csv(index=False))
+
+        # If no resources are found, print no resources found message
+        num_resources = len(objects_list)
+
+        terminal_width = shutil.get_terminal_size((100, 20)).columns  
+        breaker = "-" * (terminal_width - 10)
+        print(f"{UtilityTools.BOLD}[*] {breaker} [*]{UtilityTools.RESET}")
+
+
+        if num_resources  == 0:
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] GCPwn found 0 {primary_resource} in project {project_id}{UtilityTools.RESET}")
+            return
         else:
             print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] GCPwn found {num_resources} {primary_resource} in project {project_id}{UtilityTools.RESET}")
 
-        if not objects_list:
-            return
-
-        title = f"{UtilityTools.BOLD}{UtilityTools.GREEN}{project_id.upper()} : {service_account_name.upper()}{UtilityTools.RESET}"
-
-        table_data = []
-        header = properties_list[:]  # Copy the properties list for the header
-        
-        def wrap_text(text, width):
-            wrapper = textwrap.TextWrapper(width=width, break_long_words=True, break_on_hyphens=False)
-            return "\n".join(wrapper.wrap(text))
-
-        column_width = max(max_width // len(header),10)
-        if isinstance(objects_list, dict):
-            if secondary_title_name is None:
-                raise ValueError("secondary_title_name must be provided if objects_list is a dictionary.")
-           
-            header.append(secondary_title_name)
-
-            for obj, value in objects_list.items():
-               
-                row = {}
-                for prop in properties_list:
-                    value_str = str(getattr(obj, prop, "N/A"))
-                    if value_str == "":
-                        value_str = "[EMPTY]"
-                    if len(value_str) > 300:
-                        value_str = value_str[:300] + "[TRUNCATED]"
-                    row[prop] = value_str if txt else wrap_text(value_str, column_width) if not csv else value_str
-          
-                if isinstance(value, dict):
-                    # Format dictionary as a multi-line string for table output
-                    dict_str = "\n".join(f"{k}: {v}" for k, v in value.items())
-                    row[secondary_title_name] = dict_str
-                else:
-                    if not txt and not csv:
-                        row[secondary_title_name] = "\n".join([wrap_text("* " +item, column_width) for item in value]) if isinstance(value, list) else wrap_text(value, column_width)
-                    elif txt or csv:
-                        row[secondary_title_name] = "\n".join([item for item in value]) if isinstance(value, list) else value
-           
-                table_data.append(row)
-
-        elif isinstance(objects_list, list):
-            for obj in objects_list:
-                row = {}
-                for prop in properties_list:
-                    value_str = str(getattr(obj, prop, "N/A"))
-                    if value_str == "":
-                        value_str = "[EMPTY]"
-                    if len(value_str) > 300:
-                        value_str = value_str[:300] + "[TRUNCATED]"
-                    row[prop] = wrap_text(value_str, column_width) if not (csv or txt) else value_str
-                table_data.append(row)
-
-        if primary_sort_key and primary_sort_key in properties_list:
-            table_data.sort(key=lambda x: x.get(primary_sort_key, ""))
-        
-        output_data = []
-        header_line = " - ".join(properties_list)
-        output_data.append(header_line)
-
-        if isinstance(objects_list, dict):
-            for row in table_data:
-                line = " - ".join(row[prop] for prop in properties_list)
-                output_data.append(f"- {line}")
-                if isinstance(row[secondary_title_name], str):
-                    # Indent and prefix each blob with "*"
-                    for blob in row[secondary_title_name].splitlines():
-                        output_data.append(f"    * {blob}")
-                else:
-                    for item in row[secondary_title_name]:
-                        # Indent each blob in the list
-                        output_data.append(f"    * {item}")
-        elif isinstance(objects_list, list):
-            for row in table_data:
-                line = ", ".join(row[prop] for prop in properties_list)
-                output_data.append(f"- {line}")
-
-
-        if txt:
-            print("\n".join(output_data))
-            
-
-        if csv:
-          
-            df = pd.DataFrame(table_data, columns=header)
-            print(df.to_csv(index=False))
-        
+        # Get the terminal width dynamically (defaulting to 100 if undetectable)
         if table:
 
-            header = [wrap_text(col, column_width) for col in header]
-            title_wrapper = textwrap.TextWrapper(width=max_width, break_long_words=False, break_on_hyphens=False)
-            wrapped_title = title_wrapper.fill(title)
-            df = pd.DataFrame(table_data, columns=header)
+            print(f"{UtilityTools.BOLD}[*] TABLE OUTPUT ({project_id}){UtilityTools.RESET}")
 
-            # Apply wrapping while keeping newlines in place
-            for col in df.columns:
-                df[col] = df[col].apply(lambda x: x.replace('\n', '\n') if isinstance(x, str) else x)
+            table_width = int(terminal_width * 0.9)  # Use 90% of terminal width
+            print_table(objects_list, properties_list, table_width, secondary_title_name)
 
-            table = tabulate(df, headers='keys', tablefmt='grid', showindex=False)
+        if txt:
+            print(f"{UtilityTools.BOLD}[*] TXT OUTPUT ({project_id}){UtilityTools.RESET}")
+            print_text(objects_list, properties_list, table_width, secondary_title_name)
 
-            table_width = len(table.splitlines()[0])
+        if csv:
+            print(f"{UtilityTools.BOLD}[*] {breaker} [*]{UtilityTools.RESET}")
+            print(f"{UtilityTools.BOLD}[*] CSV OUTPUT ({project_id}){UtilityTools.RESET}")
+            print_csv(objects_list, properties_list, table_width, secondary_title_name)
 
-            title_visible_length = len(re.sub(r'\x1b\[[0-9;]*m', '', wrapped_title))
-
-            bold_top_row = "┏" + "━" * (table_width - 2) + "┓"
-            centered_title = "┃" + wrapped_title.center(table_width - 2 + (len(wrapped_title) - title_visible_length)) + "┃"
-
-            table_lines = table.splitlines()
-            table_lines[0] = "┣" + "━" * (table_width - 2) + "┫"
-
-            final_output = bold_top_row + "\n" + centered_title + "\n" + "\n".join(table_lines)
-        
-            print(final_output)
-
+        print(f"{UtilityTools.BOLD}[*] {breaker} [*]{UtilityTools.RESET}")
 
     @staticmethod
     def log_action(workspace_name, action):
