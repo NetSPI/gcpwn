@@ -39,8 +39,8 @@ Review the wiki at https://github.com/NetSPI/gcpwn/wiki for:
 2. **Authentication Management & Tokeninfo**: Load in user and/or service credentials to get creds setup
 3. **Managing Projects & Retrieving Resource Data**: How to manage Project IDs and how to retrieve enumerated data from SQLite tables.
 4. **Modules Guide**: How to call a module + deep dive on each module
-5. **Module Creation**: How to add your own module via pull request (In Progress - Target Date 9/15/2024)
-5. **Research Head Scratchers**: Research topics/open questions (In Progress - Target Date 9/22/2024)
+5. **Module Creation**: How to add your own module via pull request (In Progress - See Wiki Page)
+5. **Research Head Scratchers**: Research topics/open questions
 
 ## The TLDR
 
