@@ -60,7 +60,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
     args = parser.parse_args(user_args)
     
     debug, project_id = args.debug, session.project_id
-    action_dict, secrets_list = {}, {}
+    action_dict, secrets_track_resources = {}, {}
     
     secret_client = secretmanager_v1.SecretManagerServiceClient(credentials = session.credentials)   
 
@@ -88,7 +88,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/secrets/[secret_name] Please try again...{UtilityTools.RESET}")
             return -1
 
-        secrets_list.setdefault(project_id, {}).update({HashableSecret(Secret(name = secret_name), validated = False): {} for secret_name in secrets_list_rudimentary})
+        secrets_track_resources.setdefault(project_id, {}).update({HashableSecret(Secret(name = secret_name), validated = False): {} for secret_name in secrets_list_rudimentary})
 
     else:
 
@@ -97,7 +97,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
         every_secret = list_secrets(secret_client, parent, debug = debug)
 
         if every_secret == "Not Enabled" or every_secret == None:
-            secrets_list.setdefault(project_id, {})
+            secrets_track_resources.setdefault(project_id, {})
 
         else:
 
@@ -106,14 +106,14 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
             # Handle case where every_instance is empty
             if not every_secret:
-                secrets_list.setdefault(project_id, {})
+                secrets_track_resources.setdefault(project_id, {})
 
             else:
-                secrets_list.setdefault(project_id, {}).update({HashableSecret(secret): {} for secret in every_secret})
+                secrets_track_resources.setdefault(project_id, {}).update({HashableSecret(secret): {} for secret in every_secret})
                 for secret in every_secret:
                     save_secret(secret, session, project_id)
 
-    for secret_project_id, secret_list in secrets_list.items():
+    for secret_project_id, secret_list in secrets_track_resources.items():
 
         if debug: 
 
@@ -148,7 +148,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                         
                         if args.secret_names or args.secret_names_file and validated == False:
                             
-                            for secret_iter in secrets_list[secret_project_id].keys():
+                            for secret_iter in secrets_track_resources[secret_project_id].keys():
                                 if secret_iter == secret_get:
                                     secret_iter.validated = True
                                     break
@@ -162,7 +162,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                     
                     if args.secret_names or args.secret_names_file and validated == False:
                        
-                        for secret_iter in secrets_list[secret_project_id].keys():
+                        for secret_iter in secrets_track_resources[secret_project_id].keys():
                             if secret_iter.name == secret_name:
                                 secret_iter.validated = True
                                 break
@@ -186,7 +186,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                     if not args.secret_names and not args.secret_names_file:
                         version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
                         for version in version_nums:
-                            secrets_list.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
+                            secrets_track_resources.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
 
 
             if secret_versions_list:
@@ -217,7 +217,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                                 action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.versions.get', {}).setdefault('secret version', set()).add(secret_version_condensed_name)
                                 save_secret_version(secret_get_version, session, secret_project_id)
                                 if args.version_range:
-                                    secrets_list[secret_project_id][secret][version_num] = None
+                                    secrets_track_resources[secret_project_id][secret][version_num] = None
 
                     if args.iam:
                         print(f"[****] TEST Secret Version Permissions")
@@ -227,7 +227,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                         for permission in authenticated_permissions:
                             
                             if args.version_range:
-                                secrets_list[secret_project_id][secret][version_num] = None
+                                secrets_track_resources[secret_project_id][secret][version_num] = None
 
                             
                             action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secret version', set()).add(secret_version_condensed_name)
@@ -246,7 +246,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                             # secret_version_condensed_name
                             secret_value_data = secret_value.payload.data
                             
-                            secrets_list[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
+                            secrets_track_resources[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
                             
                             entry = {
                                 "primary_keys_to_match":{
@@ -273,7 +273,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                                     df.to_csv(destination_filename, mode='a', header=False, index=False)
         session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
 
-    for project, secrets in secrets_list.items():
+    for project, secrets in secrets_track_resources.items():
         
         for secret, version_dict in secrets.items():
             temp_list = []
@@ -281,9 +281,9 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             for version, value in version_dict.items():
                 temp_list.append(f'{version}: {value}')
 
-            secrets_list[project][secret] = temp_list
-
-    for secret_project_id, secret_only_info in secrets_list.items():
+            secrets_track_resources[project][secret] = temp_list
+    
+    for secret_project_id, secret_only_info in secrets_track_resources.items():
     
         list(map(lambda secret: setattr(
             secret._secret, 
