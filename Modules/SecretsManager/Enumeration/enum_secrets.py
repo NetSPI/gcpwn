@@ -1,5 +1,6 @@
 from Modules.SecretsManager.utils.util_helpers import *
 
+# Make Secret object hashable via wrapper; "validated" means if resource has been validated to truly exist
 class HashableSecret:
     def __init__(self, secret, validated = True):
         self._secret = secret
@@ -21,7 +22,6 @@ class HashableSecret:
         # Optional: Make it easier to read the wrapped object
         return f"HashableSecret({self._secret.name})"
 
-
 def parse_range(range_str):
     """
     Parse a range string (e.g., "1-5,7,latest") and return a list of numbers
@@ -42,7 +42,7 @@ def parse_range(range_str):
 def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
     # Set up Argparser to handle flag arguments
-    parser = argparse.ArgumentParser(description="Enumerate HMAC Keys Options", allow_abbrev=False)
+    parser = argparse.ArgumentParser(description="Enumerate Secrets", allow_abbrev=False)
     
     exclusive_access_key_group = parser.add_mutually_exclusive_group(required=False)
     exclusive_access_key_group.add_argument("--secret-names", type=str, help="Secrets to check in the format projects/[project_id]/secrets/[secret_name]")
@@ -88,12 +88,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/secrets/[secret_name] Please try again...{UtilityTools.RESET}")
             return -1
 
-        for secret_name in secrets_list_rudimentary:
-
-            _, secret_project_id, _, common_secret_name = secret_name.split("/")
-            secret_value = HashableSecret(Instance(name = secret))
-            secret_value.validated = False
-            secrets_list.setdefault(secret_project_id, set([])).add(secret_value)  
+        secrets_list.setdefault(project_id, {}).update({HashableSecret(Secret(name = secret_name), validated = False): {} for secret_name in secrets_list_rudimentary})
 
     else:
 
@@ -152,11 +147,12 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                         save_secret(secret_get, session, secret_project_id)
                         
                         if args.secret_names or args.secret_names_file and validated == False:
-
-                            validated = True
-                            temp = secrets_list[secret_project_id].pop(sa)
-                            secrets_list[secret_project_id][secret_get] = temp
-
+                            
+                            for secret_iter in secrets_list[secret_project_id].keys():
+                                if secret_iter == secret_get:
+                                    secret_iter.validated = True
+                                    break
+                            
             if args.iam:
                 print(f"[***] TEST Secret Permissions")
                 
@@ -165,20 +161,25 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                 for permission in authenticated_permissions:
                     
                     if args.secret_names or args.secret_names_file and validated == False:
-                        validated = True
-                        secrets_list[secret_project_id][secret].validated = True 
+                       
+                        for secret_iter in secrets_list[secret_project_id].keys():
+                            if secret_iter.name == secret_name:
+                                secret_iter.validated = True
+                                break
 
                     action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secrets', set()).add(secret.name.split("/")[-1])
-
-            print(f"[***] LIST Secret Versions")
 
             secret_versions_list = []
             if args.version_range:
                 all_version_numbers = args.version_range
                 for number in all_version_numbers:
                     secret_versions_list.append(f"{secret_name}/versions/{number}")
+                    print(secret_versions_list)
             
             else:
+
+                print(f"[***] LIST Secret Versions")
+
                 secret_versions_list = list_secret_versions(secret_client, secret_name)
 
                 if secret_versions_list:
@@ -190,26 +191,23 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
             if secret_versions_list:
 
-                for secret_version in secret_versions_list:
+                for secret_version_value in secret_versions_list:
                     
                     if not args.version_range:
-                        save_secret_version(secret_version, session, secret_project_id)
-                        secret_version_name = secret_version.name
-                    
+                        secret_version_full_name = str(secret_version_value.name)
+                        save_secret_version(secret_version_value, session, secret_project_id)               
+
                     else:
-                        secret_version_name = secret_version
+                        secret_version_full_name = secret_version_value
                     
-                    version_num = secret_version_name.split('/')[5]
+                    version_num = secret_version_full_name.split("/")[-1]
 
-
-                    secret_version_condensed_name = secret_version_name.split("/")[3] + f" (Version: {version_num})"
-
-                    #print(f"[**] [{secret_project_id}] Reviewing {secret_version_name}")
+                    secret_version_condensed_name = secret_name + f" (Version: {version_num})"
 
                     if not args.minimal_calls:
 
                         print(f"[****] GET Secret Version {version_num}")
-                        secret_get_version = get_secret_version(secret_client, secret_version_name, debug=debug)
+                        secret_get_version = get_secret_version(secret_client, secret_version_full_name, debug=debug)
                         
                         if secret_get_version:
                             if secret_get_version == 404:
@@ -224,7 +222,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                     if args.iam:
                         print(f"[****] TEST Secret Version Permissions")
                         
-                        authenticated_permissions = check_secret_version_permissions(secret_client, secret_version_name, debug = debug)
+                        authenticated_permissions = check_secret_version_permissions(secret_client, secret_version_full_name, debug = debug)
                         
                         for permission in authenticated_permissions:
                             
@@ -236,7 +234,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
                     # TODO maybe make this optional in future?
                     print(f"[****] GETTING Secret Values For {version_num}")
-                    secret_value = access_secret_value(secret_client, secret_version_name, debug = debug)
+                    secret_value = access_secret_value(secret_client, secret_version_full_name, debug = debug)
 
                     if secret_value:
                         print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[****] SECRET VALUE RETRIEVED FOR {version_num}{UtilityTools.RESET}")
@@ -252,7 +250,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                             
                             entry = {
                                 "primary_keys_to_match":{
-                                    "name": secret_version_name
+                                    "name": secret_version_full_name
                                 },
                                 "data_to_insert":{
                                     "secret_value":secret_value_data
@@ -301,6 +299,6 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             secret_only_info, 
             ["name","expire_time"],
             primary_resource = "Secret Names",
-            secondary_title_name = "versions",
+            secondary_title_name = "versions: <secrets>",
             output_format = output_format
         ) 

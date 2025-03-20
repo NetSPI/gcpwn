@@ -1,4 +1,6 @@
 from google.cloud import secretmanager_v1
+from google.cloud.secretmanager_v1.types import Secret
+
 import argparse
 from UtilityController import *
 import pandas as pd
@@ -347,7 +349,7 @@ def list_secret_versions(
         return 404
 
     except Exception as e:
-        UtilityTools.print_500(secret_name, "secretmanager.versions.list", e)
+        UtilityTools.print_500(secrets_list_versions, "secretmanager.versions.list", e)
         
         return None
 
