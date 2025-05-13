@@ -1,26 +1,15 @@
 from Modules.SecretsManager.utils.util_helpers import *
 
-# Make Secret object hashable via wrapper; "validated" means if resource has been validated to truly exist
 class HashableSecret:
-    def __init__(self, secret, validated = True):
+    def __init__(self, secret, validated=True):
         self._secret = secret
         self.validated = validated
 
-    def __hash__(self):
-        # Hash based on the name or any other combination of unique attributes
-        return hash(self._secret.name)
+    def __hash__(self): return hash(self._secret.name)
+    def __eq__(self, other): return isinstance(other, HashableSecret) and self._secret.name == other._secret.name
+    def __getattr__(self, attr): return getattr(self._secret, attr)
+    def __repr__(self): return f"HashableSecret({self._secret.name})"
 
-    def __eq__(self, other):
-        # Compare based on the name or any other combination of unique attributes
-        return isinstance(other, HashableSecret) and self._secret.name == other._secret.name
-
-    def __getattr__(self, attr):
-        # Delegate attribute access to the original secret object
-        return getattr(self._secret, attr)
-
-    def __repr__(self):
-        # Optional: Make it easier to read the wrapped object
-        return f"HashableSecret({self._secret.name})"
 
 def parse_range(range_str):
     """
@@ -45,8 +34,8 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
     parser = argparse.ArgumentParser(description="Enumerate Secrets", allow_abbrev=False)
     
     exclusive_access_key_group = parser.add_mutually_exclusive_group(required=False)
-    exclusive_access_key_group.add_argument("--secret-names", type=str, help="Secrets to check in the format projects/[project_id]/secrets/[secret_name]")
-    exclusive_access_key_group.add_argument("--secret-names-file", type=str, help="File name to get secrets in format projects/[project_id]/secrets/[secret_name] per line")
+    exclusive_access_key_group.add_argument("--secret-names", type=str, help="Secrets to check in the format projects/[project_number]/secrets/[secret_name]")
+    exclusive_access_key_group.add_argument("--secret-names-file", type=str, help="File name to get secrets in format projects/[project_number]/secrets/[secret_name] per line")
     parser.add_argument("--version-range", type=parse_range,  help="Range of secret versions to try (ex. 1-100)")
 
     parser.add_argument("--iam",action="store_true",required=False,help="Call TestIAMPermissions on Compute Instances")
@@ -64,31 +53,14 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
     
     secret_client = secretmanager_v1.SecretManagerServiceClient(credentials = session.credentials)   
 
+    # Step 1: Gather User Input 
     if args.secret_names or args.secret_names_file:
         
-        if args.secret_names:
+        secrets_list_rudimentary = UtilityTools.gather_non_automated_input(4, \
+            cmdline_in = args.secret_names, file_in = args.secret_names_file)
 
-            secrets_list_rudimentary = args.secret_names.split(",")
-
-        elif args.secret_names_file:
-
-            secrets_file = args.secret_names_file
-
-            try:
-
-                secrets_list_rudimentary = [line.strip() for line in open(secrets_file)]
-                
-            except FileNotFoundError:
-                print(f"{UtilityTools.RED}[X] File {secrets_file} does not appear to exist. Exiting...{UtilityTools.RESET}")
-                return -1
-
-        # Check if input is valid
-        status, incorrect_input = UtilityTools.validate_input_format(secrets_list_rudimentary, 4)
-        if status != 0: 
-            print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Must be 'projects/[project_id]/secrets/[secret_name] Please try again...{UtilityTools.RESET}")
-            return -1
-
-        secrets_track_resources.setdefault(project_id, {}).update({HashableSecret(Secret(name = secret_name), validated = False): {} for secret_name in secrets_list_rudimentary})
+        if secrets_list_rudimentary != -1:
+            secrets_track_resources.setdefault(project_id, {}).update({HashableSecret(Secret(name = secret_name), validated = False): {} for secret_name in secrets_list_rudimentary})
 
     else:
 
@@ -96,6 +68,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
         every_secret = list_secrets(secret_client, parent, debug = debug)
 
+        # Service is disabled or API failed
         if every_secret == "Not Enabled" or every_secret == None:
             secrets_track_resources.setdefault(project_id, {})
 
@@ -104,7 +77,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
             # Set action_dict whether instances are found or API worked but still empty list
             action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('secretmanager.secrets.list')
 
-            # Handle case where every_instance is empty
+            # API successful but empty list
             if not every_secret:
                 secrets_track_resources.setdefault(project_id, {})
 
@@ -113,6 +86,7 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                 for secret in every_secret:
                     save_secret(secret, session, project_id)
 
+    # Step 2: Iterate through each resource running GET/IAM
     for secret_project_id, secret_list in secrets_track_resources.items():
 
         if debug: 
@@ -146,13 +120,14 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                         action_dict.setdefault(secret_project_id, {}).setdefault('secretmanager.secrets.get', {}).setdefault('secrets', set()).add(secret_get.name.split("/")[-1])
                         save_secret(secret_get, session, secret_project_id)
                         
-                        if args.secret_names or args.secret_names_file and validated == False:
-                            
+                        if (args.secret_names or args.secret_names_file) and validated == False:
                             for secret_iter in secrets_track_resources[secret_project_id].keys():
-                                if secret_iter == secret_get:
+
+                                if secret_iter == HashableSecret(secret_get):
+  
                                     secret_iter.validated = True
                                     break
-                            
+
             if args.iam:
                 print(f"[***] TEST Secret Permissions")
                 
@@ -169,25 +144,19 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
                     action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secrets', set()).add(secret.name.split("/")[-1])
 
-            secret_versions_list = []
+            # Step 3: List secret versions within each secret and check each one
             if args.version_range:
-                all_version_numbers = args.version_range
-                for number in all_version_numbers:
-                    secret_versions_list.append(f"{secret_name}/versions/{number}")
-                    print(secret_versions_list)
-            
+                secret_versions_list = [f"{secret_name}/versions/{num}" for num in args.version_range]
             else:
-
                 print(f"[***] LIST Secret Versions")
-
                 secret_versions_list = list_secret_versions(secret_client, secret_name)
 
-                if secret_versions_list:
-                    if not args.secret_names and not args.secret_names_file:
-                        version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
-                        for version in version_nums:
-                            secrets_track_resources.setdefault(secret_project_id, {}).setdefault(HashableSecret(secret), {}).setdefault(version, None)
-
+                # If we are going automated route, we need to wrap secret in object in order for it to be a key in our dictionary
+                if secret_versions_list and not (args.secret_names or args.secret_names_file):
+                    version_nums = [path.name.split('/')[-1] for path in secret_versions_list]
+                    secrets_track_resources.setdefault(secret_project_id, {}).setdefault(secret, {})
+                    for version in version_nums:
+                        secrets_track_resources[secret_project_id][secret].setdefault(version, None)
 
             if secret_versions_list:
 
@@ -232,7 +201,6 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                             
                             action_dict.setdefault(secret_project_id, {}).setdefault(permission, {}).setdefault('secret version', set()).add(secret_version_condensed_name)
 
-                    # TODO maybe make this optional in future?
                     print(f"[****] GETTING Secret Values For {version_num}")
                     secret_value = access_secret_value(secret_client, secret_version_full_name, debug = debug)
 
@@ -242,8 +210,6 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
                         if secret_value.payload.data:
                             
-                            # secret_project_id
-                            # secret_version_condensed_name
                             secret_value_data = secret_value.payload.data
                             
                             secrets_track_resources[secret_project_id][secret][version_num] = secret_value_data.decode('utf-8')
@@ -271,27 +237,35 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
                                 else:
                                     # File exists, so append to it
                                     df.to_csv(destination_filename, mode='a', header=False, index=False)
+
+
         session.insert_actions(action_dict, secret_project_id, column_name = "secret_actions_allowed")
 
-    for project, secrets in secrets_track_resources.items():
+    # Format the final list and remove those manual entries not "validated"
+    for project in list(secrets_track_resources.keys()):
+        secrets = secrets_track_resources[project]
+        
+        keys_to_remove = []
         
         for secret, version_dict in secrets.items():
-            temp_list = []
-            # Convert the version dictionary to a single string
-            for version, value in version_dict.items():
-                temp_list.append(f'{version}: {value}')
+            if not hasattr(secret, "validated") or getattr(secret, "validated") is True:
+                temp_list = [f'{version}: {value}' for version, value in version_dict.items()]
+                secrets_track_resources[project][secret] = temp_list
+            else:
+                keys_to_remove.append(secret)
 
-            secrets_track_resources[project][secret] = temp_list
-    
+        for secret in keys_to_remove:
+            del secrets_track_resources[project][secret]
+
     for secret_project_id, secret_only_info in secrets_track_resources.items():
     
+        # Remove projects/[project_num] from names
         list(map(lambda secret: setattr(
             secret._secret, 
             'name', 
             secret._secret.name.split("/")[-1]), 
             secret_only_info
         ))
-
 
         UtilityTools.summary_wrapup(
             secret_project_id, 

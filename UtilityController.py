@@ -33,6 +33,36 @@ class UtilityTools:
     BOLD = "\033[1m"
 
     @staticmethod
+    def gather_non_automated_input(correct_individual_format, cmdline_in = False, file_in = False):
+
+        if cmdline_in:
+
+            list_rudimentary = cmdline_in.split(",")
+
+        elif file_in:
+
+            try:
+
+                list_rudimentary = [line.strip() for line in open(file_in)]
+                
+            except FileNotFoundError:
+                print(f"{UtilityTools.RED}[X] File {input_file} does not appear to exist. Exiting...{UtilityTools.RESET}")
+                return -1
+
+        # Check if input is valid
+        status, incorrect_input = UtilityTools.validate_input_format(list_rudimentary, correct_individual_format)
+        
+        # If input is invalid, fial and return response
+        if status != 0: 
+            print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Please try again...{UtilityTools.RESET}")
+            return -1
+
+        # If everying is good, return list
+        else:
+
+            return list_rudimentary
+
+    @staticmethod
     ########### Formatting Check
     def validate_input_format(resource, sections):
 
