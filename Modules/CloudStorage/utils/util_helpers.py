@@ -3,6 +3,7 @@ import hashlib, hmac, textwrap
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 import importlib
+import sys
 
 import xml.etree.ElementTree as ET
 
@@ -29,7 +30,15 @@ from google.api_core.exceptions import Forbidden
 from google.api_core.exceptions import BadRequest
 
 
-########### SAVE OPERATIONS FOR OBJECTS/BLOBS
+class HashableHMACKeyMetadata:
+    def __init__(self, hmac_key, validated=True):
+        self._hmac_key = hmac_key
+        self.validated = validated
+
+    def __hash__(self): return hash(self._hmac_key.access_id)
+    def __eq__(self, other): return isinstance(other, HashableHMACKeyMetadata) and self._hmac_key.access_id == other._hmac_key.access_id
+    def __getattr__(self, attr): return getattr(self._hmac_key, attr)
+    def __repr__(self): return f"HashableHMACKeyMetadata(id={self._hmac_key.access_id})"
 
 # Create bustom blob object for XML so I can set data via "." notation and keep same code
 class CustomBucketObject:
@@ -768,7 +777,6 @@ def download_blob(storage_client, bucket, blob,project_id, debug=False, output_f
     # If either a regex pattern and blob size are not set, or the regex pattern matches and/or the blob size matches, download file
     if (user_regex_pattern == None or re.search(user_regex_pattern,blob_name)) and (blob_size_limit == None or blob_size <=blob_size_limit):
        
-                
         if debug:
             print(f"[DEBUG] Downloading blob {blob_name}...")
 
@@ -801,7 +809,8 @@ def download_blob(storage_client, bucket, blob,project_id, debug=False, output_f
 
             except Forbidden as e:
                 if "storage.objects.get" in str(e):
-                    print(f"[-] The user could not download {blob_name}")   
+                    print(f"[-] The user could not download {blob_name}") 
+                return None  
 
             except Exception as e:
                 if project_id:
@@ -809,6 +818,9 @@ def download_blob(storage_client, bucket, blob,project_id, debug=False, output_f
                 else:
                     print(f"The storage.objects.get operation failed for unexpected reasons for {bucket_name}. See below:")
                 print(str(e))
+                return None
+    
+    return 1     
 
 def hmac_download_blob(storage_client,access_id, secret_key, bucket_name, blob_name,project_id, debug=False, output_folder = None):
     
