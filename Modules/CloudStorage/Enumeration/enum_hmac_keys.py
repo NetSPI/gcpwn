@@ -22,7 +22,13 @@ def run_module(user_args, session, first_run=False, last_run=False, output_forma
     print(f"[*] Checking {project_id} for HMAC keys...")
 
     all_hmacs = defaultdict(set)
-    action_dict = defaultdict(lambda: defaultdict(set))
+
+    resource_actions = {
+        "project_permissions": defaultdict(set),
+        "folder_permissions": {},
+        "organization_permissions": {}
+    }
+    hmac_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
 
     if args.access_keys or args.access_keys_file:
         input_keys = UtilityTools.gather_non_automated_input(
@@ -40,7 +46,7 @@ def run_module(user_args, session, first_run=False, last_run=False, output_forma
         if every_hmac_key == "Not Enabled" or every_hmac_key is None:
             all_hmacs[project_id] = set()
         else:
-            action_dict['project_permissions'][project_id].add("storage.hmacKeys.list")
+            resource_actions['project_permissions'][project_id].add("storage.hmacKeys.list")
             all_hmacs[project_id].update(HashableHMACKeyMetadata(h) for h in every_hmac_key)
             for h in every_hmac_key:
                 save_hmac_key(h, session, dont_change=["secret"])
@@ -62,10 +68,11 @@ def run_module(user_args, session, first_run=False, last_run=False, output_forma
                     if (args.access_keys or args.access_keys_file) and not validated:
                         all_hmacs[hmac_project_id].discard(hmac)
                         all_hmacs[hmac_project_id].add(HashableHMACKeyMetadata(hmac_get))
-                    action_dict['project_permissions'][hmac_project_id].add("storage.hmacKeys.get")
+                    resource_actions['project_permissions'][hmac_project_id].add("storage.hmacKeys.get")
                     save_hmac_key(hmac_get, session, dont_change=["secret"])
 
-        session.insert_actions(action_dict, hmac_project_id, column_name="storage_actions_allowed")
+        session.insert_actions(resource_actions, hmac_project_id, column_name="storage_actions_allowed")
+        session.insert_actions(hmac_actions, hmac_project_id, column_name="storage_actions_allowed")
 
     for project_id, hmac_data in all_hmacs.items():
         validated_hmacs = [obj for obj in hmac_data if getattr(obj, 'validated', True)]

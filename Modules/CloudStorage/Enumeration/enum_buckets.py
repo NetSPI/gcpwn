@@ -18,7 +18,7 @@ def dprint(msg, debug):
         print(f"[DEBUG] {msg}")
 
 # Returns List_Of_Buckets, False if buckets provided manually
-def get_bucket_list(args, session, storage_client, project_id, debug):
+def get_bucket_list(args, session, storage_client, project_id, resource_actions, debug):
     mode, validated = (
         ("manual", False) if args.bucket_names or args.bucket_names_file else
         ("hmac", True) if args.access_id and args.hmac_secret else
@@ -41,8 +41,11 @@ def get_bucket_list(args, session, storage_client, project_id, debug):
         bucket_list = hmac_list_buckets(storage_client, args.access_id, args.hmac_secret, project_id, debug)
     else:
         bucket_list = list_buckets(storage_client, debug)
+        if bucket_list and bucket_list not in ["Not Enabled", None]:
+            resource_actions["project_permissions"][project_id].add("storage.buckets.list")
 
-    if not bucket_list or bucket_list == "Not Enabled":
+
+    if bucket_list in ["Not Enabled", None]:
         return {}, validated
 
     for bucket in bucket_list:
@@ -117,7 +120,14 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
     # Initialize Variables
     debug, project_id = args.debug, session.project_id
 
-    action_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+
+    resource_actions = {
+        "project_permissions": defaultdict(set),
+        "folder_permissions": {},
+        "organization_permissions": {}
+    }
+    bucket_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+
     all_buckets = {}
     all_validated_buckets = {}
 
@@ -128,10 +138,10 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
     # Standard Start Message
     print(f"[*] Checking {project_id} for buckets...")
 
-    all_buckets, bucket_validated = get_bucket_list(args, session, storage_client, project_id, debug)
-
+    all_buckets, bucket_validated = get_bucket_list(args, session, storage_client, project_id, resource_actions, debug)
+    
     dprint(f"{len(all_buckets)} buckets were found" if all_buckets else "No buckets found", debug)
-
+    
     ### Enumerate through each bucket and check external curl, IAM, and bucket metadata where applicable
     for bucket in list(all_buckets.keys()):  # [CLEANED] Simplified by iterating over frozen keys only
         print(f"[**] Reviewing {bucket.name}")
@@ -145,7 +155,8 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
                     all_buckets[bucket_get] = all_buckets.pop(bucket)  
                     bucket_validated = True
                 bucket = bucket_get  # [FIXED] Always switch to enriched object
-                action_dict[project_id]["storage.buckets.get"]["buckets"].add(bucket.name)
+                
+                bucket_actions[project_id]["storage.buckets.get"]["buckets"].add(bucket.name)
                 save_bucket(bucket, session)
 
         # Bucket Unauth & Auth TestIAMPermissions
@@ -153,7 +164,7 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
             dprint("TEST Bucket Permissions", debug)
             auth_perms, unauth_perms = check_bucket_permissions(storage_client, bucket.name, authenticated=True, unauthenticated=True, debug=debug)
             for p in auth_perms:
-                action_dict[project_id][p]["buckets"].add(bucket.name)
+                bucket_actions[project_id][p]["buckets"].add(bucket.name)
             if unauth_perms:
                 session.add_unauthenticated_permissions({"name": bucket.name, "type": "bucket", "permissions": str(unauth_perms)}, project_id=project_id)
 
@@ -164,7 +175,7 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
         if blob_list in ("Not Enabled", None):
             continue
 
-        action_dict[project_id]["storage.objects.list"]["buckets"].add(bucket.name)
+        bucket_actions[project_id]["storage.objects.list"]["buckets"].add(bucket.name)
         all_buckets[bucket] = set(blob.name for blob in blob_list if blob.name[-1] != "/")
 
         if len(blob_list) == 0:
@@ -204,7 +215,7 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
                     bucket_validated = True
                 if args.threads == 1:
                     save_blob(blob, session)
-                    action_dict[project_id]["storage.objects.get"]["buckets"].add(bucket.name)
+                    bucket_actions[project_id]["storage.objects.get"]["buckets"].add(bucket.name)
 
                 with lock:
                     counter["count"] += 1
@@ -230,8 +241,9 @@ def run_module(user_args, session, first_run = False, last_run = False,output_fo
         if bucket_validated:
             all_validated_buckets[bucket] = all_buckets[bucket]
 
-    session.insert_actions(action_dict, project_id, column_name="storage_actions_allowed")
-    
+        session.insert_actions(resource_actions, project_id, column_name="compute_actions_allowed")
+        session.insert_actions(bucket_actions, project_id, column_name="compute_actions_allowed")  
+
     if not dependency:
         UtilityTools.summary_wrapup(
             project_id,

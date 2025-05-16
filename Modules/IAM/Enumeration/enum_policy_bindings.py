@@ -1,4 +1,5 @@
 from Modules.IAM.utils.util_helpers import *
+from collections import defaultdict
   
 def run_module(user_args, session, first_run = False, last_run = False, output_format = ["table"]):
 
@@ -13,143 +14,108 @@ def run_module(user_args, session, first_run = False, last_run = False, output_f
 
     action_dict = {}
 
-    organization_client = resourcemanager_v3.OrganizationsClient(credentials = session.credentials)
-    project_client = resourcemanager_v3.ProjectsClient(credentials = session.credentials)
-    folder_client = resourcemanager_v3.FoldersClient(credentials=session.credentials)
-    function_client = functions_v2.FunctionServiceClient(credentials=session.credentials,  transport="rest")
-    instance_client = compute_v1.InstancesClient(credentials = session.credentials)    
-    iam_client = iam_admin_v1.IAMClient(credentials = session.credentials)
-    secret_client = secretmanager_v1.SecretManagerServiceClient(credentials = session.credentials)   
+    # Initialize clients
+    clients = {
+        "org": resourcemanager_v3.OrganizationsClient(credentials=session.credentials),
+        "project": resourcemanager_v3.ProjectsClient(credentials=session.credentials),
+        "folder": resourcemanager_v3.FoldersClient(credentials=session.credentials),
+        "function": functions_v2.FunctionServiceClient(credentials=session.credentials, transport="rest"),
+        "compute": compute_v1.InstancesClient(credentials=session.credentials),
+        "iam": iam_admin_v1.IAMClient(credentials=session.credentials),
+        "secret": secretmanager_v1.SecretManagerServiceClient(credentials=session.credentials),
+    }
 
-    organizations = session.get_data("abstract-tree-hierarchy", columns=["name"], conditions="type=\"org\"")
-    folders = session.get_data("abstract-tree-hierarchy", columns=["name"], conditions="type=\"folder\"")
-    projects = session.get_data("abstract-tree-hierarchy", columns=["name","project_id"], conditions="type=\"project\"")
-    buckets = session.get_data("cloudstorage-buckets", columns=["name","project_id"])
-    cloudfunctions = session.get_data("cloudfunctions-functions", columns=["name","project_id", "environment"])
-    compute_instances = session.get_data("cloudcompute-instances", columns=["name", "zone", "project_id"])
-    sa_accounts = session.get_data("iam-principals", columns=["name", "email", "project_id"], conditions = "type =\"service_account\"")
-    secrets = session.get_data("secretsmanager-secrets", columns=["name", "project_id"])
-
-    print(f"[*] Checking IAM Policy for Organizations...")
-    action_dict = {}
-    for org_name in organizations:
-        org_name = org_name["name"]
-        
-        org_iam_policy = organization_get_iam_policy(organization_client, org_name, debug=debug)
-        if org_iam_policy:
-            action_dict.setdefault('organization_permissions', {}).setdefault(org_name, set()).add('resourcemanager.organizations.getIamPolicy')
-
-            parse_iam_bindings_by_members(org_iam_policy.bindings, session, "org", org_name, "N/A")
-
-    print(f"[*] Checking IAM Policy for Folders...")
-    for folder_name in folders:
-        folder_name = folder_name["name"]
-        
-        folder_iam_policy = folder_get_iam_policy(folder_client, folder_name, debug=debug)
-        if folder_iam_policy:
-            
-            action_dict.setdefault('folder_permissions', {}).setdefault(folder_name, set()).add('resourcemanager.folders.getIamPolicy')
-
-            parse_iam_bindings_by_members(folder_iam_policy.bindings, session, "folder", folder_name,"N/A")
-    
-    print(f"[*] Checking IAM Policy for Projects...")
-    for project_data in projects:
-        project_name, project_id = project_data["name"], project_data["project_id"]
-        
-        project_iam_policy = project_get_iam_policy(project_client, project_name, debug=debug)
-        if project_iam_policy:
-            action_dict.setdefault('project_permissions', {}).setdefault(project_id, set()).add('resourcemanager.projects.getIamPolicy')
-            parse_iam_bindings_by_members(project_iam_policy.bindings, session, "project", project_name,project_id)
-        
-    session.insert_actions(action_dict)
+    # Fetch resource data
+    resources = {
+        "orgs": session.get_data("abstract-tree-hierarchy", columns=["name"], conditions="type=\"org\""),
+        "folders": session.get_data("abstract-tree-hierarchy", columns=["name"], conditions="type=\"folder\""),
+        "projects": session.get_data("abstract-tree-hierarchy", columns=["name", "project_id"], conditions="type=\"project\""),
+        "buckets": session.get_data("cloudstorage-buckets", columns=["name", "project_id"]),
+        "functions": session.get_data("cloudfunctions-functions", columns=["name", "project_id", "environment"]),
+        "instances": session.get_data("cloudcompute-instances", columns=["name", "zone", "project_id"]),
+        "service_accounts": session.get_data("iam-principals", columns=["name", "email", "project_id"], conditions="type =\"service_account\""),
+        "secrets": session.get_data("secretsmanager-secrets", columns=["name", "project_id"]),
+    }
 
 
-    print(f"[*] Checking IAM Policy for Buckets...")
-    action_dict = {}
-    for bucket_data in buckets:
-        bucket_name, bucket_project_id = bucket_data["name"], bucket_data["project_id"]
-        storage_client = storage.Client(credentials = session.credentials, project = project_id)    
-        
-        bucket_iam_policy = bucket_get_iam_policy(storage_client, bucket_name, debug=debug)
-        if bucket_iam_policy and bucket_iam_policy != 404:
-            action_dict.setdefault(bucket_project_id, {}).setdefault("storage.buckets.getIamPolicy", {}).setdefault("buckets", set()).add(bucket_name)
-            parse_iam_bindings_by_members(bucket_iam_policy._bindings, session, "bucket", bucket_name, bucket_project_id, policy_type = "google.api_core.iam.Policy")
+    # ORG/FOLDER/PROJECT IAM
+    def handle_iam_binding(type_key, get_policy_fn, resource_list, column_key, resource_key):
+        print(f"[*] Checking IAM Policy for {type_key.title()}...")
+        perms = defaultdict(set)
+        for item in resource_list:
+            name = item[column_key]
+            policy = get_policy_fn(clients[type_key], name, debug=debug)
+            if policy:
+                perms[name].add(f"resourcemanager.{type_key}s.getIamPolicy")
+                parse_iam_bindings_by_members(policy.bindings, session, type_key, name, "N/A")
+        return {f"{type_key}_permissions": perms}
 
-    session.insert_actions(action_dict,  column_name = "storage_actions_allowed")
+    iam_perms = {}
+    iam_perms.update(handle_iam_binding("org", organization_get_iam_policy, resources["orgs"], "name", "org"))
+    iam_perms.update(handle_iam_binding("folder", folder_get_iam_policy, resources["folders"], "name", "folder"))
+    iam_perms.update(handle_iam_binding("project", project_get_iam_policy, resources["projects"], "name", "project"))
+    session.insert_actions(iam_perms)
 
-
-    print(f"[*] Checking IAM Policy for CloudFunctions...")
-    action_dict = {}
-    for function_data in cloudfunctions:
-        function_name = function_data["name"]
-        function_version = function_data["environment"]
-
-        function_project_id = function_name.split("/")[1]
-        function_location = function_name.split("/")[3]
-        function_simple_name = function_name.split("/")[5]
-        function_stored_entry = f"[{function_location}] {function_simple_name}"
-
-        function_iam_policy = cloudfunction_get_iam_policy(function_client, function_name, debug=debug)
-        if function_iam_policy and function_iam_policy != 404:
-
-            if function_version == 2:
-                action_dict.setdefault(function_project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v2", set()).add(function_stored_entry)
-            else:
-                action_dict.setdefault(function_project_id, {}).setdefault("cloudfunctions.functions.getIamPolicy", {}).setdefault("functions_v1", set()).add(function_stored_entry)
-
-            parse_iam_bindings_by_members(function_iam_policy.bindings, session, "cloudfunction", function_name, function_project_id)
-
-    session.insert_actions(action_dict,  column_name = "function_actions_allowed")
+    # BUCKET IAM
+    print("[*] Checking IAM Policy for Buckets...")
+    bucket_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    storage_client = storage.Client(credentials=session.credentials, project=project_id)
+    for b in resources["buckets"]:
+        name, pid = b["name"], b["project_id"]
+        policy = bucket_get_iam_policy(storage_client, name, debug=debug)
+        if policy and policy != 404:
+            bucket_actions[pid]["storage.buckets.getIamPolicy"]["buckets"].add(name)
+            parse_iam_bindings_by_members(policy._bindings, session, "bucket", name, pid, policy_type="google.api_core.iam.Policy")
+    session.insert_actions(bucket_actions, column_name="storage_actions_allowed")
 
 
-    print(f"[*] Checking IAM Policy for Compute Instances...")
-    action_dict = {}
-    for instance_data in compute_instances:
-        instance_name  = instance_data["name"]
-        instance_project_id = instance_data["project_id"]
-        zone_id = instance_data["zone"].split("/")[-1]
-        
-        instance_iam_policy = compute_instance_get_iam_policy(instance_client, instance_project_id, instance_name, zone_id, debug=debug)
-        if instance_iam_policy and instance_iam_policy != 404:
+    # FUNCTION IAM
+    print("[*] Checking IAM Policy for CloudFunctions...")
+    function_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    for f in resources["functions"]:
+        name, pid, env = f["name"], f["project_id"], f["environment"]
+        loc, short = name.split("/")[3], name.split("/")[5]
+        display = f"[{loc}] {short}"
+        policy = cloudfunction_get_iam_policy(clients["function"], name, debug=debug)
+        if policy and policy != 404:
+            key = "functions_v2" if env == 2 else "functions_v1"
+            function_actions[pid]["cloudfunctions.functions.getIamPolicy"][key].add(display)
+            parse_iam_bindings_by_members(policy.bindings, session, "cloudfunction", name, pid)
+    session.insert_actions(function_actions, column_name="function_actions_allowed")
 
-            action_dict.setdefault(instance_project_id, {}).setdefault("compute.instances.getIamPolicy", {}).setdefault("instances", set()).add(instance_name)
+    # INSTANCE IAM
+    print("[*] Checking IAM Policy for Compute Instances...")
+    instance_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    for i in resources["instances"]:
+        name, pid, zone = i["name"], i["project_id"], i["zone"].split("/")[-1]
+        policy = compute_instance_get_iam_policy(clients["compute"], pid, name, zone, debug=debug)
+        if policy and policy != 404:
+            instance_actions[pid]["compute.instances.getIamPolicy"]["instances"].add(name)
+            parse_iam_bindings_by_members(policy.bindings, session, "computeinstance", name, pid)
+    session.insert_actions(instance_actions, column_name="compute_actions_allowed")
 
-            parse_iam_bindings_by_members(instance_iam_policy.bindings, session, "computeinstance", instance_name, instance_project_id)
+    # SA IAM
+    print("[*] Checking IAM Policy for Service Accounts...")
+    sa_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    for sa in resources["service_accounts"]:
+        name, pid = sa["name"], sa["project_id"]
+        policy = sa_get_iam_policy(clients["iam"], name, debug=debug)
+        if policy and policy != 404:
+            sa_actions[pid]["iam.serviceAccounts.getIamPolicy"]["service account"].add(name)
+            parse_iam_bindings_by_members(policy.bindings, session, "saaccounts", name, pid)
+    session.insert_actions(sa_actions, column_name="service_account_actions_allowed")
 
-    session.insert_actions(action_dict,  column_name = "compute_actions_allowed")
-
-
-    print(f"[*] Checking IAM Policy for Service Accounts...")
-    action_dict = {}
-    for account in sa_accounts:
-        
-       
-        sa_name  = account["name"]
-        sa_project_id = account["project_id"]
-        sa_email = account["email"]
-        
-        sa_iam_policy = sa_get_iam_policy(iam_client, sa_name, debug=debug)
-        if sa_iam_policy and sa_iam_policy != 404:
-            action_dict.setdefault(sa_project_id, {}).setdefault("iam.serviceAccounts.getIamPolicy", {}).setdefault("service account", set()).add(sa_name)
-
-            parse_iam_bindings_by_members(sa_iam_policy.bindings, session, "saaccounts", sa_name, sa_project_id)
-
-    session.insert_actions(action_dict,  column_name = "service_account_actions_allowed")
-
-    print(f"[*] Checking IAM Policy for Secrets...")
-    action_dict = {}
-    for secret in secrets:
-        secret_project_id = secret["project_id"]
-        secret_name  = secret["name"]
-        secret_iam_policy = secret_get_iam_policy(secret_client, secret_name, debug=debug)
-        if secret_iam_policy and secret_iam_policy != 404:
-          
-            action_dict.setdefault(secret_project_id, {}).setdefault("secretmanager.secrets.getIamPolicy", {}).setdefault("secrets", set()).add(secret_name.split("/")[-1])
-
-            parse_iam_bindings_by_members(secret_iam_policy.bindings, session, "secrets", secret_name, secret_project_id)
-    
-    session.insert_actions(action_dict,  column_name = "secret_actions_allowed")
-
+    # SECRET IAM
+    print("[*] Checking IAM Policy for Secrets...")
+    secret_actions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
+    for s in resources["secrets"]:
+        name, pid = s["name"], s["project_id"]
+        policy = secret_get_iam_policy(clients["secret"], name, debug=debug)
+        if policy and policy != 404:
+            short = name.split("/")[-1]
+            secret_actions[pid]["secretmanager.secrets.getIamPolicy"]["secrets"].add(short)
+            parse_iam_bindings_by_members(policy.bindings, session, "secrets", name, pid)
+    session.insert_actions(secret_actions, column_name="secret_actions_allowed")
 
     # Users are gathered via IAM table
     session.sync_users()

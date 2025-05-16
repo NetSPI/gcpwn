@@ -14,6 +14,34 @@ from google.protobuf.json_format import MessageToDict
 # Utilities
 from UtilityController import *
 
+
+class HashableServiceAccount:
+
+    # default validated to true unless otherwise noted
+    def __init__(self, sa_account, validated = True):
+        self._sa_account = sa_account
+        self.validated = validated
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash(self._sa_account.unique_id)
+
+    def __eq__(self, other):
+        # Compare based on the name or any other combination of unique attributes
+
+        if isinstance(other, HashableServiceAccount) and self._sa_account.unique_id == other._sa_account.unique_id:
+            return True
+        else:
+            return False
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._sa_account, attr)
+
+    def __repr__(self):
+        # Make the string representation more informative by including both id and name
+        return f"HashableServiceAccount(id={self._sa_account.unique_id})"
+
 ########## Parse Bindings
 def parse_iam_bindings_by_members(bindings, session, type_of_resource, name, project_id, policy_type = None):
     try:        

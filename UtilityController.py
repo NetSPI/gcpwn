@@ -33,7 +33,7 @@ class UtilityTools:
     BOLD = "\033[1m"
 
     @staticmethod
-    def gather_non_automated_input(correct_individual_format, cmdline_in = False, file_in = False):
+    def gather_non_automated_input(correct_individual_format, cmdline_in = False, file_in = False, validate_input = True, transform=lambda x: x):
 
         if cmdline_in:
 
@@ -47,20 +47,25 @@ class UtilityTools:
                 
             except FileNotFoundError:
                 print(f"{UtilityTools.RED}[X] File {input_file} does not appear to exist. Exiting...{UtilityTools.RESET}")
-                return -1
+                return []
 
         # Check if input is valid
-        status, incorrect_input = UtilityTools.validate_input_format(list_rudimentary, correct_individual_format)
-        
-        # If input is invalid, fial and return response
-        if status != 0: 
-            print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Please try again...{UtilityTools.RESET}")
-            return -1
+        if validate_input:
+            status, incorrect_input = UtilityTools.validate_input_format(list_rudimentary, correct_individual_format)
+            
+            # If input is invalid, fial and return response
+            if status != 0: 
+                print(f"{UtilityTools.RED}[X] Value \"{incorrect_input}\" is incorrect. Please try again...{UtilityTools.RESET}")
+                return []
 
-        # If everying is good, return list
+            # If everying is good, return list
+            else:
+
+                return [transform(item) for item in list_rudimentary]
+
         else:
 
-            return list_rudimentary
+            return [transform(item) for item in list_rudimentary]
 
     @staticmethod
     ########### Formatting Check
@@ -161,6 +166,11 @@ class UtilityTools:
     def print_500(resource_name, permission, error):
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}{UtilityTools.RED} {permission} failed for {resource_name}. See below:")
         print(str(error) + f"{UtilityTools.RESET}")
+    
+    @staticmethod
+    def dprint(msg, debug):
+        if debug:
+            print(f"[DEBUG] {msg}")
 
     # TODO: Export SQLITE tables to CSV
     @staticmethod
@@ -202,6 +212,7 @@ class UtilityTools:
             data = []
             # If input is option 1
             if isinstance(objects_list, dict):
+                
                 column_headers = properties_list + [secondary_title_name]
 
                 if len(all_rows) == 0:

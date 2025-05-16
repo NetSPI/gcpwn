@@ -29,6 +29,58 @@ from session import SessionUtility
 from Modules.IAM.utils.util_helpers import instance_get_iam_policy, instance_set_iam_policy
 from UtilityController import *
 
+
+class HashableComputeProject:
+
+    # default validated to true unless otherwise noted
+    def __init__(self, compute_project, validated = True):
+        self._compute_project = compute_project
+        self.validated = validated
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash(self._compute_project.id)
+
+    def __eq__(self, other):
+        # Compare based on the name or any other combination of unique attributes
+
+        return isinstance(other, HashableComputeProject) and self._compute_project.id == other._compute_project.id
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._compute_project, attr)
+
+    def __repr__(self):
+        # Make the string representation more informative by including both id and name
+        return f"HashableComputeProject(id={self._compute_project.id})"
+
+class HashableInstance:
+
+    network_interfaces_output = None
+    metadata_output = None
+
+    # default validated to true unless otherwise noted
+    def __init__(self, instance, validated = True):
+        self._instance = instance
+        self.validated = validated
+
+    def __hash__(self):
+        # Hash based on the name or any other combination of unique attributes
+        return hash((self._instance.id, self._instance.name))
+
+    def __eq__(self, other):
+
+        # Compare based on the name or any other combination of unique attributes
+        return isinstance(other, HashableInstance) and self._instance.id == other._instance.id and self._instance.name == other._instance.name
+
+    def __getattr__(self, attr):
+        # Delegate attribute access to the original secret object
+        return getattr(self._instance, attr)
+
+    def __repr__(self):
+        # Make the string representation more informative by including both id and name
+        return f"HashableInstance(id={self._instance.id}, name={self._instance.name})"
+
 # Taken from code snippet at https://cloud.google.com/compute/docs/instances/stop-start-instance
 def wait_for_extended_operation(
     operation: ExtendedOperation, verbose_name: str = "operation", timeout: int = 480

@@ -1,22 +1,48 @@
-from google.cloud import secretmanager_v1
-from google.cloud.secretmanager_v1.types import Secret
-
-import argparse
+# Custom Code
 from UtilityController import *
-import pandas as pd
-import os
 from Modules.IAM.utils.util_helpers import secret_get_iam_policy, secret_set_iam_policy
 
+# Official Google Libraries & Exceptions
+from google.cloud import secretmanager_v1
+from google.cloud.secretmanager_v1.types import Secret
+from google.iam.v1 import iam_policy_pb2 
 
 from google.api_core.exceptions import PermissionDenied
 from google.api_core.exceptions import NotFound
 from google.api_core.exceptions import Forbidden
 from google.api_core.exceptions import InvalidArgument
 
-from google.iam.v1 import iam_policy_pb2 
+# General Python Libraries
+import os, argparse
+import pandas as pd
 
-# Utilities
-from UtilityController import *
+
+class HashableSecret:
+    def __init__(self, secret, validated=True):
+        self._secret = secret
+        self.validated = validated
+
+    def __hash__(self): return hash(self._secret.name)
+    def __eq__(self, other): return isinstance(other, HashableSecret) and self._secret.name == other._secret.name
+    def __getattr__(self, attr): return getattr(self._secret, attr)
+    def __repr__(self): return f"HashableSecret({self._secret.name})"
+
+
+def download_secret_version(session, secret_project_id, secret_version_condensed_name, secret_value_data):
+    destination_filename = UtilityTools.get_save_filepath(session.workspace_directory_name, f"secrets_data_{secret_project_id}.csv", "Secrets")
+    data = {
+        "secret_project_id": [secret_project_id],
+        "secret_name_version": [secret_version_condensed_name],
+        "secret_value_data": [secret_value_data]
+    }                              
+    df = pd.DataFrame(data)
+    if not os.path.isfile(destination_filename):
+        # File doesn't exist, so write (create) it
+        df.to_csv(destination_filename, index=False)
+    else:
+        # File exists, so append to it
+        df.to_csv(destination_filename, mode='a', header=False, index=False)
+
 
 def save_secret(secret, session, secret_project_id):
 
