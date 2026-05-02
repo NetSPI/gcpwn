@@ -497,6 +497,11 @@ Direct runtime dependencies are sourced from `requirements.txt` (and loaded via 
 
 - `pytest>=9.0` via `pip install "gcpwn[dev]"`
 
+### Release-build only dependency
+
+- `pyinstaller==6.20.0` is used by `.github/workflows/build_release.yml` to package standalone executables for release artifacts.
+- It is not required for normal runtime usage of GCPwn.
+
 Tip: If you want an SBOM from GitHub, open this repository and go to `Insights` -> `Dependency graph`, then use `Export SBOM`.
 
 ## Repository Layout
