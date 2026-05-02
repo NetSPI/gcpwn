@@ -20,6 +20,16 @@ on:
         description: "Release notes/body text for the GitHub Release"
         required: true
         type: string
+      build_linux:
+        description: "Build Linux binary (ubuntu-latest)"
+        required: true
+        type: boolean
+        default: true
+      build_macos:
+        description: "Build macOS binary (macos-latest)"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -63,6 +73,53 @@ jobs:
       - name: Run unit tests
         run: python -m pytest -q -ra tests/unit tests/module_contracts
 
+  resolve-build-targets:
+    if: >-
+      always() &&
+      !cancelled() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'NetSPI/gcpwn' &&
+      github.actor == 'WebbinRoot' &&
+      github.triggering_actor == 'WebbinRoot' &&
+      (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
+      github.ref == 'refs/heads/main'
+    needs: preflight-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      os_matrix: ${{ steps.set-matrix.outputs.os_matrix }}
+    steps:
+      - name: Resolve selected OS targets
+        id: set-matrix
+        shell: bash
+        env:
+          BUILD_LINUX: ${{ inputs.build_linux }}
+          BUILD_MACOS: ${{ inputs.build_macos }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          selected = []
+          if os.environ.get("BUILD_LINUX", "").lower() == "true":
+              selected.append("ubuntu-latest")
+          if os.environ.get("BUILD_MACOS", "").lower() == "true":
+              selected.append("macos-latest")
+
+          if not selected:
+              print("Select at least one build target OS (linux/macos).", file=sys.stderr)
+              sys.exit(1)
+
+          out_path = os.environ["GITHUB_OUTPUT"]
+          with open(out_path, "a", encoding="utf-8") as handle:
+              handle.write(f"os_matrix={json.dumps(selected)}\n")
+
+          print(f"Resolved build targets: {selected}")
+          PY
+
   build-executables:
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -70,13 +127,13 @@ jobs:
       github.actor == 'WebbinRoot' &&
       github.triggering_actor == 'WebbinRoot' &&
       github.ref == 'refs/heads/main'
-    needs: create-release
+    needs:
+      - create-release
+      - resolve-build-targets
     strategy:
       fail-fast: false
       matrix:
-        # Windows executable builds are intentionally deferred for now.
-        # We will add windows-latest back once the readline UX path is finalized.
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(needs.resolve-build-targets.outputs.os_matrix) }}
         extras_label: [base, table, excel, table_excel]
     name: Build (${{ matrix.os }} | ${{ matrix.extras_label }})
     runs-on: ${{ matrix.os }}
@@ -174,16 +231,19 @@ jobs:
 
   create-release:
     if: >-
+      always() &&
       !cancelled() &&
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'NetSPI/gcpwn' &&
       github.actor == 'WebbinRoot' &&
       github.triggering_actor == 'WebbinRoot' &&
+      needs.resolve-build-targets.result == 'success' &&
       (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
       needs.release-approval.result == 'success' &&
       github.ref == 'refs/heads/main'
     needs:
       - preflight-tests
+      - resolve-build-targets
       - release-approval
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -215,14 +275,18 @@ jobs:
     # Manual gate for release operations.
     # This job must pass before create-release/build-executables can write assets to Releases.
     if: >-
+      always() &&
       !cancelled() &&
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'NetSPI/gcpwn' &&
       github.actor == 'WebbinRoot' &&
       github.triggering_actor == 'WebbinRoot' &&
+      needs.resolve-build-targets.result == 'success' &&
       (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
       github.ref == 'refs/heads/main'
-    needs: preflight-tests
+    needs:
+      - preflight-tests
+      - resolve-build-targets
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
