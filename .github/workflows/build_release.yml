@@ -74,7 +74,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows executable builds are intentionally deferred for now.
+        # We will add windows-latest back once the readline UX path is finalized.
+        os: [ubuntu-latest, macos-latest]
         extras_label: [base, table, excel, table_excel]
     name: Build (${{ matrix.os }} | ${{ matrix.extras_label }})
     runs-on: ${{ matrix.os }}
@@ -146,12 +148,7 @@ jobs:
       - name: Verify executable
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            EXECUTABLE="dist/gcpwn.exe"
-          else
-            EXECUTABLE="dist/gcpwn"
-          fi
-
+          EXECUTABLE="dist/gcpwn"
           test -f "$EXECUTABLE"
           "$EXECUTABLE" --help >/dev/null
           echo "Verified executable: $EXECUTABLE"
@@ -160,13 +157,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          EXT=""
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            EXT=".exe"
-          fi
-
-          SRC="dist/gcpwn${EXT}"
-          DST="release/gcpwn-${{ matrix.os }}-${{ matrix.extras_label }}${EXT}"
+          SRC="dist/gcpwn"
+          DST="release/gcpwn-${{ matrix.os }}-${{ matrix.extras_label }}"
           cp "$SRC" "$DST"
           echo "ASSET_PATH=$DST" >> "$GITHUB_ENV"
 
