@@ -50,6 +50,7 @@ gcpwn.wiki/
 scripts/build_service_agent_patterns.py
 scripts/build_service_agent_patterns_output.json
 scripts/*.txt
+!scripts/build_predfined_perm_to_role_input.txt
 
 # OS/editor noise
 .DS_Store

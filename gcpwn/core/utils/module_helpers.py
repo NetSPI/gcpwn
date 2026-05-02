@@ -713,7 +713,10 @@ def export_sqlite_dbs_to_excel_blob(
     try:
         import xlsxwriter
     except Exception as exc:  # pragma: no cover
-        raise RuntimeError("Excel export requires xlsxwriter to be installed.") from exc
+        raise RuntimeError(
+            "Excel export requires xlsxwriter. Install with `pip install gcpwn[excel]` "
+            "or `pip install xlsxwriter==3.2.9`."
+        ) from exc
 
     bundle = collect_sqlite_export_bundle(db_paths=db_paths)
     out_file = Path(out_xlsx_path).expanduser()
