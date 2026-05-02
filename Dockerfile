@@ -18,6 +18,11 @@ RUN apt-get update \
 WORKDIR /opt/gcpwn
 
 COPY . .
-RUN python3 -m pip install .
+ARG GCPWN_EXTRAS=""
+RUN if [ -n "$GCPWN_EXTRAS" ]; then \
+      python3 -m pip install ".[${GCPWN_EXTRAS}]"; \
+    else \
+      python3 -m pip install .; \
+    fi
 
 ENTRYPOINT ["gcpwn"]

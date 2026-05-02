@@ -141,6 +141,19 @@ docker build -t gcpwn .
 docker run --rm -it gcpwn
 ```
 
+Build with optional extras (if you want table rendering and/or Excel export available in the container):
+
+```bash
+# prettytable extra
+docker build --build-arg GCPWN_EXTRAS=table -t gcpwn .
+
+# xlsxwriter extra
+docker build --build-arg GCPWN_EXTRAS=excel -t gcpwn .
+
+# both extras
+docker build --build-arg GCPWN_EXTRAS=table,excel -t gcpwn .
+```
+
 If you want local persistence for DB/output between runs, mount volumes:
 
 ```bash

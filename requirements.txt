@@ -2,7 +2,6 @@
 boto3>=1.43.1,<2
 pandas==3.0.2
 requests==2.33.1
-xlsxwriter==3.2.9
 
 # Google API / auth libraries
 google-api-core==2.30.3
@@ -68,3 +67,8 @@ google-genai==1.74.0
 # pip install gcpwn[table]
 # Or (from git clone):
 # pip install prettytable==3.17.0
+#
+# Optional Excel export support:
+# pip install gcpwn[excel]
+# Or (from git clone):
+# pip install xlsxwriter==3.2.9

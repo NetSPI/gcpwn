@@ -32,6 +32,9 @@ dev = [
 table = [
   "prettytable==3.17.0"
 ]
+excel = [
+  "xlsxwriter==3.2.9"
+]
 
 [project.scripts]
 gcpwn = "gcpwn.cli.main:main"
