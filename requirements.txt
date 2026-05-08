@@ -48,7 +48,7 @@ google-cloud-storageinsights==0.4.0
 google-cloud-tasks==2.22.0
 google-cloud-translate==3.26.0
 google-cloud-videointelligence==2.19.0
-google-cloud-vision==3.13.0
+google-cloud-vision==3.14.0
 
 # VertexAI
 google-genai==1.74.0
