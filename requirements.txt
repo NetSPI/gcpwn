@@ -37,7 +37,7 @@ google-cloud-pubsub==2.37.0
 google-cloud-redis==2.21.0
 google-cloud-resource-manager==1.17.0
 google-cloud-run==0.16.0
-google-cloud-runtimeconfig==0.36.1
+google-cloud-runtimeconfig==0.37.0
 google-cloud-scheduler==2.19.0
 google-cloud-secret-manager==2.27.0
 google-cloud-service-directory==1.17.0
