@@ -1051,14 +1051,13 @@ class CommandProcessor:
             self.session.load_stored_creds(args.credname)
             return
 
-        available_creds = self._list_available_creds(self.workspace_id)
-        self.print_creds_table()
+        available_creds = self.print_creds_table()
         answer = input("[*] Choose the username or index you want to assume: ")
         credname = resolve_stored_credname(answer, available_creds)
         if credname:
             self.session.load_stored_creds(credname)
 
-    def print_creds_table(self):
+    def _credential_rows_for_display(self):
         rows = self.session.get_session_data("session") or []
         normalized_rows = []
         for row in rows:
@@ -1066,23 +1065,36 @@ class CommandProcessor:
                 continue
             normalized_rows.append(
                 {
-                    "index": len(normalized_rows) + 1,
-                    "credname": str(row.get("credname") or ""),
-                    "credtype": str(row.get("credtype") or ""),
-                    "email": str(row.get("email") or ""),
-                    "default_project": str(row.get("default_project") or ""),
+                    "credname": str(row.get("credname") or "").strip(),
+                    "credtype": str(row.get("credtype") or "").strip(),
+                    "email": str(row.get("email") or "").strip(),
+                    "default_project": str(row.get("default_project") or "").strip(),
                 }
             )
+
+        normalized_rows = [row for row in normalized_rows if row["credname"]]
+        normalized_rows.sort(key=lambda item: item["credname"].lower())
+        return normalized_rows
+
+    def print_creds_table(self):
+        normalized_rows = self._credential_rows_for_display()
         if not normalized_rows:
             print("\n[-] No creds found")
-            return
-        UtilityTools.print_limited_table(
-            normalized_rows,
-            ["index", "credname", "credtype", "email", "default_project"],
-            title="Stored credentials",
-            max_rows=200,
-            sort_key="credname",
-        )
+            return []
+
+        print("\n[*] Stored credentials")
+        available_creds = []
+        for idx, row in enumerate(normalized_rows, start=1):
+            is_current = row["credname"] == str(getattr(self.session, "credname", "") or "").strip()
+            marker = " (current)" if is_current else ""
+            credtype = row["credtype"] or "unknown"
+            email = row["email"] or "-"
+            default_project = row["default_project"] or "Unknown"
+            print(
+                f"  [{idx}] {row['credname']}{marker} | type={credtype} | email={email} | default_project={default_project}"
+            )
+            available_creds.append((row["credname"], row["credtype"], row["email"]))
+        return available_creds
 
     # -----------------------------
     # Permission and role formatting

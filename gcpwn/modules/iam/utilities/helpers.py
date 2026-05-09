@@ -8,6 +8,8 @@ from gcpwn.core.console import UtilityTools
 
 from google.api_core.exceptions import NotFound
 from google.api_core.exceptions import Forbidden
+from google.api_core.exceptions import FailedPrecondition
+from google.api_core.exceptions import ResourceExhausted
 from gcpwn.core.contracts import HashableResourceProxy
 from gcpwn.core.utils.service_runtime import build_discovery_service
 from gcpwn.core.utils.action_recording import record_permissions
@@ -235,7 +237,7 @@ class HashableServiceAccount(HashableResourceProxy):
 def iam_disable_service_account_key(iam_client, sa_name, debug=False):
     
     if debug:
-        print(f"[DEBUG] Getting IAM access token for {sa_name} ..")
+        print(f"[DEBUG] Disabling IAM service account key {sa_name} ..")
 
     status = None
 
@@ -263,7 +265,7 @@ def iam_disable_service_account_key(iam_client, sa_name, debug=False):
 def iam_enable_service_account_key(iam_client, sa_name, debug=False):
     
     if debug:
-        print(f"[DEBUG] Getting IAM access token for {sa_name} ..")
+        print(f"[DEBUG] Enabling IAM service account key {sa_name} ..")
 
     status = None
 
@@ -291,7 +293,7 @@ def iam_enable_service_account_key(iam_client, sa_name, debug=False):
 def iam_generate_service_account_key(iam_client, sa_name, debug=False):
     
     if debug:
-        print(f"[DEBUG] Getting IAM access token for {sa_name} ..")
+        print(f"[DEBUG] Creating IAM service account key for {sa_name} ..")
 
     name_account_key = None
 
@@ -308,11 +310,31 @@ def iam_generate_service_account_key(iam_client, sa_name, debug=False):
         if "does not have iam.serviceAccountKeys.create" in str(e):
             UtilityTools.print_403_api_denied("iam.serviceAccountKeys.create", resource_name = sa_name)
 
+    except FailedPrecondition as e:
+        err = str(e)
+        if "disableServiceAccountKeyCreation" in err or "Key creation is not allowed on this service account" in err:
+            UtilityTools.print_error(
+                "Service account key creation is blocked by organization policy "
+                "(constraints/iam.disableServiceAccountKeyCreation)."
+            )
+        else:
+            UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create", e)
+
+    except ResourceExhausted as e:
+        UtilityTools.print_error(
+            "Service account key creation failed due to quota/limit exhaustion "
+            "(for example, too many active user-managed keys)."
+        )
+        UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create", e)
+
     except Exception as e:
         UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create", e)
 
     if debug:
-        print("[DEBUG] Successfully completed IAM generate_service_account_key ..")
+        if name_account_key:
+            print("[DEBUG] Successfully completed IAM generate_service_account_key ..")
+        else:
+            print("[DEBUG] IAM generate_service_account_key returned no key object.")
 
     return name_account_key
 
