@@ -36,12 +36,17 @@ MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "enum_cloud_identity": (True, True, False),
 }
 
+def _is_unknown_project_token(value: Any) -> bool:
+    token = str(value or "").strip().lower()
+    return token in {"unknown", "n/a", "<unknown-project>", "<unknown>", "none"}
+
+
 def _normalize_project_ids(values: Sequence[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for value in values or []:
         token = str(value or "").strip()
-        if not token or token in seen:
+        if not token or _is_unknown_project_token(token) or token in seen:
             continue
         seen.add(token)
         out.append(token)
@@ -134,7 +139,7 @@ def _short_hierarchy_token(row: dict[str, Any]) -> str:
 
 def _render_current_project_hierarchy(session) -> str:
     current_project_id = str(getattr(session, "project_id", "") or "").strip()
-    if not current_project_id:
+    if not current_project_id or _is_unknown_project_token(current_project_id):
         return ""
 
     rows = session.get_data(
@@ -198,9 +203,9 @@ def _render_known_project_tree(session) -> list[str]:
     known_projects = {
         str(project_id).strip()
         for project_id in (getattr(session, "global_project_list", None) or [])
-        if str(project_id).strip()
+        if str(project_id).strip() and not _is_unknown_project_token(str(project_id).strip())
     }
-    if current_project_id:
+    if current_project_id and not _is_unknown_project_token(current_project_id):
         known_projects.add(current_project_id)
     if not known_projects:
         return []
@@ -319,7 +324,9 @@ def _prompt_for_project_scope(session) -> str | None:
 
 def _resolve_targets_for_per_project(session, runner: RunnerArgs, module_import_path: str) -> list[str] | None:
     current_project_id = str(getattr(session, "project_id", "") or "").strip()
-    known_projects = list(getattr(session, "global_project_list", None) or [])
+    if _is_unknown_project_token(current_project_id):
+        current_project_id = ""
+    known_projects = _normalize_project_ids(list(getattr(session, "global_project_list", None) or []))
 
     if runner.project_ids:
         return list(runner.project_ids)
@@ -366,7 +373,7 @@ def _resolve_context_project_id(session, runner: RunnerArgs) -> str | None:
         next(iter(getattr(session, "global_project_list", None) or []), None),
     ):
         token = str(candidate or "").strip()
-        if token:
+        if token and not _is_unknown_project_token(token):
             return token
     return None
 
@@ -383,7 +390,14 @@ def _plan_execution(
 
     targets = _resolve_targets_for_per_project(session, runner, module_import_path)
     if targets is None:
-        return (None, f"{UtilityTools.RED}[X] No project context available. Set a project or pass --project-ids.{UtilityTools.RESET}")
+        return (
+            None,
+            (
+                f"{UtilityTools.RED}[X] No project context available.{UtilityTools.RESET} "
+                "Use `projects list` to view known projects, then set one with "
+                "`projects set <project_id>`, or pass `--project-ids`."
+            ),
+        )
     if targets == []:
         return (None, f"{UtilityTools.RED}[X] No target projects selected.{UtilityTools.RESET}")
     return ((False, None, targets), None)

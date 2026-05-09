@@ -99,6 +99,34 @@ class UtilityTools:
         )
 
     @staticmethod
+    def print_403_insufficient_scopes(
+        permission_name: str,
+        *,
+        project_id: str | None = None,
+        resource_name: str | None = None,
+        current_scopes: Any = None,
+        suggested_scope: str = "https://www.googleapis.com/auth/cloud-platform",
+    ) -> None:
+        if project_id:
+            printout = f"project {project_id}"
+        else:
+            printout = resource_name or "target resource"
+        print(
+            f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 403 - INSUFF TOKEN SCOPE:{UtilityTools.RESET}"
+            f"{UtilityTools.RED} Token scope is insufficient for {permission_name} on {printout}{UtilityTools.RESET}"
+        )
+        scope_display = ""
+        if isinstance(current_scopes, (list, tuple, set)):
+            scope_display = ", ".join(str(item).strip() for item in current_scopes if str(item).strip())
+        else:
+            scope_display = str(current_scopes or "").strip()
+        if scope_display:
+            print(f"[*] Current credential scopes: {scope_display}")
+        else:
+            print("[*] Current credential scopes: unknown")
+        print(f"[*] Suggested scope for broad enumeration: {suggested_scope}")
+
+    @staticmethod
     def print_404_resource(resource_name):
         print(
             f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 404:{UtilityTools.RESET}"

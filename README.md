@@ -47,6 +47,16 @@ Documentation is maintained in the GitHub Wiki:
 
 - https://github.com/NetSPI/gcpwn/wiki
 
+Quick wiki links:
+
+- Getting Started: https://github.com/NetSPI/gcpwn/wiki/Getting-Started
+- Authentication Reference: https://github.com/NetSPI/gcpwn/wiki/Authentication-Reference
+- Workspace Instructions: https://github.com/NetSPI/gcpwn/wiki/Workspace-Instructions
+- CLI Module Reference: https://github.com/NetSPI/gcpwn/wiki/CLI-Module-Reference
+- Common Use Cases: https://github.com/NetSPI/gcpwn/wiki/Common-Use-Cases
+- OpenGraph Overview and Usage: https://github.com/NetSPI/gcpwn/wiki/OpenGraph-Overview-and-Usage
+- OpenGraph Add Your Own Content: https://github.com/NetSPI/gcpwn/wiki/OpenGraph-Add-Your-Own-Content
+
 Additional project docs:
 
 - Contributing: `CONTRIBUTING.md`
@@ -469,16 +479,16 @@ Direct runtime dependencies are sourced from `requirements.txt` (and loaded via 
 
 ### Core utilities
 
-- `boto3>=1.43.1,<2` (includes `botocore` transitively)
+- `boto3>=1.43.6,<2` (includes `botocore` transitively)
 - `pandas==3.0.2`
 - `requests==2.33.1`
 
 ### Google API and auth libraries
 
 - `google-api-core==2.30.3`
-- `google-api-python-client==2.195.0`
-- `google-auth-httplib2==0.3.1`
-- `google-auth-oauthlib==1.3.1`
+- `google-api-python-client==2.196.0`
+- `google-auth-httplib2==0.4.0`
+- `google-auth-oauthlib==1.4.0`
 
 ### Google Cloud client libraries
 

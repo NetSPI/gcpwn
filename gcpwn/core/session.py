@@ -246,7 +246,7 @@ class SessionUtility:
             self.project_id = cred["default_project"]
             
             if self.project_id  == "Unknown":
-                print("[*] The project assosciated with these creds is unknown. To bind the creds to a project specify \"creds <credname> bind <projectname>\". Otherwise you might have limited functionality with non-global resources.")
+                print("[*] The project associated with these creds is unknown. Set it with `creds set <credname> --project-id <project_id>`. Otherwise you might have limited functionality with non-global resources.")
             
             self.credname = cred["credname"]
             scopes_str = cred.get("scopes", "[]")
@@ -334,13 +334,13 @@ class SessionUtility:
                     tokeninfo_check = True
                
                                         
-            if project_id:
+            if project_id and project_id != "Unknown":
                 print("[*] Project ID of credentials is: " + project_id)
             else:
                 print("[*] Project ID of credentials is Unknown. Set it via workspace with `projects set <project_id>`.")
             
             self.data_master.insert_creds(self.workspace_id, credname, type_of_cred, project_id, serialized_creds, email = email, scopes = str(scopes)) 
-            if project_id:
+            if project_id and project_id != "Unknown":
                 self.insert_data('abstract_tree_hierarchy', {"project_id":project_id,"name":"Unknown"}, only_if_new_columns = ["project_id"])
 
             if project_id and project_id != "Unknown" and project_id not in self.global_project_list:

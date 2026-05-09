@@ -38,6 +38,10 @@ from gcpwn.core.utils.service_runtime import handle_service_error, is_api_disabl
 from gcpwn.core.utils.service_runtime import parallel_map
 
 
+def _is_insufficient_auth_scopes_error(exc: Exception) -> bool:
+    return "insufficient authentication scopes" in str(exc or "").lower()
+
+
 class HashableComputeProject(HashableResourceProxy):
     def __init__(self, compute_project, validated = True):
         self._compute_project = compute_project
@@ -4072,42 +4076,59 @@ class CloudComputeInstanceGroupsResource:
         self.regional = compute_v1.RegionInstanceGroupsClient(credentials=session.credentials)
 
     def list(self, *, project_id: str, zones: list[str] | None = None, regions: list[str] | None = None, threads: int = 3, action_dict=None):
-        zones = zones or []
-        regions = regions or []
+        try:
+            zones = zones or []
+            regions = regions or []
 
-        if not zones and not regions:
-            out = _aggregated_items(
-                self.zonal.aggregated_list(
-                    request=compute_v1.AggregatedListInstanceGroupsRequest(
-                        project=project_id,
-                        return_partial_success=True,
-                    )
-                ),
-                "instance_groups",
-            )
-        else:
-            out = []
-            zone_batches = parallel_map(
-                zones,
-                lambda zone: list(
-                    self.zonal.list(request=compute_v1.ListInstanceGroupsRequest(project=project_id, zone=zone))
-                ),
-                threads=threads,
-            )
-            for batch in zone_batches:
-                if batch:
-                    out.extend(batch)
+            if not zones and not regions:
+                out = _aggregated_items(
+                    self.zonal.aggregated_list(
+                        request=compute_v1.AggregatedListInstanceGroupsRequest(
+                            project=project_id,
+                            return_partial_success=True,
+                        )
+                    ),
+                    "instance_groups",
+                )
+            else:
+                out = []
+                zone_batches = parallel_map(
+                    zones,
+                    lambda zone: list(
+                        self.zonal.list(request=compute_v1.ListInstanceGroupsRequest(project=project_id, zone=zone))
+                    ),
+                    threads=threads,
+                )
+                for batch in zone_batches:
+                    if batch:
+                        out.extend(batch)
 
-            region_batches = parallel_map(
-                regions,
-                lambda region: list(
-                    self.regional.list(request=compute_v1.ListRegionInstanceGroupsRequest(project=project_id, region=region))
-                ),
-                threads=threads,
-            )
-            for batch in region_batches:
-                if batch:
-                    out.extend(batch)
+                region_batches = parallel_map(
+                    regions,
+                    lambda region: list(
+                        self.regional.list(request=compute_v1.ListRegionInstanceGroupsRequest(project=project_id, region=region))
+                    ),
+                    threads=threads,
+                )
+                for batch in region_batches:
+                    if batch:
+                        out.extend(batch)
+        except Forbidden as e:
+            if _is_insufficient_auth_scopes_error(e):
+                UtilityTools.print_403_insufficient_scopes(
+                    permission_name="compute.instanceGroups.list",
+                    project_id=project_id,
+                    current_scopes=getattr(self.session, "scopes", None),
+                    suggested_scope="https://www.googleapis.com/auth/cloud-platform",
+                )
+            elif is_api_disabled_error(e):
+                UtilityTools.print_403_api_disabled("Compute", project_id)
+            else:
+                UtilityTools.print_403_api_denied("compute.instanceGroups.list", project_id=project_id)
+            return []
+        except Exception as e:
+            UtilityTools.print_500(project_id, "compute.instanceGroups.list", e)
+            return []
 
         record_permissions(
             action_dict,
@@ -4207,44 +4228,61 @@ class CloudComputeInstanceGroupManagersResource:
         self.regional = compute_v1.RegionInstanceGroupManagersClient(credentials=session.credentials)
 
     def list(self, *, project_id: str, zones: list[str] | None = None, regions: list[str] | None = None, threads: int = 3, action_dict=None):
-        zones = zones or []
-        regions = regions or []
+        try:
+            zones = zones or []
+            regions = regions or []
 
-        if not zones and not regions:
-            out = _aggregated_items(
-                self.zonal.aggregated_list(
-                    request=compute_v1.AggregatedListInstanceGroupManagersRequest(
-                        project=project_id,
-                        return_partial_success=True,
-                    )
-                ),
-                "instance_group_managers",
-            )
-        else:
-            out = []
-            zone_batches = parallel_map(
-                zones,
-                lambda zone: list(
-                    self.zonal.list(request=compute_v1.ListInstanceGroupManagersRequest(project=project_id, zone=zone))
-                ),
-                threads=threads,
-            )
-            for batch in zone_batches:
-                if batch:
-                    out.extend(batch)
+            if not zones and not regions:
+                out = _aggregated_items(
+                    self.zonal.aggregated_list(
+                        request=compute_v1.AggregatedListInstanceGroupManagersRequest(
+                            project=project_id,
+                            return_partial_success=True,
+                        )
+                    ),
+                    "instance_group_managers",
+                )
+            else:
+                out = []
+                zone_batches = parallel_map(
+                    zones,
+                    lambda zone: list(
+                        self.zonal.list(request=compute_v1.ListInstanceGroupManagersRequest(project=project_id, zone=zone))
+                    ),
+                    threads=threads,
+                )
+                for batch in zone_batches:
+                    if batch:
+                        out.extend(batch)
 
-            region_batches = parallel_map(
-                regions,
-                lambda region: list(
-                    self.regional.list(
-                        request=compute_v1.ListRegionInstanceGroupManagersRequest(project=project_id, region=region)
-                    )
-                ),
-                threads=threads,
-            )
-            for batch in region_batches:
-                if batch:
-                    out.extend(batch)
+                region_batches = parallel_map(
+                    regions,
+                    lambda region: list(
+                        self.regional.list(
+                            request=compute_v1.ListRegionInstanceGroupManagersRequest(project=project_id, region=region)
+                        )
+                    ),
+                    threads=threads,
+                )
+                for batch in region_batches:
+                    if batch:
+                        out.extend(batch)
+        except Forbidden as e:
+            if _is_insufficient_auth_scopes_error(e):
+                UtilityTools.print_403_insufficient_scopes(
+                    permission_name="compute.instanceGroupManagers.list",
+                    project_id=project_id,
+                    current_scopes=getattr(self.session, "scopes", None),
+                    suggested_scope="https://www.googleapis.com/auth/cloud-platform",
+                )
+            elif is_api_disabled_error(e):
+                UtilityTools.print_403_api_disabled("Compute", project_id)
+            else:
+                UtilityTools.print_403_api_denied("compute.instanceGroupManagers.list", project_id=project_id)
+            return []
+        except Exception as e:
+            UtilityTools.print_500(project_id, "compute.instanceGroupManagers.list", e)
+            return []
 
         record_permissions(
             action_dict,
