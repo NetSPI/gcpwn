@@ -6,6 +6,7 @@ from collections import defaultdict
 
 from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
+from gcpwn.core.utils.module_helpers import extract_path_tail
 from gcpwn.core.utils.serialization import hydrate_get_request_rows
 from gcpwn.core.utils.service_runtime import parse_component_args, resolve_selected_components
 from gcpwn.modules.resourcemanager.utilities.helpers import (
@@ -66,6 +67,32 @@ def _parse_args(user_args):
     )
 
 
+def _resource_id_from_row(row: dict, component_key: str) -> str:
+    payload = dict(row or {})
+    if component_key == "projects":
+        return str(payload.get("project_id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    tail = extract_path_tail(name, default="")
+    if component_key == "folders":
+        return tail if tail.isdigit() else ""
+    if component_key == "organizations":
+        return tail if tail.isdigit() else ""
+    return ""
+
+
+def _filter_component_rows(rows, *, component_key: str, allowed_ids: set[str], enforce_scope: bool = False):
+    if enforce_scope and not allowed_ids:
+        return []
+    if not allowed_ids:
+        return list(rows or [])
+    filtered = []
+    for row in rows or []:
+        resource_id = _resource_id_from_row(row, component_key)
+        if resource_id and resource_id in allowed_ids:
+            filtered.append(row)
+    return filtered
+
+
 def _dedupe_summary_rows(rows):
     deduped = []
     seen = set()
@@ -80,25 +107,45 @@ def _dedupe_summary_rows(rows):
     return deduped
 
 
-def _collect_resource_rows(resource, *, args, action_dict, failed_permission_writer=None):
+def _collect_resource_rows(
+    resource,
+    *,
+    component_key: str,
+    args,
+    action_dict,
+    allowed_ids: set[str] | None = None,
+    enforce_scope: bool = False,
+    failed_permission_writer=None,
+):
     rows = resource.search(debug=args.debug)
     if rows == "Not Enabled":
-        return {"rows": [], "not_enabled": True}
+        return {"rows": [], "scoped_rows": [], "not_enabled": True}
     if not isinstance(rows, list):
-        return {"rows": [], "not_enabled": False}
+        return {"rows": [], "scoped_rows": [], "not_enabled": False}
 
-    detailed_rows = rows
-    if args.get:
+    discovered_rows = list(rows or [])
+    if discovered_rows:
+        resource.save(discovered_rows)
+
+    scoped_rows = _filter_component_rows(
+        discovered_rows,
+        component_key=component_key,
+        allowed_ids=set(allowed_ids or set()),
+        enforce_scope=enforce_scope,
+    )
+
+    detailed_rows = list(scoped_rows)
+    if args.get and scoped_rows:
         detailed_rows = hydrate_get_request_rows(
-            rows,
+            scoped_rows,
             lambda raw_row, payload: resource.get(
                 name=resource.resource_name(payload) or (str(raw_row).strip() if isinstance(raw_row, str) else ""),
                 debug=args.debug,
                 quiet_not_found=False,
             ),
         )
-    if detailed_rows:
-        resource.save(detailed_rows)
+        if detailed_rows:
+            resource.save(detailed_rows)
 
     failed_permissions = {} if args.record_failed_permissions else None
     if args.iam:
@@ -147,7 +194,12 @@ def _collect_resource_rows(resource, *, args, action_dict, failed_permission_wri
             )
             resource.record_permissions(action_dict, row, permissions)
 
-    return {"rows": detailed_rows, "not_enabled": False, "failed_permissions": failed_permissions or {}}
+    return {
+        "rows": discovered_rows,
+        "scoped_rows": detailed_rows,
+        "not_enabled": False,
+        "failed_permissions": failed_permissions or {},
+    }
 
 
 def run_module(user_args, session):
@@ -156,6 +208,23 @@ def run_module(user_args, session):
         args.iam = True
     selected = resolve_selected_components(args, [component_key for component_key, _help_text in COMPONENTS])
     project_id = session.project_id
+    # enum_all may pass an internal allowlist scope for Resource Manager.
+    # We still run broad discovery/list calls, then apply scope for deeper work
+    # (get/iam processing and recursion roots) so enum_all can do targeted dives.
+    internal_scope = getattr(session, "_enum_all_rm_scope", {}) or {}
+    allowed_project_ids = {str(value).strip() for value in internal_scope.get("projects", []) if str(value).strip()}
+    allowed_folder_ids = {str(value).strip() for value in internal_scope.get("folders", []) if str(value).strip()}
+    allowed_organization_ids = {
+        str(value).strip() for value in internal_scope.get("organizations", []) if str(value).strip()
+    }
+    allowlist_active = bool(internal_scope.get("allowlist_active", False))
+
+    if allowed_project_ids:
+        print(f"[*] Project ID filter active: {', '.join(sorted(allowed_project_ids))}")
+    if allowed_folder_ids:
+        print(f"[*] Folder ID filter active: {', '.join(sorted(allowed_folder_ids))}")
+    if allowed_organization_ids:
+        print(f"[*] Organization ID filter active: {', '.join(sorted(allowed_organization_ids))}")
 
     organizations_resource = ResourceManagerOrganizationsResource(session)
     folders_resource = ResourceManagerFoldersResource(session)
@@ -182,28 +251,48 @@ def run_module(user_args, session):
         if not selected.get(component_key, False):
             continue
         print(f"[*] {help_text}")
+        component_allowed_ids: set[str] = set()
+        if component_key == "projects":
+            component_allowed_ids = allowed_project_ids
+        elif component_key == "folders":
+            component_allowed_ids = allowed_folder_ids
+        elif component_key == "organizations":
+            component_allowed_ids = allowed_organization_ids
         result = _collect_resource_rows(
             resources_by_component[component_key],
+            component_key=component_key,
             args=args,
             action_dict=action_dict,
+            allowed_ids=component_allowed_ids,
+            enforce_scope=allowlist_active,
             failed_permission_writer=failed_permission_writer,
         )
         resource_manager_disabled = bool(resource_manager_disabled or result["not_enabled"])
-        collected_rows[component_key] = list(result["rows"] or [])
-        summary_rows.extend(resources_by_component[component_key].summary_rows(result["rows"] or []))
+        discovered_rows = list(result["rows"] or [])
+        scoped_rows = list(result.get("scoped_rows") or [])
+        collected_rows[component_key] = list(discovered_rows)
+        rows_for_summary = scoped_rows if allowlist_active else discovered_rows
+        summary_rows.extend(resources_by_component[component_key].summary_rows(rows_for_summary))
         merge_failed_permissions(failed_permissions, result.get("failed_permissions") or {})
 
-    recursion_roots = [
-        organizations_resource.resource_name(row)
-        for row in collected_rows.get("organizations", [])
-        if organizations_resource.resource_name(row)
-    ]
-    if not recursion_roots:
+    if allowed_organization_ids:
+        recursion_roots = [f"organizations/{org_id}" for org_id in sorted(allowed_organization_ids)]
+    elif allowed_folder_ids:
+        recursion_roots = [f"folders/{folder_id}" for folder_id in sorted(allowed_folder_ids)]
+    elif allowlist_active:
+        recursion_roots = []
+    else:
         recursion_roots = [
-            folders_resource.resource_name(row)
-            for row in collected_rows.get("folders", [])
-            if folders_resource.resource_name(row)
+            organizations_resource.resource_name(row)
+            for row in collected_rows.get("organizations", [])
+            if organizations_resource.resource_name(row)
         ]
+        if not recursion_roots:
+            recursion_roots = [
+                folders_resource.resource_name(row)
+                for row in collected_rows.get("folders", [])
+                if folders_resource.resource_name(row)
+            ]
 
     if not args.no_recursive and recursion_roots and not resource_manager_disabled:
         print("[*] Getting remaining projects/folders via recursive list calls")
@@ -214,9 +303,21 @@ def run_module(user_args, session):
             debug=args.debug,
         )
         if selected.get("projects", False):
-            summary_rows.extend(projects_resource.summary_rows(tree_rows.get("projects", [])))
+            recursive_projects = _filter_component_rows(
+                tree_rows.get("projects", []),
+                component_key="projects",
+                allowed_ids=allowed_project_ids,
+                enforce_scope=allowlist_active,
+            )
+            summary_rows.extend(projects_resource.summary_rows(recursive_projects))
         if selected.get("folders", False):
-            summary_rows.extend(folders_resource.summary_rows(tree_rows.get("folders", [])))
+            recursive_folders = _filter_component_rows(
+                tree_rows.get("folders", []),
+                component_key="folders",
+                allowed_ids=allowed_folder_ids,
+                enforce_scope=allowlist_active,
+            )
+            summary_rows.extend(folders_resource.summary_rows(recursive_folders))
 
     if args.get:
         print("[*] Resolving missing parent folders/orgs via direct get calls")
@@ -227,9 +328,21 @@ def run_module(user_args, session):
             debug=args.debug,
         )
         if selected.get("folders", False):
-            summary_rows.extend(folders_resource.summary_rows(resolved.get("folders", [])))
+            resolved_folders = _filter_component_rows(
+                resolved.get("folders", []),
+                component_key="folders",
+                allowed_ids=allowed_folder_ids,
+                enforce_scope=allowlist_active,
+            )
+            summary_rows.extend(folders_resource.summary_rows(resolved_folders))
         if selected.get("organizations", False):
-            summary_rows.extend(organizations_resource.summary_rows(resolved.get("organizations", [])))
+            resolved_orgs = _filter_component_rows(
+                resolved.get("organizations", []),
+                component_key="organizations",
+                allowed_ids=allowed_organization_ids,
+                enforce_scope=allowlist_active,
+            )
+            summary_rows.extend(organizations_resource.summary_rows(resolved_orgs))
 
     summary_rows = _dedupe_summary_rows(summary_rows)
     if not summary_rows:

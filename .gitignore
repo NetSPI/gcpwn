@@ -47,6 +47,8 @@ gcpwn_output/
 GatheredData/
 LoggingMechanism/
 gcpwn.wiki/
+*.wiki/
+*.wiki
 scripts/build_service_agent_patterns.py
 scripts/build_service_agent_patterns_output.json
 scripts/*.txt

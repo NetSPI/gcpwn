@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterable, Sequence
 
@@ -223,6 +224,55 @@ def parse_csv_file_args(csv_value: str | None = None, file_path: str | None = No
         seen.add(entry)
         values.append(entry)
     return values
+
+
+def parse_id_input_values(
+    values: Sequence[str] | None,
+    *,
+    value_label: str = "id",
+    numeric_only: bool = False,
+    files_only: bool = False,
+) -> list[str]:
+    """
+    Parse identifiers from inline tokens or explicit file tokens.
+
+    Supported token forms:
+    - direct IDs (comma or space-separated via argparse tokenization)
+    - file paths (one ID per line, comments allowed with '#') when files_only=True
+    """
+    output: list[str] = []
+    seen: set[str] = set()
+    label = str(value_label or "id").strip()
+
+    def _emit(candidate: str) -> None:
+        token = str(candidate or "").strip()
+        if not token or token.startswith("#"):
+            return
+        for parsed in parse_csv_arg(token):
+            normalized = str(parsed or "").strip()
+            if not normalized:
+                continue
+            if numeric_only and not normalized.isdigit():
+                raise ValueError(f"Invalid {label} '{normalized}'. Expected an integer value.")
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+
+    for raw_token in values or []:
+        token = str(raw_token or "").strip()
+        if not token:
+            continue
+        if files_only and not os.path.isfile(token):
+            raise ValueError(f"Invalid {label} file '{token}'. Expected an existing file path.")
+        if files_only:
+            with open(token, encoding="utf-8") as handle:
+                for line in handle:
+                    _emit(line)
+            continue
+        _emit(token)
+
+    return output
 
 
 def parallel_map(

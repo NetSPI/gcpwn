@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_tail
+from gcpwn.core.utils.service_runtime import parse_id_input_values
 
 
 @dataclass(frozen=True)
@@ -56,18 +57,43 @@ def _normalize_project_ids(values: Sequence[str]) -> list[str]:
 def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
     p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     p.add_argument(
+        "--project-id",
         "--project-ids",
-        action="extend",
+        dest="project_ids",
+        action="append",
         nargs="+",
-        type=lambda s: [x.strip() for x in str(s).split(",") if x.strip()],
-        help="Target project IDs (space or comma separated). Overrides prompts.",
+        help=(
+            "Target project ID(s). Supports space/comma separated inline values. Overrides prompts."
+        ),
+    )
+    p.add_argument(
+        "--project-id-file",
+        "--project-ids-file",
+        dest="project_id_files",
+        action="append",
+        nargs="+",
+        help="File path(s) containing project IDs (one ID per line). Overrides prompts.",
     )
     p.add_argument("--current-project", action="store_true", help="Target ONLY current session project (no prompts).")
     p.add_argument("--all-projects", action="store_true", help="Target ALL already-known projects (no prompts).")
 
     known, rest = p.parse_known_args(list(argv or []))
+    flattened_project_tokens = [token for group in (known.project_ids or []) for token in (group or [])]
+    file_project_tokens = [token for group in (known.project_id_files or []) for token in (group or [])]
+    parsed_project_ids_inline = parse_id_input_values(
+        flattened_project_tokens,
+        value_label="project id",
+        numeric_only=False,
+    )
+    parsed_project_ids_files = parse_id_input_values(
+        file_project_tokens,
+        value_label="project id",
+        numeric_only=False,
+        files_only=True,
+    )
+    parsed_project_ids = list(dict.fromkeys([*parsed_project_ids_inline, *parsed_project_ids_files]))
     return RunnerArgs(
-        project_ids=_normalize_project_ids([x for xs in (known.project_ids or []) for x in (xs or [])]),
+        project_ids=_normalize_project_ids(parsed_project_ids),
         current_project=known.current_project,
         all_projects=known.all_projects,
         passthrough=list(rest),
@@ -301,7 +327,11 @@ def _prompt_for_project_scope(session) -> str | None:
         if hierarchy:
             print(f"[*] Current project context: {hierarchy}")
 
-    print("> Do you want to scan all projects or current single project? If not specify a project-id(s) with '--project-ids project1,project2,project3'")
+    print(
+        "> Do you want to scan all projects or current single project? "
+        "If not, specify project-id(s) with '--project-id <id>' / '--project-ids id1,id2' "
+        "or '--project-id-file <path>'"
+    )
     print(">> [A|1] All Projects")
     print(">> [C|2] Current/Single")
     print("> [3] Exit\n")
@@ -395,7 +425,7 @@ def _plan_execution(
             (
                 f"{UtilityTools.RED}[X] No project context available.{UtilityTools.RESET} "
                 "Use `projects list` to view known projects, then set one with "
-                "`projects set <project_id>`, or pass `--project-ids`."
+                "`projects set <project_id>`, or pass `--project-id` / `--project-ids` / `--project-id-file`."
             ),
         )
     if targets == []:
@@ -446,13 +476,18 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
         mod_short = module_import_path.split(".")[-1]
 
         if int(bool(runner.project_ids)) + int(bool(runner.current_project)) + int(bool(runner.all_projects)) > 1:
-            print(f"{UtilityTools.RED}[X] Use only one selector: --project-ids OR --current-project OR --all-projects.{UtilityTools.RESET}")
+            print(
+                f"{UtilityTools.RED}[X] Use only one selector: "
+                f"--project-id/--project-ids/--project-id-file OR --current-project OR --all-projects."
+                f"{UtilityTools.RESET}"
+            )
             return -1
 
         if not action.accepts_project_flags and (runner.project_ids or runner.current_project or runner.all_projects):
             print(
                 f"{UtilityTools.YELLOW}[!] {mod_short} ignores project selectors "
-                f"(--project-ids/--current-project/--all-projects). Running once.{UtilityTools.RESET}"
+                f"(--project-id/--project-ids/--project-id-file/--current-project/--all-projects). "
+                f"Running once.{UtilityTools.RESET}"
             )
             runner = RunnerArgs(project_ids=[], current_project=False, all_projects=False, passthrough=passthrough_args)
 
