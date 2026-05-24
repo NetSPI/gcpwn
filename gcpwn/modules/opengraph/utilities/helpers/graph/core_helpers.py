@@ -7,9 +7,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 from gcpwn.core.utils.module_helpers import extract_path_tail, load_mapping_data, parse_json_value, split_path_tokens
+from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
+    RESOURCE_TOKEN_TO_NODE_TYPE,
+    normalize_resource_type_token,
+    normalized_token_list,
+)
 
 @dataclass(frozen=True)
 class OpenGraphNode:
+    """In-memory OpenGraph node model used during pipeline assembly."""
     node_id: str
     node_type: str
     properties: Dict[str, Any]
@@ -17,12 +23,20 @@ class OpenGraphNode:
 
 @dataclass(frozen=True)
 class OpenGraphEdge:
+    """In-memory OpenGraph edge model used during pipeline assembly."""
     source_id: str
     destination_id: str
     edge_type: str
     properties: Dict[str, Any]
 
 def principal_node_id(member: str) -> str:
+    """
+    Normalize principal/member identifiers into one canonical token format.
+
+    Example:
+    - input:  "users:alice@example.com"
+    - output: "user:alice@example.com"
+    """
     # Canonical principal/member ID normalizer used throughout OpenGraph.
     #
     # Examples:
@@ -72,6 +86,7 @@ def principal_node_id(member: str) -> str:
 
 
 def principal_display_name(member: str) -> str:
+    """Return a user-facing principal label (usually the right side of prefix:value)."""
     token = principal_node_id(member)
     if not token:
         return ""
@@ -87,8 +102,11 @@ def principal_display_name(member: str) -> str:
 
 
 def principal_type(member: str) -> str:
+    """Map a canonical principal token to the OpenGraph node type."""
     value = principal_node_id(member)
 
+    if value.startswith("principalSet://"):
+        return "GCPPrincipalSet"
     if value.startswith("user:"):
         return "GoogleUser"
     if value.startswith("serviceAccount:"):
@@ -107,10 +125,12 @@ def principal_type(member: str) -> str:
 
 
 def resource_node_id(name: str) -> str:
+    """Build canonical resource node ID from resource name/path."""
     return f"resource:{name}"
 
 
 def resource_leaf_name(resource_name: str) -> str:
+    """Return the tail segment of a resource path for display and matching."""
     token = str(resource_name or "").strip()
     if not token:
         return ""
@@ -118,6 +138,7 @@ def resource_leaf_name(resource_name: str) -> str:
 
 
 def resource_location_token(resource_name: str) -> str:
+    """Extract location/region/zone token from a resource path when present."""
     token = str(resource_name or "").strip()
     if not token:
         return ""
@@ -158,6 +179,7 @@ def resource_display_label(
 
 
 def is_convenience_member(member: str) -> bool:
+    """Detect GCP convenience members (projectOwner/projectEditor/projectViewer)."""
     token = principal_node_id(member)
     return token.startswith(("projectOwner:", "projectEditor:", "projectViewer:"))
 
@@ -173,6 +195,7 @@ _SERVICE_AGENT_ROLE_REGEX = re.compile(r"^roles\/[a-z0-9_.-]*serviceagent[a-z0-9
 
 
 def _compile_service_agent_regex(template: str) -> re.Pattern[str]:
+    """Compile a service-agent template string into a concrete email-matching regex."""
     escaped = re.escape(str(template or "").strip())
     for placeholder, replacement in _SERVICE_AGENT_PLACEHOLDERS:
         escaped = escaped.replace(re.escape(placeholder), replacement)
@@ -181,6 +204,7 @@ def _compile_service_agent_regex(template: str) -> re.Pattern[str]:
 
 @lru_cache(maxsize=1)
 def _service_agent_matchers() -> list[tuple[re.Pattern[str], str]]:
+    """Load and cache compiled service-agent matchers from mapping JSON."""
     try:
         payload = load_mapping_data(_SERVICE_AGENT_PATTERNS_MAPPING_FILE, kind="json")
     except Exception:
@@ -263,67 +287,19 @@ def gcp_resource_node_type(resource_type: str | None) -> str:
     Map GCPwn resource_type tokens (iam_allow_policies.resource_type)
     to nicer OpenGraph node types.
     """
-    token = str(resource_type or "").strip().lower().replace("_", "-").replace(" ", "-")
-    token = {
-        "organization": "org",
-        "organizations": "org",
-        "folders": "folder",
-        "projects": "project",
-        "service-accounts": "service-account",
-        "saaccounts": "service-account",
-        "functions": "cloudfunction",
-        "keyrings": "kmskeyring",
-        "keys": "kmscryptokey",
-        "kmskey": "kmscryptokey",
-        "repositories": "artifactregistryrepo",
-        "topics": "pubsubtopic",
-        "subscriptions": "pubsubsubscription",
-        "snapshots": "pubsubsnapshot",
-        "schemas": "pubsubschema",
-        "namespaces": "servicedirectorynamespace",
-        "queues": "cloudtasksqueue",
-        "services": "cloudrunservice",
-        "jobs": "cloudrunjob",
-    }.get(token, token)
+    token = normalize_resource_type_token(resource_type)
     if not token:
         return "GCPResource"
-    specials = {
-        "org": "GCPOrganization",
-        "folder": "GCPFolder",
-        "project": "GCPProject",
-        "bucket": "GCPBucket",
-        "cloudfunction": "GCPCloudFunction",
-        "computeinstance": "GCPComputeInstance",
-        "service-account": "GCPServiceAccountResource",
-        "kmskeyring": "GCPKmsKeyRing",
-        "kmscryptokey": "GCPKmsCryptoKey",
-        "kmskey": "GCPKmsCryptoKey",
-        "kmskeyversion": "GCPKmsCryptoKeyVersion",
-        "cloudrunservice": "GCPCloudRunService",
-        "cloudrunjob": "GCPCloudRunJob",
-        "cloudsqlinstance": "GCPCloudSQLInstance",
-        "artifactregistryrepo": "GCPArtifactRegistryRepo",
-        "pubsubtopic": "GCPPubSubTopic",
-        "pubsubsubscription": "GCPPubSubSubscription",
-        "pubsubschema": "GCPPubSubSchema",
-        "pubsubsnapshot": "GCPPubSubSnapshot",
-        "spannerinstance": "GCPSpannerInstance",
-        "spannerdatabase": "GCPSpannerDatabase",
-        "servicedirectorynamespace": "GCPServiceDirectoryNamespace",
-        "servicedirectoryservice": "GCPServiceDirectoryService",
-        "bigquerydataset": "GCPBigQueryDataset",
-        "bigquerytable": "GCPBigQueryTable",
-        "bigqueryroutine": "GCPBigQueryRoutine",
-        "cloudtasksqueue": "GCPCloudTasksQueue",
-        "secrets": "GCPSecret",
-    }
-    if token in specials:
-        return specials[token]
+    if token in RESOURCE_TOKEN_TO_NODE_TYPE:
+        return RESOURCE_TOKEN_TO_NODE_TYPE[token]
     return f"GCP{token.title()}"
 
 
 class OpenGraphBuilder:
+    """Small in-memory graph builder with node merge and edge de-duplication."""
+
     def __init__(self) -> None:
+        """Initialize empty node/edge maps keyed for fast de-duplication."""
         self.node_map: Dict[str, OpenGraphNode] = {}
         self.edge_map: Dict[Tuple[str, str, str], OpenGraphEdge] = {}
 
@@ -350,6 +326,7 @@ class OpenGraphBuilder:
 
     @staticmethod
     def _merge_nested_dict_missing(existing_value: dict[str, Any], incoming_value: dict[str, Any]) -> dict[str, Any]:
+        """Merge nested dict fields without overwriting already-populated values."""
         merged = dict(existing_value or {})
         for key, value in (incoming_value or {}).items():
             if key not in merged:
@@ -362,6 +339,7 @@ class OpenGraphBuilder:
         return merged
 
     def add_node(self, node_id: str, node_type: str, **properties: Any) -> None:
+        """Insert or merge a node; preserves existing values unless missing."""
         if node_id in self.node_map:
             existing = self.node_map[node_id]
             merged = dict(existing.properties)
@@ -384,6 +362,7 @@ class OpenGraphBuilder:
         self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=node_type, properties=properties)
 
     def add_edge(self, source_id: str, destination_id: str, edge_type: str, **properties: Any) -> None:
+        """Insert edge if unseen; duplicate (src, kind, dst) edges are ignored."""
         key = (source_id, edge_type, destination_id)
         if key in self.edge_map:
             return
@@ -414,6 +393,11 @@ IAM_BINDING_KINDS = {
 }
 
 def _standardize(value: Any, *, flatten: bool = False):
+    """
+    Normalize export values into stable, serializable primitives.
+
+    When flatten=True, nested dicts are flattened to dotted keys.
+    """
     if isinstance(value, str):
         value = value.strip()
         if not value:
@@ -464,46 +448,29 @@ def _standardize(value: Any, *, flatten: bool = False):
             if isinstance(item, str):
                 item = item.strip()
                 if not item:
-                    return None
+                    continue
             if isinstance(item, (bool, int, float, str)):
                 normalized.append(item)
                 continue
-            return None
+            continue
         return normalized
     return None
 
 
-def _normalized_token_list(values: Any) -> list[str]:
-    if values is None:
-        return []
-    if isinstance(values, (list, tuple, set, frozenset)):
-        source_values = values
-    elif isinstance(values, dict):
-        source_values = list(values.keys())
-    elif hasattr(values, "__iter__") and not isinstance(values, (str, bytes)):
-        source_values = list(values)
-    else:
-        source_values = [values]
-    return sorted(
-        {
-            token
-            for value in source_values
-            if (token := str(value or "").strip())
-        }
-    )
-
-
 def _collect_contributing_binding_permission_map(trimmed: dict[str, Any]) -> dict[str, list[str]]:
+    """Collect/normalize binding->permissions attribution from map and flattened export forms."""
     output: dict[str, list[str]] = {}
 
     raw_map = trimmed.get("contributing_binding_permission_map")
     if isinstance(raw_map, dict):
-        for binding_id, permissions in raw_map.items():
+        for binding_id, permissions in sorted(raw_map.items(), key=lambda item: str(item[0] or "").strip()):
             binding_token = str(binding_id or "").strip()
             if not binding_token:
                 continue
-            output[binding_token] = _normalized_token_list(permissions)
+            output[binding_token] = normalized_token_list(permissions)
 
+    # Export normalization may flatten nested dicts into dotted keys:
+    # contributing_binding_permission_map.<binding_id> = [perm1, perm2]
     for key, value in list(trimmed.items()):
         token = str(key or "").strip()
         if not token.startswith("contributing_binding_permission_map."):
@@ -512,11 +479,11 @@ def _collect_contributing_binding_permission_map(trimmed: dict[str, Any]) -> dic
         if not binding_token:
             continue
         merged = set(output.get(binding_token, []))
-        merged.update(_normalized_token_list(value))
+        merged.update(normalized_token_list(value))
         output[binding_token] = sorted(merged)
 
     return {
-        binding_id: _normalized_token_list(permissions)
+        binding_id: normalized_token_list(permissions)
         for binding_id, permissions in sorted(output.items(), key=lambda item: item[0])
     }
 
@@ -526,12 +493,13 @@ def _permission_source_summary_lines(
     binding_ids: list[str],
     permission_map: dict[str, list[str]],
 ) -> list[str]:
+    """Render readable per-binding permission attribution summary lines."""
     if not binding_ids and not permission_map:
         return []
 
     lines: list[str] = []
     for binding_id in sorted(set(binding_ids) | set(permission_map.keys())):
-        permissions = _normalized_token_list(permission_map.get(binding_id, []))
+        permissions = normalized_token_list(permission_map.get(binding_id, []))
         if permissions:
             lines.append(f"{binding_id}: {', '.join(permissions)}")
         else:
@@ -542,17 +510,18 @@ def _permission_source_summary_lines(
 def _normalized_permission_attribution(
     trimmed: dict[str, Any],
 ) -> dict[str, list[str]]:
+    """Build normalized permission attribution fields used in exported graph payloads."""
     permission_source_map = _collect_contributing_binding_permission_map(trimmed)
-    permission_source_bindings = _normalized_token_list(trimmed.get("evidence_bindings"))
+    permission_source_bindings = normalized_token_list(trimmed.get("evidence_bindings"))
     if not permission_source_bindings:
-        permission_source_bindings = _normalized_token_list(trimmed.get("contributing_binding_ids"))
+        permission_source_bindings = normalized_token_list(trimmed.get("contributing_binding_ids"))
     if not permission_source_bindings and permission_source_map:
         permission_source_bindings = sorted(permission_source_map.keys())
 
-    permissions_required_by_rule = _normalized_token_list(trimmed.get("matched_permissions"))
-    permissions_granted_from_bindings = _normalized_token_list(trimmed.get("contributing_permissions"))
+    permissions_required_by_rule = normalized_token_list(trimmed.get("matched_permissions"))
+    permissions_granted_from_bindings = normalized_token_list(trimmed.get("contributing_permissions"))
     if not permissions_granted_from_bindings and permission_source_map:
-        permissions_granted_from_bindings = _normalized_token_list(
+        permissions_granted_from_bindings = normalized_token_list(
             permission
             for permissions in permission_source_map.values()
             for permission in permissions
@@ -575,6 +544,7 @@ def _normalized_permission_attribution(
 
 
 def _trim_export_properties(props: dict[str, Any], *, node_id: str = "") -> dict[str, Any]:
+    """Remove redundant/noisy export properties and preserve high-value attribution fields."""
     trimmed = dict(props or {})
 
     # Prefer one lineage key for simpler graph payloads.
@@ -641,13 +611,12 @@ def _trim_export_properties(props: dict[str, Any], *, node_id: str = "") -> dict
         trimmed.pop("inherited", None)
     trimmed.pop("direct_attached_scope", None)
     trimmed.pop("is_convenience_member", None)
-    for key in list(trimmed.keys()):
-        if key == "contributing_binding_permission_map" or key.startswith("contributing_binding_permission_map."):
-            trimmed.pop(key, None)
+    trimmed.pop("contributing_binding_permission_map", None)
     return trimmed
 
 
 def _order_export_properties(props: dict[str, Any]) -> dict[str, Any]:
+    """Move boolean flags to the end of property dict for easier human scanning."""
     ordered = dict(props or {})
     non_boolean_items = [(key, value) for key, value in ordered.items() if not isinstance(value, bool)]
     boolean_items = [(key, value) for key, value in ordered.items() if isinstance(value, bool)]
@@ -655,6 +624,7 @@ def _order_export_properties(props: dict[str, Any]) -> dict[str, Any]:
 
 
 def _node_kinds(node_type: str | None) -> list[str]:
+    """Map internal node_type to exported kinds list with generic fallback kind."""
     token = str(node_type or "").strip()
     if not token:
         return ["GCPUnknown"]
@@ -675,6 +645,7 @@ def _node_kinds(node_type: str | None) -> list[str]:
 
 
 def _normalize_resourcedata_value(value: Any) -> Any:
+    """Normalize arbitrary resourcedata values to stable primitives/dicts/lists."""
     if value is None:
         return None
     if isinstance(value, (bool, int, float)):
@@ -708,6 +679,7 @@ def _normalize_resourcedata_value(value: Any) -> Any:
 
 
 def _resource_resourcedata_from_props(raw_props: dict[str, Any]) -> dict[str, Any]:
+    """Build baseline nested `resourcedata` payload from non-resourcedata properties."""
     payload: dict[str, Any] = {}
     for raw_key in sorted((raw_props or {}).keys(), key=lambda x: str(x)):
         key = str(raw_key).strip()
@@ -720,6 +692,7 @@ def _resource_resourcedata_from_props(raw_props: dict[str, Any]) -> dict[str, An
 
 
 def _flatten_resourcedata_value(value: Any, *, prefix: str, output: dict[str, Any]) -> None:
+    """Flatten nested resourcedata into dotted key form (resourcedata.*)."""
     if isinstance(value, dict):
         for raw_key in sorted(value.keys(), key=lambda x: str(x)):
             key = str(raw_key).strip()
@@ -739,6 +712,11 @@ def _flatten_resourcedata_value(value: Any, *, prefix: str, output: dict[str, An
 
 
 def node_to_opengraph(node: OpenGraphNode) -> dict[str, Any]:
+    """
+    Convert in-memory node to final OpenGraph JSON shape.
+
+    Includes export hygiene (flattening, dedupe, attribution normalization).
+    """
     raw_props = dict(node.properties or {})
     is_resource_node = str(node.node_id or "").startswith("resource:")
     if is_resource_node:
@@ -794,6 +772,7 @@ def node_to_opengraph(node: OpenGraphNode) -> dict[str, Any]:
 
 
 def _sanitize_edge_kind(kind: str | None) -> str:
+    """Normalize edge kind to Graph-safe token (fallback: RELATED_TO)."""
     value = str(kind or "").strip()
     if not value:
         return "RELATED_TO"
@@ -803,6 +782,7 @@ def _sanitize_edge_kind(kind: str | None) -> str:
 
 
 def edge_to_opengraph(edge: OpenGraphEdge) -> dict[str, Any]:
+    """Convert in-memory edge to final OpenGraph JSON shape with normalized properties."""
     raw_props = dict(edge.properties or {})
     if isinstance(raw_props.get("edge_inner_properties"), dict):
         merged = {"edge_category": raw_props.get("edge_category")}
@@ -825,6 +805,13 @@ def edge_to_opengraph(edge: OpenGraphEdge) -> dict[str, Any]:
 
 
 def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraphEdge], *, clear_existing: bool = False) -> None:
+    """
+    Persist generated OpenGraph nodes/edges into SQLite backing tables.
+
+    Typical use:
+    - default run: append/update per node/edge key
+    - with `clear_existing=True` (module `--reset`): replace prior graph snapshot
+    """
     node_type_by_id = {node.node_id: node.node_type for node in nodes}
 
     if clear_existing:

@@ -218,7 +218,7 @@ class CloudIdentityGroupsResource:
 
 class CloudIdentityGroupMembershipsResource:
     TABLE_NAME = "workspace_group_memberships"
-    COLUMNS = ["group_email", "member_email", "member_type", "roles", "transitive", "source"]
+    COLUMNS = ["group_email", "group_member", "member_email", "member", "member_type", "roles", "transitive", "source"]
 
     def __init__(self, session) -> None:
         self.session = session
@@ -550,6 +550,18 @@ def _member_type_from_email(email: str) -> str:
     return "unknown"
 
 
+def _canonical_workspace_member_token(email: str, member_type: str) -> str:
+    token = str(email or "").strip().lower()
+    if not token:
+        return ""
+    normalized_type = str(member_type or "").strip().lower()
+    if normalized_type == "service_account" or token.endswith(".gserviceaccount.com"):
+        return f"serviceAccount:{token}"
+    if "@" in token:
+        return f"user:{token}"
+    return token
+
+
 def list_group_memberships(service, *, group_name: str, view: str = "FULL", page_size: int = 1000) -> list[dict[str, Any]]:
     """
     Cloud Identity API: `groups.memberships.list`.
@@ -629,6 +641,7 @@ def build_workspace_group_membership_rows(
         if not member_email:
             continue
         member_emails.append(member_email)
+        normalized_member_type = _member_type_from_email(member_email)
 
         roles = membership.get("roles") or []
         rows.append(
@@ -636,8 +649,10 @@ def build_workspace_group_membership_rows(
                 "customer_id": customer_id,
                 "group_name": group.name,
                 "group_email": group.email,
+                "group_member": f"group:{str(group.email or '').strip().lower()}",
                 "member_email": member_email,
-                "member_type": _member_type_from_email(member_email),
+                "member": _canonical_workspace_member_token(member_email, normalized_member_type),
+                "member_type": normalized_member_type,
                 "roles": roles,
                 "transitive": "true" if transitive else "false",
                 "source": source,

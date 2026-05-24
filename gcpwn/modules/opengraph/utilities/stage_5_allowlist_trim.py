@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+"""
+Stage 5: final allowlist trim pass.
+
+Read order:
+1) `apply_final_allowlist_trims` (orchestrator)
+2) `trim_service_account_binding_islands`
+3) `trim_orphan_implied_bindings`
+4) `trim_isolated_service_accounts`
+"""
+
 from collections import defaultdict
 
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import OpenGraphEdge, OpenGraphNode
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import OpenGraphEdge, OpenGraphNode
 
-_IAM_BINDING_NODE_TYPES = {
+IAM_BINDING_NODE_TYPES = {
     "GCPIamBinding",
     "GCPIamGrant",
     "GCPIamSimpleBinding",
@@ -12,7 +22,9 @@ _IAM_BINDING_NODE_TYPES = {
 }
 
 
-def _build_adjacency(edges: list[OpenGraphEdge] | None) -> tuple[dict[str, list[tuple[str, str, str]]], dict[str, list[tuple[str, str, str]]]]:
+def _build_adjacency(
+    edges: list[OpenGraphEdge] | None,
+) -> tuple[dict[str, list[tuple[str, str, str]]], dict[str, list[tuple[str, str, str]]]]:
     incoming: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     outgoing: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     for edge in edges or []:
@@ -41,31 +53,13 @@ def _apply_pruned_sets(
     return pruned_nodes, pruned_edges
 
 
-def _prune_isolated_service_account_binding_islands(
+def trim_service_account_binding_islands(
     nodes: list[OpenGraphNode],
     edges: list[OpenGraphEdge],
-    *,
-    enabled: bool,
 ) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
     """
-    Default-mode cleanup:
-    remove tiny disconnected islands shaped as
-      GCPServiceAccount --HAS_IAM_BINDING--> IAM binding node (legacy/simple/multi)
-    when:
-    - service account has no incoming edges, OR its only incoming edges are
-      GCP_SERVICE_ACCOUNT_KEY_FOR from GCPServiceAccountKey nodes
-    - service account has exactly one outgoing edge (the HAS_IAM_BINDING edge)
-    - grant has no outgoing edges
-    - grant has exactly one incoming edge (that same HAS_IAM_BINDING edge)
-    Additionally:
-    - remove incoming GCP_SERVICE_ACCOUNT_KEY_FOR edges to that service account
-    - remove source GCPServiceAccountKey nodes when those keys become isolated
-    - remove standalone SA<->key islands where service-account incident edges are
-      only GCP_SERVICE_ACCOUNT_KEY_FOR edges
+    Trim disconnected service-account->binding islands and SA<->key-only islands.
     """
-    if not enabled:
-        return nodes, edges, {"pairs_removed": 0, "key_islands_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
     node_by_id = {str(node.node_id): node for node in (nodes or [])}
     incoming, outgoing = _build_adjacency(edges)
 
@@ -103,7 +97,7 @@ def _prune_isolated_service_account_binding_islands(
 
         binding_node_id = binding_edge_key[2]
         binding_node = node_by_id.get(binding_node_id)
-        if not binding_node or str(binding_node.node_type) not in _IAM_BINDING_NODE_TYPES:
+        if not binding_node or str(binding_node.node_type) not in IAM_BINDING_NODE_TYPES:
             continue
 
         binding_out = outgoing.get(binding_node_id, [])
@@ -121,7 +115,6 @@ def _prune_isolated_service_account_binding_islands(
             key_nodes_to_consider.add(key_edge_key[0])
         pairs_removed += 1
 
-    # Pass 2: remove service-account islands that only connect to SA key nodes.
     for node in nodes or []:
         service_account_id = str(node.node_id)
         if service_account_id in nodes_to_remove:
@@ -188,42 +181,29 @@ def _prune_isolated_service_account_binding_islands(
         nodes_to_remove=nodes_to_remove,
         edges_to_remove=edges_to_remove,
     )
-
-    edges_removed = max(0, len(edges) - len(pruned_edges))
     return pruned_nodes, pruned_edges, {
         "pairs_removed": pairs_removed,
         "key_islands_removed": key_islands_removed,
         "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
-        "edges_removed": edges_removed,
+        "edges_removed": max(0, len(edges) - len(pruned_edges)),
     }
 
 
-def _prune_orphan_implied_bindings(
+def trim_orphan_implied_bindings(
     nodes: list[OpenGraphNode],
     edges: list[OpenGraphEdge],
-    *,
-    enabled: bool,
 ) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
     """
-    Default-mode cleanup:
-    remove implied IAM binding nodes that have no outgoing edges.
-
-    These are synthetic nodes created by inferred-permissions processing.
-    If they do not emit any inferred edge to a target resource, they add
-    graph noise without actionable relationship context.
+    Trim implied IAM binding nodes that no longer have outgoing inferred edges.
     """
-    if not enabled:
-        return nodes, edges, {"implied_bindings_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
     incoming, outgoing = _build_adjacency(edges)
     node_by_id = {str(node.node_id): node for node in (nodes or [])}
-
     nodes_to_remove: set[str] = set()
     edges_to_remove: set[tuple[str, str, str]] = set()
     implied_bindings_removed = 0
 
     for node_id, node in node_by_id.items():
-        if str(node.node_type) not in _IAM_BINDING_NODE_TYPES:
+        if str(node.node_type) not in IAM_BINDING_NODE_TYPES:
             continue
         props = dict(node.properties or {})
         role_name = str(props.get("role_name") or props.get("implied_role_name") or "").strip()
@@ -231,9 +211,7 @@ def _prune_orphan_implied_bindings(
         is_implied = str(node_id).startswith("implied-iambinding:") or (
             inferred and role_name.startswith("IMPLIED_PERMISSIONS")
         )
-        if not is_implied:
-            continue
-        if outgoing.get(node_id):
+        if not is_implied or outgoing.get(node_id):
             continue
         nodes_to_remove.add(node_id)
         for edge_key in incoming.get(node_id, []):
@@ -249,7 +227,6 @@ def _prune_orphan_implied_bindings(
         nodes_to_remove=nodes_to_remove,
         edges_to_remove=edges_to_remove,
     )
-
     return pruned_nodes, pruned_edges, {
         "implied_bindings_removed": implied_bindings_removed,
         "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
@@ -257,20 +234,13 @@ def _prune_orphan_implied_bindings(
     }
 
 
-def _prune_isolated_service_account_nodes(
+def trim_isolated_service_accounts(
     nodes: list[OpenGraphNode],
     edges: list[OpenGraphEdge],
-    *,
-    enabled: bool,
 ) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
     """
-    Default-mode cleanup:
-    remove service-account principal nodes that have no incoming and no outgoing
-    edges after all other graph-building/pruning passes.
+    Trim GCP service-account nodes that have no remaining incident edges.
     """
-    if not enabled:
-        return nodes, edges, {"isolated_service_accounts_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
     incident_counts: dict[str, int] = defaultdict(int)
     for edge in edges or []:
         source_id = str(edge.source_id or "").strip()
@@ -299,9 +269,41 @@ def _prune_isolated_service_account_nodes(
         nodes_to_remove=nodes_to_remove,
         edges_to_remove=set(),
     )
-
     return pruned_nodes, pruned_edges, {
         "isolated_service_accounts_removed": len(nodes_to_remove),
+        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
+        "edges_removed": max(0, len(edges) - len(pruned_edges)),
+    }
+
+
+def trim_non_escalation_simple_bindings(
+    nodes: list[OpenGraphNode],
+    edges: list[OpenGraphEdge],
+) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
+    """
+    Trim simple IAM binding nodes that are not marked as privilege escalation.
+    Default mode should focus on escalation paths; include-all keeps these.
+    """
+    nodes_to_remove: set[str] = set()
+    for node in nodes or []:
+        if str(node.node_type or "").strip() != "GCPIamSimpleBinding":
+            continue
+        props = dict(node.properties or {})
+        if bool(props.get("privilege_escalation", False)):
+            continue
+        nodes_to_remove.add(str(node.node_id or "").strip())
+
+    if not nodes_to_remove:
+        return nodes, edges, {"non_escalation_simple_bindings_removed": 0, "nodes_removed": 0, "edges_removed": 0}
+
+    pruned_nodes, pruned_edges = _apply_pruned_sets(
+        nodes,
+        edges,
+        nodes_to_remove=nodes_to_remove,
+        edges_to_remove=set(),
+    )
+    return pruned_nodes, pruned_edges, {
+        "non_escalation_simple_bindings_removed": len(nodes_to_remove),
         "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
         "edges_removed": max(0, len(edges) - len(pruned_edges)),
     }
@@ -310,19 +312,21 @@ def _prune_isolated_service_account_nodes(
 def apply_final_allowlist_trims(
     nodes: list[OpenGraphNode],
     edges: list[OpenGraphEdge],
-    *,
-    include_all: bool,
 ) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, dict[str, int]]]:
     """
-    Apply end-of-pipeline trim passes used by the default allowlist-driven graph mode.
-    In include-all mode, trim passes are disabled.
+    Orchestrator:
+    1) trim_service_account_binding_islands
+    2) trim_orphan_implied_bindings
+    3) trim_non_escalation_simple_bindings
+    4) trim_isolated_service_accounts
     """
-    enabled = not bool(include_all)
-    nodes, edges, islands_stats = _prune_isolated_service_account_binding_islands(nodes, edges, enabled=enabled)
-    nodes, edges, implied_stats = _prune_orphan_implied_bindings(nodes, edges, enabled=enabled)
-    nodes, edges, isolated_sa_stats = _prune_isolated_service_account_nodes(nodes, edges, enabled=enabled)
+    nodes, edges, islands_stats = trim_service_account_binding_islands(nodes, edges)
+    nodes, edges, implied_stats = trim_orphan_implied_bindings(nodes, edges)
+    nodes, edges, non_escalation_simple_stats = trim_non_escalation_simple_bindings(nodes, edges)
+    nodes, edges, isolated_sa_stats = trim_isolated_service_accounts(nodes, edges)
     return nodes, edges, {
         "service_account_binding_islands": islands_stats,
         "orphan_implied_bindings": implied_stats,
+        "non_escalation_simple_bindings": non_escalation_simple_stats,
         "isolated_service_accounts": isolated_sa_stats,
     }

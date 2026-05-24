@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from gcpwn.core.utils.iam_simplifier import create_simplified_hierarchy_permissions
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     is_convenience_member,
     OpenGraphBuilder,
     principal_node_id,
 )
-from gcpwn.modules.opengraph.utilities.helpers.iam_bindings_shared_helpers import _canonical_scope_type
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import canonical_scope_type_for_bindings
 
 
 @dataclass
@@ -35,7 +35,7 @@ def _build_hierarchy_data(
         name = str(row.get("name") or "").strip()
         if not name:
             continue
-        scope_type_by_name[name] = _canonical_scope_type(str(row.get("type") or ""), name)
+        scope_type_by_name[name] = canonical_scope_type_for_bindings(str(row.get("type") or ""), name)
         scope_display_by_name[name] = str(row.get("display_name") or "").strip()
         project_id = str(row.get("project_id") or "").strip()
         if project_id:
@@ -80,64 +80,10 @@ class OpenGraphBuildContext:
         self._rows_cache: dict[str, list[dict[str, Any]]] = {}
         self._service_table_names_cache: list[str] | None = None
         self._service_table_columns_cache: dict[str, list[str]] = {}
-        # Large hierarchy tree cache for OpenGraph/IAM builders:
-        # children_by_parent, scope types/displays, project IDs, and parent links.
-        # Example shape:
-        # organizations/358690432006
-        #   folders/958977833045
-        #     projects/example-project-a (project_id=example-project-a)
-        #       projects/example-project-a/zones/us-central1-a/instances/web-01
-        #       projects/example-project-a/serviceAccounts/app@example-project-a.iam.gserviceaccount.com
-        #     projects/example-project-b (project_id=example-project-b)
-        # This lets downstream builders correlate org/folder/project inheritance with
-        # resource-level binding keys (for example computeinstance:*@project_id).
+        # Hierarchy metadata cache used by IAM/resource builders.
         self._hierarchy_metadata: dict[str, Any] | None = None
-        # Exact cached output payload from create_simplified_hierarchy_permissions(...).
-        # Keyed by:
-        # - "base": default binding simplification payload
-        # - "with_inferred": same payload plus inferred-permission expansion
-        #
-        # Example structure (trimmed):
-        # {
-        #   "flattened_member_rows": [
-        #     {
-        #       "member": "user:alice@example.com",
-        #       "project_id": "example-project-a",
-        #       "name": "projects/example-project-a",
-        #       "display_name": "Example Project A",
-        #       "type": "project",
-        #       "roles": "[\"roles/viewer\"]"
-        #     }
-        #   ],
-        #   "member_binding_index": {
-        #     "user:alice@example.com": {
-        #       "project:projects/example-project-a@example-project-a": {
-        #         "direct_binding_records": [...],
-        #         "convenience_binding_records": [...],
-        #         "inherited_binding_records": [...]
-        #       },
-        #       "computeinstance:projects/example-project-a/zones/us-central1-a/instances/web-01@example-project-a": {
-        #         "direct_binding_records": [...],
-        #         "convenience_binding_records": [...],
-        #         "inherited_binding_records": [...]
-        #       }
-        #     }
-        #   },
-        #   "member_inferred_permissions_index": {
-        #     "user:alice@example.com:example-cred": {
-        #       "project:projects/example-project-a@example-project-a": [
-        #         "compute.instances.get",
-        #         "compute.instances.setMetadata"
-        #       ]
-        #     }
-        #   }
-        # }
-        #
-        # Notes:
-        # - OpenGraph builders treat this as the single source of truth for
-        #   flattened rows, binding contexts, and inferred-permission contexts.
-        # - This cache is the only long-lived IAM simplification cache here.
-        #   Builders should read slices from it directly as needed.
+        # Cached output of create_simplified_hierarchy_permissions(...),
+        # keyed by {"base", "with_inferred"}.
         self._simplified_hierarchy_permissions_cache: dict[str, dict[str, Any]] = {}
         self._scope_resource_indexes_cache = None
         self._initialize_core_caches()
@@ -263,12 +209,12 @@ class OpenGraphBuildContext:
         if self._scope_resource_indexes_cache is not None:
             return self._scope_resource_indexes_cache
 
-        from gcpwn.modules.opengraph.utilities.iam_bindings_prepare_builder import (
-            _build_scope_and_resource_indexes,
+        from gcpwn.modules.opengraph.utilities.stage_2_policy_bindings import (
+            build_scope_and_resource_indexes,
         )
 
         simplified_base = self.simplified_hierarchy_permissions(include_inferred_permissions=False)
-        self._scope_resource_indexes_cache = _build_scope_and_resource_indexes(
+        self._scope_resource_indexes_cache = build_scope_and_resource_indexes(
             hierarchy_data=self.hierarchy_data(),
             flattened_member_rows=(simplified_base.get("flattened_member_rows") or []),
             cloudcompute_instances_rows=self.rows("cloudcompute_instances"),

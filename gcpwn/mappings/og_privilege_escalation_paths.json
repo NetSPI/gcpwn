@@ -63,6 +63,20 @@
         "cloudfunction"
       ]
     },
+    "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM": {
+      "permission": "secretmanager.secrets.setIamPolicy",
+      "description": "Can change IAM policy on Secret Manager (for example, granting roles/owner to the caller so you can read the secret). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
+      "target_selector": {
+        "mode": "resource_types",
+        "resource_types": [
+          "secrets"
+        ]
+      },
+      "resource_scopes_possible": [
+        "project",
+        "secrets"
+      ]
+    },
     "CAN_IMPERSONATE_SA": {
       "permission": "iam.serviceAccounts.implicitDelegation",
       "description": "Can \"act as\" another Service Account thus getting that destination Service Account permissions. Can be chained across multiple service accounts. Note the \"--impersonate-service-account\" is a flag  supported on the gcloud base binary itself.\nGCPwn Module: Review existing exploit_* modules for --implicit-del flag where you can specify  service accounts you want to chain before final action (ex. modules run exploit_generate_access_token --impliict-del) Commands: gcloud auth print-access-token --impersonate-service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com,DELEGATE_SA@PROJECT_ID.iam.gserviceaccount.com",
@@ -246,6 +260,210 @@
             "node_mode": "resource",
             "from_groups": [
               "compute_metadata_start_group"
+            ]
+          }
+        ]
+      }
+    },
+    "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "description": "Create a Cloud Function and attach a SA to retrieve the SA token.",
+      "multi_permission_type": "complex",
+      "same_scope_required": false,
+      "same_project_required": true,
+      "match_paths": [
+        {
+          "id": "invoke_via_call",
+          "requires_groups": [
+            {
+              "id": "cloudfunction_create_group",
+              "permissions": [
+                "cloudfunctions.functions.create",
+                "cloudfunctions.functions.sourceCodeSet"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "cloudfunction"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "cloudfunction"
+                ]
+              }
+            },
+            {
+              "id": "cloudfunction_call_group",
+              "permissions": [
+                "cloudfunctions.functions.call"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "cloudfunction"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "cloudfunction"
+                ]
+              }
+            },
+            {
+              "id": "sa_actas_group",
+              "permissions": [
+                "iam.serviceAccounts.actAs"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "service-account"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "service-account"
+                ]
+              }
+            }
+          ],
+          "combo_hop": {
+            "edge_to_target": "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+            "target_from_groups": [
+              "sa_actas_group"
+            ],
+            "hops": [
+              {
+                "edge_from_subject": "CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+                "node_mode": "capability",
+                "from_groups": [
+                  "cloudfunction_create_group",
+                  "cloudfunction_call_group"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "description": "Update a Cloud Function with your own source code to retrieve the SA token of the existing SA or optinall leverage iam.serviceAccounts.actAs to attach a new SA to retrieve.",
+      "multi_permission_type": "complex",
+      "same_scope_required": false,
+      "same_project_required": true,
+      "match_paths": [
+        {
+          "id": "invoke_via_call",
+          "requires_groups": [
+            {
+              "id": "cloudfunction_update_group",
+              "permissions": [
+                "cloudfunctions.functions.update",
+                "cloudfunctions.functions.sourceCodeSet"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "cloudfunction"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "cloudfunction"
+                ]
+              }
+            },
+            {
+              "id": "cloudfunction_call_group",
+              "permissions": [
+                "cloudfunctions.functions.call"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "cloudfunction"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "cloudfunction"
+                ]
+              }
+            },
+            {
+              "id": "sa_actas_group",
+              "permissions": [
+                "iam.serviceAccounts.actAs"
+              ],
+              "resource_scopes_possible": [
+                "project",
+                "service-account"
+              ],
+              "target_selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "service-account"
+                ]
+              }
+            }
+          ],
+          "combo_hop": {
+            "edge_to_target": "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+            "target_from_groups": [
+              "sa_actas_group"
+            ],
+            "hops": [
+              {
+                "edge_from_subject": "CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+                "node_mode": "capability",
+                "from_groups": [
+                  "cloudfunction_update_group",
+                  "cloudfunction_call_group"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "CREATE_CLOUDSCHEDULER_JOB_AS_SA": {
+      "description": "Create a Cloud Scheduler job and attach a target service account via iam.serviceAccounts.actAs, enabling execution under that service account identity.",
+      "multi_permission_type": "complex",
+      "requires_groups": [
+        {
+          "id": "cloudscheduler_create_group",
+          "permissions": [
+            "cloudscheduler.jobs.create"
+          ],
+          "resource_scopes_possible": [
+            "project"
+          ]
+        },
+        {
+          "id": "sa_actas_group",
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "resource_scopes_possible": [
+            "project",
+            "service-account"
+          ],
+          "target_selector": {
+            "mode": "resource_types",
+            "resource_types": [
+              "service-account"
+            ]
+          }
+        }
+      ],
+      "same_scope_required": false,
+      "same_project_required": true,
+      "combo_hop": {
+        "edge_to_target": "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
+        "target_from_groups": [
+          "sa_actas_group"
+        ],
+        "hops": [
+          {
+            "edge_from_subject": "CAN_CREATE_CLOUDSCHEDULER_JOB",
+            "node_mode": "capability",
+            "from_groups": [
+              "cloudscheduler_create_group"
             ]
           }
         ]

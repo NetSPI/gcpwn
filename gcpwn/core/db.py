@@ -122,6 +122,9 @@ class DataController:
             ("ix_opengraph_edges_workspace_dest", ("workspace_id", "destination_id")),
             ("ix_opengraph_edges_workspace_type", ("workspace_id", "edge_type")),
         ],
+        "opengraph_ui_config": [
+            ("ix_opengraph_ui_config_workspace_token_id", ("workspace_id", "custom_nodes_token_id")),
+        ],
     }
 
     def __init__(self):

@@ -940,7 +940,7 @@ class IAMPolicyBindingsResource:
                         "resource_key": "service_accounts",
                         "permission": "iam.serviceAccounts.getIamPolicy",
                         "action_group": "service account",
-                        "policy_type": "saaccounts",
+                        "policy_type": "service-account",
                         "context_builder": lambda row: {
                             "resource_name": str(row.get("name") or "").strip(),
                             "project_id": str(row.get("project_id") or "").strip(),
@@ -1014,7 +1014,7 @@ class IAMPolicyBindingsResource:
                 "artifactregistry_actions_allowed",
                 _enumerate_discovery_specs,
                 [
-                    _discovery_spec("artifactregistry", "artifactregistry_repositories", "Artifact Registry repository IAM policies", "artifactregistry_repositories", "artifactregistry_repository", "artifactregistry.repositories.getIamPolicy", "Artifact Registry", "repositories", "artifactregistryrepository"),
+                    _discovery_spec("artifactregistry", "artifactregistry_repositories", "Artifact Registry repository IAM policies", "artifactregistry_repositories", "artifactregistry_repository", "artifactregistry.repositories.getIamPolicy", "Artifact Registry", "repositories", "artifactregistryrepo"),
                 ],
             ),
             (
@@ -1022,7 +1022,7 @@ class IAMPolicyBindingsResource:
                 _enumerate_discovery_specs,
                 [
                     _discovery_spec("kms", "kms_keyrings", "Cloud KMS keyring IAM policies", "kms_keyrings", "kms_keyring", "cloudkms.keyRings.getIamPolicy", "Cloud KMS", "keyrings", "kmskeyring"),
-                    _discovery_spec("kms", "kms_keys", "Cloud KMS cryptokey IAM policies", "kms_keys", "kms_key", "cloudkms.cryptoKeys.getIamPolicy", "Cloud KMS", "keys", "kmskey"),
+                    _discovery_spec("kms", "kms_keys", "Cloud KMS cryptokey IAM policies", "kms_keys", "kms_key", "cloudkms.cryptoKeys.getIamPolicy", "Cloud KMS", "keys", "kmscryptokey"),
                 ],
             ),
             (

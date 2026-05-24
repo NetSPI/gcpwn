@@ -36,7 +36,7 @@
             "module_name": "unauth_apikey_gemini_exploit",
             "info_blurb": "Exploit an exposed Gemini API key by enumerating Gemini files and cached contents, then exercising the token-counting and embeddings REST endpoints.",
             "location": "gcpwn.modules.apikeys.unauthenticated.unauth_apikey_gemini_exploit",
-              "attribution": [
+            "attribution": [
               "https://trufflesecurity.com/blog/google-api-keys-werent-secrets-but-then-gemini-changed-the-rules"
             ]
           },
@@ -397,11 +397,16 @@
     {
       "service": "OpenGraph",
       "categories": {
-        "Enumeration": [
+        "Processing": [
           {
-            "module_name": "enum_gcp_cloud_hound_data",
-            "info_blurb": "Turnkey: collect IAM/resource context and emit OpenGraph JSON (GCP).",
-            "location": "gcpwn.modules.opengraph.enumeration.enum_gcp_cloud_hound_data"
+            "module_name": "process_og_gcpwn_data",
+            "info_blurb": "Build OpenGraph data from cached workspace tables and export BloodHound-compatible JSON output.",
+            "location": "gcpwn.modules.opengraph.enumeration.process_og_gcpwn_data"
+          },
+          {
+            "module_name": "process_og_node_color_images",
+            "info_blurb": "Sync OpenGraph custom node color/image metadata to a BloodHound custom-node endpoint.",
+            "location": "gcpwn.modules.opengraph.enumeration.process_og_node_color_images"
           }
         ]
       }

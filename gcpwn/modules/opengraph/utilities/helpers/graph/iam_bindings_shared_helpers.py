@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Iterable
 
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.modules.opengraph.utilities.helpers.constants import (
-    COLLAPSED_DANGEROUS_ROLE_EDGE_RULES as YAML_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
+from gcpwn.modules.opengraph.utilities.helpers.graph.constants import (
+    load_privilege_escalation_rules,
 )
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_aggregation_helpers import (
+    ensure_subject_state,
+    record_destination,
+    serialize_role_subject_state,
+)
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_event_helpers import (
+    collect_owner_baseline_events,
+    collect_rule_events,
+)
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphEdge,
     OpenGraphBuilder,
+    OpenGraphNode,
     gcp_resource_node_type,
     principal_member_properties,
     principal_type,
@@ -21,6 +30,11 @@ from gcpwn.modules.opengraph.utilities.helpers.core_helpers import (
     resource_display_label,
     resource_location_token,
     resource_node_id,
+)
+from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
+    canonical_scope_type,
+    normalized_token_frozenset,
+    normalized_token_list,
 )
 
 
@@ -171,7 +185,8 @@ _COLLAPSED_DANGEROUS_ROLE_EDGE_RULES: dict[str, dict[str, str]] = {
         ),
     },
 }
-for _role_name, _rule_data in dict(YAML_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES or {}).items():
+_single_rules_raw, _multi_rules_raw, _collapsed_rules_raw = load_privilege_escalation_rules()
+for _role_name, _rule_data in dict(_collapsed_rules_raw or {}).items():
     role_name = str(_role_name or "").strip()
     if not role_name or not isinstance(_rule_data, dict):
         continue
@@ -189,7 +204,6 @@ class BindingPlusScopeEntry:
     """Resolved IAM binding-composite row shared between the base and advanced passes."""
 
     principal_id: str
-    principal_member: str
     expanded_from_convenience_member: str
     binding_composite_id: str
     role_name: str
@@ -206,10 +220,8 @@ class BindingPlusScopeEntry:
     project_id: str
     inherited: bool
     source: str
-    conditional: bool
     condition_expr_raw: str
     condition_hash: str
-    condition_summary: str
     condition_option_id: str
     condition_option_summary: str
     condition_services: frozenset[str]
@@ -232,86 +244,27 @@ class ScopeResourceIndexes:
     allow_resources_by_project_type: dict[str, dict[str, list[dict[str, str]]]]
 
 
-def _canonical_scope_type(scope_type: str, scope_name: str) -> str:
-    token = str(scope_type or "").strip().lower().replace("_", "-").replace(" ", "-")
-    scope_name_token = str(scope_name or "").strip().lower()
-    if token in {"org", "organization", "organizations"}:
-        return "org"
-    if token in {"folder", "folders"}:
-        return "folder"
-    if token in {"project", "projects"}:
-        return "project"
-    if token in {"saaccounts", "service-account", "service-accounts"}:
-        return "service-account"
-    if token == "computeinstance":
-        return "computeinstance"
-    if token in {"bucket", "buckets"}:
-        return "bucket"
-    if token in {"cloudfunction", "functions"}:
-        return "cloudfunction"
-    if token in {"secret", "secrets"}:
-        return "secrets"
-    if token in {"kmskeyring", "keyrings"}:
-        return "kmskeyring"
-    if token in {"kmscryptokey", "keys"}:
-        return "kmscryptokey"
-    if token == "kmskeyversion":
-        return "kmskeyversion"
-    if token == "cloudrunservice":
-        return "cloudrunservice"
-    if token in {"cloudrunjob", "jobs"}:
-        return "cloudrunjob"
-    if token in {"artifactregistryrepo", "repositories"}:
-        return "artifactregistryrepo"
-    if token in {"pubsubtopic", "topics"}:
-        return "pubsubtopic"
-    if token in {"pubsubsubscription", "subscriptions"}:
-        return "pubsubsubscription"
-    if token in {"pubsubsnapshot", "snapshots"}:
-        return "pubsubsnapshot"
-    if token in {"pubsubschema", "schemas"}:
-        return "pubsubschema"
-    if token in {"servicedirectorynamespace", "namespaces"}:
-        return "servicedirectorynamespace"
-    if token == "servicedirectoryservice":
-        return "servicedirectoryservice"
-    if token == "services":
-        if "/namespaces/" in scope_name_token:
-            return "servicedirectoryservice"
-        return "cloudrunservice"
-    if token == "spannerinstance":
-        return "spannerinstance"
-    if token == "spannerdatabase":
-        return "spannerdatabase"
-    if token in {"cloudtasksqueue", "queues"}:
-        return "cloudtasksqueue"
-    if token == "cloudsqlinstance":
-        return "cloudsqlinstance"
-    if token == "bigquerydataset":
-        return "bigquerydataset"
-    if token == "bigquerytable":
-        return "bigquerytable"
-    if token == "bigqueryroutine":
-        return "bigqueryroutine"
-    # Preserve explicit non-hierarchy resource types as-is. Only infer from
-    # scope name when type is missing/generic.
-    if token and token not in {"resource", "abstract"}:
-        return token
-    name = str(scope_name or "").strip()
-    if name.startswith("organizations/"):
-        return "org"
-    if name.startswith("folders/"):
-        return "folder"
-    if name.startswith("projects/"):
-        return "project"
-    return token or "resource"
-
+def canonical_scope_type_for_bindings(scope_type: str | None, scope_name: str | None) -> str:
+    return canonical_scope_type(scope_type, scope_name)
 
 def _scope_leaf(scope_name: str) -> str:
     token = str(scope_name or "").strip()
     if not token:
         return ""
     return extract_path_tail(token, default=token)
+
+
+def _role_display_name(role_name: str) -> str:
+    """
+    Keep built-in roles as-is (roles/owner) but shorten custom-role paths.
+    Example: projects/my-proj/roles/CustomRole704 -> CustomRole704
+    """
+    token = str(role_name or "").strip()
+    if not token:
+        return ""
+    if "/roles/" in token and not token.startswith("roles/"):
+        return _scope_leaf(token)
+    return token
 
 
 def parse_scoped_resource_key(
@@ -335,7 +288,7 @@ def parse_scoped_resource_key(
         return None
 
     scope_type, scope_name = base.split(":", 1)
-    scope_type = _canonical_scope_type(str(scope_type or "").strip(), str(scope_name or "").strip())
+    scope_type = canonical_scope_type_for_bindings(str(scope_type or "").strip(), str(scope_name or "").strip())
     scope_name = str(scope_name or "").strip()
     if not scope_type or not scope_name:
         return None
@@ -344,7 +297,7 @@ def parse_scoped_resource_key(
 
 def binding_scope_token(scope_type: str, scope_name: str, *, project_id: str = "") -> str:
     """Build a compact binding scope token, preferring project_id for project scopes."""
-    canonical_type = _canonical_scope_type(scope_type, scope_name)
+    canonical_type = canonical_scope_type_for_bindings(scope_type, scope_name)
     if canonical_type == "project":
         project_token = str(project_id or "").strip()
         if project_token:
@@ -368,19 +321,42 @@ def binding_family_id_for_entry(entry: BindingPlusScopeEntry) -> str:
     return family_id
 
 
-def _normalized_token_list(values: Iterable[Any] | None) -> list[str]:
-    return sorted({token for value in (values or ()) if (token := str(value or "").strip())})
+def existing_binding_rule_targets(builder) -> set[tuple[str, str, str]]:
+    """
+    Return {(principal_id, edge_type, destination_id)} already proven by
+    explicit IAM/combo bindings in the current graph.
+    """
+    grant_owner: dict[str, str] = {}
+    for edge in builder.edge_map.values():
+        if edge.edge_type in {"HAS_IAM_BINDING", "HAS_COMBO_BINDING"}:
+            grant_owner[str(edge.destination_id or "").strip()] = str(edge.source_id or "").strip()
 
+    proven: set[tuple[str, str, str]] = set()
+    for edge in builder.edge_map.values():
+        source_id = str(edge.source_id or "").strip()
+        owner = grant_owner.get(source_id)
+        if not owner:
+            continue
+        destination_id = str(edge.destination_id or "").strip()
+        edge_type = str(edge.edge_type or "").strip()
+        proven.add((owner, edge_type, destination_id))
 
-def _normalized_token_frozenset(values: Iterable[Any] | None) -> frozenset[str]:
-    return frozenset(token for value in (values or ()) if (token := str(value or "").strip()))
+        if edge_type in {"ROLE_OWNER", "ROLE_EDITOR"}:
+            properties = dict(edge.properties or {})
+            wrapped_types = normalized_token_list(
+                list(properties.get("dangerous_edge_types") or [])
+                + list(properties.get("dangerous_rule_names") or [])
+            )
+            for wrapped_type in wrapped_types:
+                proven.add((owner, wrapped_type, destination_id))
+    return proven
 
 
 def _normalize_binding_permission_map(
     contribution_map: dict[str, Iterable[str]] | None,
 ) -> dict[str, list[str]]:
     return {
-        grant_key: _normalized_token_list(permissions)
+        grant_key: normalized_token_list(permissions)
         for grant_id, permissions in (contribution_map or {}).items()
         if (grant_key := str(grant_id or "").strip())
     }
@@ -413,7 +389,7 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
                         canonical
                         for item in _list_or_empty(raw_selector_value.get("resource_types"))
                         if str(item).strip()
-                        if (canonical := _canonical_scope_type(str(item).strip().lower(), "")) in _PREFERRED_RULE_RESOURCE_TOKENS
+                        if (canonical := canonical_scope_type_for_bindings(str(item).strip().lower(), "")) in _PREFERRED_RULE_RESOURCE_TOKENS
                     },
                     "status_in": {
                         str(item).strip().upper()
@@ -447,15 +423,15 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
                 permissions.add(single_permission)
             group_resource_scopes_possible = {
                 canonical
-                for token in _normalized_token_list(raw_group.get("resource_scopes_possible"))
+                for token in normalized_token_list(raw_group.get("resource_scopes_possible"))
                 if str(token).strip()
-                if (canonical := _canonical_scope_type(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
+                if (canonical := canonical_scope_type_for_bindings(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
             }
             group_attached_scope_types = {
                 canonical
                 for token in _list_or_empty(raw_group.get("attached_scope_types"))
                 if str(token).strip()
-                if (canonical := _canonical_scope_type(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
+                if (canonical := canonical_scope_type_for_bindings(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
             }
             group_target_selector = _selector_or_empty(raw_group.get("target_selector"))
         else:
@@ -598,15 +574,15 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
         "requires_groups": requires_groups,
         "resource_scopes_possible": {
             canonical
-            for token in _normalized_token_list(raw_rule.get("resource_scopes_possible"))
+            for token in normalized_token_list(raw_rule.get("resource_scopes_possible"))
             if str(token).strip()
-            if (canonical := _canonical_scope_type(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
+            if (canonical := canonical_scope_type_for_bindings(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
         },
         "attached_scope_types": {
             canonical
             for token in _list_or_empty(raw_rule.get("attached_scope_types"))
             if str(token).strip()
-            if (canonical := _canonical_scope_type(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
+            if (canonical := canonical_scope_type_for_bindings(token, "")) in _PREFERRED_RULE_RESOURCE_TOKENS
         },
         "same_scope_required": bool(raw_rule.get("same_scope_required", True)),
         "same_project_required": bool(raw_rule.get("same_project_required", False)),
@@ -682,6 +658,27 @@ def expand_multi_permission_rules(raw_rules: dict[str, dict[str, Any]] | None) -
             variant_rule["rule_variant_id"] = variant_id
             expanded[f"{base_name}__{variant_id}"] = variant_rule
     return expanded
+
+
+def load_normalized_dangerous_rules_by_family() -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    """
+    Load dangerous IAM rules and return canonicalized single/multi families.
+
+    This is the shared normalization entrypoint used across OpenGraph stages
+    to avoid duplicating load+expand+normalize logic in each stage module.
+    """
+    single_rules_raw, multi_rules_raw, _collapsed_rules = load_privilege_escalation_rules()
+    single_rules = tuple(
+        _normalized_rule(str(name), raw_rule)
+        for name, raw_rule in expand_single_permission_rules(single_rules_raw).items()
+        if isinstance(raw_rule, dict)
+    )
+    multi_rules = tuple(
+        _normalized_rule(str(name), raw_rule)
+        for name, raw_rule in expand_multi_permission_rules(multi_rules_raw).items()
+        if isinstance(raw_rule, dict)
+    )
+    return single_rules, multi_rules
 
 
 def _requirement_permissions(rule: dict[str, Any]) -> set[str]:
@@ -863,7 +860,7 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
     ) -> tuple[bool, dict[str, list[str]], dict[str, list[str]]]:
         if not normalized_group_defs:
             return True, {}, {}
-        normalized_grants = _normalized_token_list(grant_ids)
+        normalized_grants = normalized_token_list(grant_ids)
         contributors_by_group: dict[str, list[str]] = {}
         permissions_by_group: dict[str, list[str]] = {}
         for group_def in normalized_group_defs:
@@ -894,7 +891,7 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
 
     def _permission_map_for(grant_ids: Iterable[str], matched_permissions: set[str]) -> dict[str, list[str]]:
         mapped: dict[str, list[str]] = {}
-        for grant_id in _normalized_token_list(grant_ids):
+        for grant_id in normalized_token_list(grant_ids):
             perms = set(perms_by_grant.get(grant_id, set()))
             contributing = sorted(perms.intersection(matched_permissions)) if matched_permissions else sorted(perms)
             if not contributing:
@@ -903,8 +900,10 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
         return mapped
 
     single_matches: list[dict[str, Any]] = []
-    multi_permission_type = str(rule.get("multi_permission_type") or "simple").strip().lower()
-    single_match_emission_mode = "combo" if multi_permission_type == "complex" else "binding"
+    # If one binding grant already satisfies the rule, emit from the standard
+    # IAM binding node path (no COMBO_IAMBINDING node). This applies to
+    # broad roles like roles/owner and roles/editor as well.
+    single_match_emission_mode = "binding"
     for grant_id in sorted(perms_by_grant.keys()):
         perms = perms_by_grant.get(grant_id, set())
         ok, matched, matched_group_permissions = _match_rule_against_permissions(rule, perms)
@@ -930,6 +929,7 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
                 "matched_group_permissions": group_permissions_from_entries,
             }
         )
+
     if single_matches or not bool(rule.get("combine_across_bindings", True)):
         return single_matches
 
@@ -968,12 +968,20 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
             minimal_combo_sets = [minimal_combo_sets[idx] for idx in keep_indices]
             combo_matches = [combo_matches[idx] for idx in keep_indices]
             minimal_combo_sets.append(grant_set)
+            combo_contributors = [representative_by_grant[grant_id] for grant_id in sorted(grant_set)]
+            combo_roles = {
+                str(entry.role_name or "").strip()
+                for entry in combo_contributors
+                if str(entry.role_name or "").strip()
+            }
             combo_matches.append(
                 {
-                    "contributors": [representative_by_grant[grant_id] for grant_id in sorted(grant_set)],
+                    "contributors": combo_contributors,
                     "matched_permissions": matched,
                     "combine_across_bindings": True,
-                    "emission_mode": "combo",
+                    # If every contributing grant is still the same role, emit
+                    # via normal IAM binding path instead of creating combo node.
+                    "emission_mode": "binding" if len(combo_roles) <= 1 else "combo",
                     "contributor_permission_map": _permission_map_for(grant_set, matched),
                     "matched_group_contributors": matched_group_contributors,
                     "matched_group_permissions": group_permissions_from_entries,
@@ -1006,12 +1014,12 @@ def _edge_properties_from_entry(
     for permissions in normalized_contribution_map.values():
         contributing_permissions.update(permissions)
 
-    matched_permissions_set = set(_normalized_token_list(matched_permissions))
+    matched_permissions_set = set(normalized_token_list(matched_permissions))
     if not contributing_permissions:
         contributing_permissions = set(matched_permissions_set)
-    evidence_bindings_set = _normalized_token_list(evidence_bindings)
+    evidence_bindings_set = normalized_token_list(evidence_bindings)
     output = {
-        "principal_member": entry.principal_member,
+        "principal_member": entry.principal_id,
         "role_name": entry.role_name,
         "binding_origin": binding_origin,
         "binding_family_id": binding_family_id,
@@ -1025,21 +1033,21 @@ def _edge_properties_from_entry(
         "effective_scope_type": entry.effective_scope_type,
         "effective_scope_display": entry.effective_scope_display,
         "inherited": bool(entry.inherited),
-        "conditional": bool(entry.conditional),
+        "conditional": bool(entry.condition_hash),
         "condition_expr_raw": entry.condition_expr_raw,
         "condition_hash": entry.condition_hash,
-        "condition_summary": entry.condition_summary or entry.condition_option_summary,
+        "condition_summary": (entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary),
         "condition_option_id": entry.condition_option_id,
         "condition_option_summary": entry.condition_option_summary,
-        "condition_services": _normalized_token_list(entry.condition_services),
-        "condition_resource_types": _normalized_token_list(entry.condition_resource_types),
-        "condition_name_prefixes": _normalized_token_list(entry.condition_name_prefixes),
-        "condition_name_equals": _normalized_token_list(entry.condition_name_equals),
+        "condition_services": normalized_token_list(entry.condition_services),
+        "condition_resource_types": normalized_token_list(entry.condition_resource_types),
+        "condition_name_prefixes": normalized_token_list(entry.condition_name_prefixes),
+        "condition_name_equals": normalized_token_list(entry.condition_name_equals),
         "rule_name": rule_name,
-        "matched_permissions": _normalized_token_list(matched_permissions_set),
-        "matched_roles": _normalized_token_list(matched_roles),
+        "matched_permissions": normalized_token_list(matched_permissions_set),
+        "matched_roles": normalized_token_list(matched_roles),
         "evidence_bindings": evidence_bindings_set,
-        "contributing_permissions": _normalized_token_list(contributing_permissions),
+        "contributing_permissions": normalized_token_list(contributing_permissions),
         "contributing_binding_permission_map": normalized_contribution_map,
         "combine_across_bindings": bool(combine_across_bindings),
         "privilege_escalation": bool(privilege_escalation),
@@ -1063,6 +1071,21 @@ def _collapsed_dangerous_role_edge_type(entry: BindingPlusScopeEntry, *, privile
     )
 
 
+# Keep owner/editor collapsed for baseline dangerous-role edges, but do not
+# collapse multi-permission workflow edges. Otherwise owner/editor cannot
+# visibly feed capability/multi-hop paths.
+_NO_COLLAPSE_MULTI_PERMISSION_EDGE_TYPES: frozenset[str] = frozenset(
+    {
+        "CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+        "CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+        "CAN_CREATE_CLOUDSCHEDULER_JOB",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
+    }
+)
+
+
 def _merge_edge_properties(existing_props: dict[str, Any] | None, new_props: dict[str, Any] | None) -> dict[str, Any]:
     merged = dict(existing_props or {})
     for key, incoming in dict(new_props or {}).items():
@@ -1072,7 +1095,7 @@ def _merge_edge_properties(existing_props: dict[str, Any] | None, new_props: dic
         if isinstance(current, dict) and isinstance(incoming, dict):
             if key == "contributing_binding_permission_map":
                 merged_map = {
-                    str(grant_id): _normalized_token_list(permissions)
+                    str(grant_id): normalized_token_list(permissions)
                     for grant_id, permissions in current.items()
                     if str(grant_id or "").strip()
                 }
@@ -1080,13 +1103,13 @@ def _merge_edge_properties(existing_props: dict[str, Any] | None, new_props: dic
                     grant_key = str(grant_id or "").strip()
                     if not grant_key:
                         continue
-                    merged_map[grant_key] = _normalized_token_list(
+                    merged_map[grant_key] = normalized_token_list(
                         list(merged_map.get(grant_key, [])) + list(permissions or [])
                     )
                 merged[key] = merged_map
                 continue
         if isinstance(current, list) and isinstance(incoming, list):
-            merged[key] = _normalized_token_list(list(current) + list(incoming))
+            merged[key] = normalized_token_list(list(current) + list(incoming))
             continue
         if isinstance(current, bool) and isinstance(incoming, bool):
             merged[key] = bool(current or incoming)
@@ -1155,7 +1178,7 @@ def _scope_contains_resource(
     if resource_token and resource_token == effective_scope:
         return True
 
-    effective_type = _canonical_scope_type(effective_scope_type, effective_scope)
+    effective_type = canonical_scope_type_for_bindings(effective_scope_type, effective_scope)
     if effective_type == "project":
         effective_project_id = str(project_id_by_scope_name.get(effective_scope) or "").strip() or _scope_leaf(effective_scope)
         return bool(resource_project_id and resource_project_id == effective_project_id)
@@ -1191,7 +1214,7 @@ def _target_candidates_for_entry(
     mode = str(selector.get("mode") or "").strip().lower()
     if mode != "resource_types":
         return []
-    if _canonical_scope_type(entry.effective_scope_type, entry.effective_scope_name) != "project":
+    if canonical_scope_type_for_bindings(entry.effective_scope_type, entry.effective_scope_name) != "project":
         return []
 
     selected_types = _selector_resource_types(selector)
@@ -1246,7 +1269,7 @@ def _target_candidates_for_entry(
 def _selector_resource_types(selector: dict[str, Any]) -> set[str]:
     raw_tokens = selector.get("resource_types") or set()
     return {
-        _canonical_scope_type(str(token or "").strip().lower(), "")
+        canonical_scope_type_for_bindings(str(token or "").strip().lower(), "")
         for token in raw_tokens
         if str(token or "").strip()
     }
@@ -1264,7 +1287,7 @@ def _scope_target_matches_selector(
     if not selected_types:
         return False
     target_name = str(scope_target.get("resource_name") or "").strip()
-    target_type = _canonical_scope_type(
+    target_type = canonical_scope_type_for_bindings(
         str(scope_target.get("resource_type") or "").strip().lower(),
         target_name,
     )
@@ -1291,14 +1314,15 @@ def _emit_subject_binding(
     entry: BindingPlusScopeEntry,
     privilege_escalation: bool,
 ) -> None:
-    principal_props = principal_member_properties(entry.principal_member)
-    builder.add_node(entry.principal_id, principal_type(entry.principal_member), **principal_props)
+    principal_props = principal_member_properties(entry.principal_id)
+    builder.add_node(entry.principal_id, principal_type(entry.principal_id), **principal_props)
     attached_scope_ref = binding_scope_token(
         entry.attached_scope_type,
         entry.attached_scope_name,
         project_id=entry.project_id,
     )
-    binding_display = f"{entry.role_name} @ {attached_scope_ref}"
+    role_display_name = _role_display_name(entry.role_name)
+    binding_display = f"{role_display_name} @ {attached_scope_ref}"
     if entry.condition_hash:
         binding_display = f"{binding_display} [cond]"
     binding_origin = binding_origin_from_entry(entry)
@@ -1316,14 +1340,15 @@ def _emit_subject_binding(
         source_scope_id=entry.source_scope_name,
         source_scope_type=entry.source_scope_type,
         source_scope_display=entry.source_scope_display,
-        conditional=bool(entry.conditional),
+        conditional=bool(entry.condition_hash),
         condition_expr_raw=entry.condition_expr_raw,
         condition_hash=entry.condition_hash,
-        condition_summary=entry.condition_summary,
+        condition_summary=(entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary),
         inherited=bool(entry.inherited),
         source=entry.source,
         binding_display=binding_display,
-        member=entry.principal_member,
+        role_display_name=role_display_name,
+        member=entry.principal_id,
         expanded_from_convenience_member=entry.expanded_from_convenience_member,
         privilege_escalation=bool(privilege_escalation),
     )
@@ -1340,7 +1365,7 @@ def _emit_subject_binding(
         source_scope_id=entry.source_scope_name,
         source_scope_type=entry.source_scope_type,
         condition_hash=entry.condition_hash,
-        conditional=bool(entry.conditional),
+        conditional=bool(entry.condition_hash),
         inherited=bool(entry.inherited),
         expanded_from_convenience_member=entry.expanded_from_convenience_member or None,
         privilege_escalation=bool(privilege_escalation),
@@ -1350,12 +1375,12 @@ def _emit_subject_binding(
 def _combo_scope_info(contributors: Iterable[BindingPlusScopeEntry]) -> dict[str, Any]:
     contributor_list = [entry for entry in contributors if isinstance(entry, BindingPlusScopeEntry)]
     scope_ids = sorted(set(str(entry.effective_scope_name or "").strip() for entry in contributor_list if str(entry.effective_scope_name or "").strip()))
-    scope_types = _normalized_token_list(
-        _canonical_scope_type(str(entry.effective_scope_type or "").strip(), str(entry.effective_scope_name or "").strip())
+    scope_types = normalized_token_list(
+        canonical_scope_type_for_bindings(str(entry.effective_scope_type or "").strip(), str(entry.effective_scope_name or "").strip())
         for entry in contributor_list
         if str(entry.effective_scope_name or "").strip()
     )
-    scope_displays = _normalized_token_list(
+    scope_displays = normalized_token_list(
         str(entry.effective_scope_display or "").strip()
         for entry in contributor_list
         if str(entry.effective_scope_display or "").strip()
@@ -1410,9 +1435,9 @@ def _combo_binding_id(
             "subject_id": str(subject_id or "").strip(),
             "rule_name": str(rule_name or "").strip(),
             "effective_scope_token": str(effective_scope_token or "").strip(),
-            "contributing_binding_ids": _normalized_token_list(contributing_binding_ids),
-            "condition_hashes": _normalized_token_list(condition_hashes),
-            "source_scope_ids": _normalized_token_list(source_scope_ids),
+            "contributing_binding_ids": normalized_token_list(contributing_binding_ids),
+            "condition_hashes": normalized_token_list(condition_hashes),
+            "source_scope_ids": normalized_token_list(source_scope_ids),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -1444,8 +1469,8 @@ def _emit_subject_combo_binding(
     source_scope_types: Iterable[str],
     inherited: bool,
 ) -> None:
-    principal_props = principal_member_properties(subject_entry.principal_member)
-    builder.add_node(subject_entry.principal_id, principal_type(subject_entry.principal_member), **principal_props)
+    principal_props = principal_member_properties(subject_entry.principal_id)
+    builder.add_node(subject_entry.principal_id, principal_type(subject_entry.principal_id), **principal_props)
     normalized_contribution_map = _normalize_binding_permission_map(contributing_binding_permission_map)
     effective_scope_display = str(scope_info.get("effective_scope_display") or "").strip()
     effective_scope_id = str(scope_info.get("effective_scope_id") or "").strip()
@@ -1467,23 +1492,23 @@ def _emit_subject_combo_binding(
         rule_name=rule_name,
         rule_description=str(rule_description or "").strip(),
         subject_id=subject_entry.principal_id,
-        subject_display=subject_entry.principal_member,
+        subject_display=subject_entry.principal_id,
         effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
         effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
         effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
-        effective_scope_ids=_normalized_token_list(scope_info.get("effective_scope_ids") or []),
-        effective_scope_types=_normalized_token_list(scope_info.get("effective_scope_types") or []),
-        effective_scope_displays=_normalized_token_list(scope_info.get("effective_scope_displays") or []),
-        contributing_binding_ids=_normalized_token_list(contributing_binding_ids),
-        contributing_roles=_normalized_token_list(contributing_roles),
-        contributing_permissions=_normalized_token_list(contributing_permissions),
+        effective_scope_ids=normalized_token_list(scope_info.get("effective_scope_ids") or []),
+        effective_scope_types=normalized_token_list(scope_info.get("effective_scope_types") or []),
+        effective_scope_displays=normalized_token_list(scope_info.get("effective_scope_displays") or []),
+        contributing_binding_ids=normalized_token_list(contributing_binding_ids),
+        contributing_roles=normalized_token_list(contributing_roles),
+        contributing_permissions=normalized_token_list(contributing_permissions),
         contributing_binding_permission_map=normalized_contribution_map,
         conditional=bool(condition_hashes),
-        condition_hashes=_normalized_token_list(condition_hashes),
-        condition_summaries=_normalized_token_list(condition_summaries),
+        condition_hashes=normalized_token_list(condition_hashes),
+        condition_summaries=normalized_token_list(condition_summaries),
         inherited=bool(inherited),
-        source_scope_ids=_normalized_token_list(source_scope_ids),
-        source_scope_types=_normalized_token_list(source_scope_types),
+        source_scope_ids=normalized_token_list(source_scope_ids),
+        source_scope_types=normalized_token_list(source_scope_types),
         privilege_escalation=True,
     )
     builder.add_edge(
@@ -1497,11 +1522,11 @@ def _emit_subject_combo_binding(
         combo_id=combo_hash,
         effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
         effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
-        effective_scope_ids=_normalized_token_list(scope_info.get("effective_scope_ids") or []),
-        contributing_binding_ids=_normalized_token_list(contributing_binding_ids),
-        contributing_roles=_normalized_token_list(contributing_roles),
-        contributing_permissions=_normalized_token_list(contributing_permissions),
-        condition_hashes=_normalized_token_list(condition_hashes),
+        effective_scope_ids=normalized_token_list(scope_info.get("effective_scope_ids") or []),
+        contributing_binding_ids=normalized_token_list(contributing_binding_ids),
+        contributing_roles=normalized_token_list(contributing_roles),
+        contributing_permissions=normalized_token_list(contributing_permissions),
+        condition_hashes=normalized_token_list(condition_hashes),
         inherited=bool(inherited),
         privilege_escalation=True,
     )
@@ -1546,10 +1571,13 @@ def _emit_binding_target_edge(
         resource_type=target_type,
         status=target_status or None,
     )
-    collapsed_edge_type, collapsed_edge_description = _collapsed_dangerous_role_edge_type(
-        entry,
-        privilege_escalation=privilege_escalation,
-    )
+    collapsed_edge_type = ""
+    collapsed_edge_description = ""
+    if str(edge_type or "").strip() not in _NO_COLLAPSE_MULTI_PERMISSION_EDGE_TYPES:
+        collapsed_edge_type, collapsed_edge_description = _collapsed_dangerous_role_edge_type(
+            entry,
+            privilege_escalation=privilege_escalation,
+        )
     actual_edge_type = collapsed_edge_type or edge_type
     edge_rule_name = actual_edge_type if actual_edge_type != edge_type else rule_name
     edge_rule_description = (
@@ -1571,10 +1599,10 @@ def _emit_binding_target_edge(
     if actual_edge_type != edge_type:
         props["collapsed_role_edge"] = True
         props["collapsed_role_name"] = str(entry.role_name or "").strip()
-        props["dangerous_rule_names"] = _normalized_token_list([rule_name])
-        props["dangerous_edge_types"] = _normalized_token_list([edge_type])
+        props["dangerous_rule_names"] = normalized_token_list([rule_name])
+        props["dangerous_edge_types"] = normalized_token_list([edge_type])
         if str(rule_description or "").strip():
-            props["dangerous_rule_descriptions"] = _normalized_token_list([rule_description])
+            props["dangerous_rule_descriptions"] = normalized_token_list([rule_description])
         if str(collapsed_edge_description or "").strip():
             props["collapsed_edge_description"] = str(collapsed_edge_description).strip()
     props["target_resource_id"] = target_name
@@ -1646,29 +1674,29 @@ def _emit_combo_target_edge(
     for permissions in normalized_contribution_map.values():
         contributing_permissions.update(permissions)
     if not contributing_permissions:
-        contributing_permissions.update(_normalized_token_list(matched_permissions))
+        contributing_permissions.update(normalized_token_list(matched_permissions))
     props: dict[str, Any] = {
-        "principal_member": subject_entry.principal_member,
+        "principal_member": subject_entry.principal_id,
         "rule_name": rule_name,
         "binding_origin": str(binding_origin or "combo"),
         "binding_family_id": combo_binding_id,
         "match_mode": str(match_mode or "combo"),
         "combine_across_bindings": True,
-        "matched_permissions": _normalized_token_list(matched_permissions),
-        "matched_roles": _normalized_token_list(matched_roles),
-        "evidence_bindings": _normalized_token_list(evidence_bindings),
-        "contributing_permissions": _normalized_token_list(contributing_permissions),
+        "matched_permissions": normalized_token_list(matched_permissions),
+        "matched_roles": normalized_token_list(matched_roles),
+        "evidence_bindings": normalized_token_list(evidence_bindings),
+        "contributing_permissions": normalized_token_list(contributing_permissions),
         "contributing_binding_permission_map": normalized_contribution_map,
         "effective_scope_id": str(scope_info.get("effective_scope_id") or ""),
         "effective_scope_type": str(scope_info.get("effective_scope_type") or ""),
         "effective_scope_display": str(scope_info.get("effective_scope_display") or ""),
-        "effective_scope_ids": _normalized_token_list(scope_info.get("effective_scope_ids") or []),
-        "effective_scope_types": _normalized_token_list(scope_info.get("effective_scope_types") or []),
-        "source_scope_ids": _normalized_token_list(source_scope_ids),
-        "source_scope_types": _normalized_token_list(source_scope_types),
+        "effective_scope_ids": normalized_token_list(scope_info.get("effective_scope_ids") or []),
+        "effective_scope_types": normalized_token_list(scope_info.get("effective_scope_types") or []),
+        "source_scope_ids": normalized_token_list(source_scope_ids),
+        "source_scope_types": normalized_token_list(source_scope_types),
         "conditional": bool(condition_hashes),
-        "condition_hashes": _normalized_token_list(condition_hashes),
-        "condition_summaries": _normalized_token_list(condition_summaries),
+        "condition_hashes": normalized_token_list(condition_hashes),
+        "condition_summaries": normalized_token_list(condition_summaries),
         "inherited": bool(inherited),
         "privilege_escalation": True,
         "project_id": subject_entry.project_id,
@@ -1699,7 +1727,15 @@ def _emit_combo_capability_hop(
     """
     node_label = str(combo_hop.get("node_label") or rule_name).strip() or rule_name
     node_type = str(combo_hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability"
-    capability_node_id = f"{combo_binding_id}:capability:{str(rule_name or '').strip()}"
+    scope_id = str(scope_info.get("effective_scope_id") or "").strip()
+    scope_type = canonical_scope_type_for_bindings(
+        str(scope_info.get("effective_scope_type") or "").strip(),
+        scope_id,
+    )
+    scope_project_id = str(scope_info.get("effective_scope_project_id") or "").strip()
+    scope_token = binding_scope_token(scope_type, scope_id, project_id=scope_project_id)
+    hop_id = str(combo_hop.get("id") or "hop_1").strip() or "hop_1"
+    capability_node_id = f"capability:{str(rule_name or '').strip()}@{scope_token}:{hop_id}"
     builder.add_node(
         capability_node_id,
         node_type,
@@ -1757,58 +1793,30 @@ def _emit_iam_binding_edges_from_entries(
         "aggregation": {"roles": {...}},
         "runtime": {"resolved_bindings_composite": [BindingPlusScopeEntry(...)]},
       }
+
+    Single vs multi-permission behavior:
+    - Single-permission pass: caller supplies single-permission rules. A binding
+      contributes if it satisfies that rule's required permission pattern, and
+      one or more dangerous edges are emitted from matching contributor bindings.
+    - Multi-permission pass: caller supplies combo rules. The matcher builds
+      grouped evidence (`matched_group_contributors`) and checks whether each
+      required permission-group/role-group requirement is satisfied. If yes, it
+      emits the configured combo output (binding-mode and/or combo capability
+      node mode), including contributor evidence metadata.
+    - This function emits all matching rules it sees for the current pass; it
+      does not stop at the first match.
     """
     builder = context.builder
-    hierarchy_data = context.hierarchy_data()
+    hierarchy = context.hierarchy_data() or {}
     scope_resource_indexes = context.scope_resource_indexes()
     dangerous_rule_mode = str(pass_name or "base").strip().lower()
     rules = list(dangerous_rules or ())
-    hierarchy = hierarchy_data or {}
     scope_type_by_name = hierarchy.get("scope_type_by_name") or {}
     scope_display_by_name = hierarchy.get("scope_display_by_name") or {}
     parent_by_name = hierarchy.get("parent_by_name") or {}
     entries = list(entries or [])
 
     role_subject_state: dict[str, dict[str, dict[str, Any]]] = {}
-
-    def _ensure_subject_state(entry: BindingPlusScopeEntry) -> dict[str, Any]:
-        role_state = role_subject_state.setdefault(entry.role_name, {})
-        subject_state = role_state.setdefault(
-            entry.principal_id,
-            {
-                "principal_id": entry.principal_id,
-                "principal_member": entry.principal_member,
-                "role_name": entry.role_name,
-                "role_permissions": set(),
-                "binding_ids": set(),
-                "bindings": {},
-                "destinations": {},
-            },
-        )
-        subject_state["role_permissions"].update(entry.permissions)
-        subject_state["binding_ids"].add(entry.binding_composite_id)
-        binding_state = subject_state["bindings"].setdefault(
-            entry.binding_composite_id,
-            {
-                "binding_id": entry.binding_composite_id,
-                "attached_scope_id": entry.attached_scope_name,
-                "attached_scope_type": entry.attached_scope_type,
-                "attached_scope_display": entry.attached_scope_display,
-                "source_scope_id": entry.source_scope_name,
-                "source_scope_type": entry.source_scope_type,
-                "source_scope_display": entry.source_scope_display,
-                "inherited": bool(entry.inherited),
-                "condition_hash": entry.condition_hash,
-                "conditional": bool(entry.conditional),
-                "condition_summary": entry.condition_summary or entry.condition_option_summary,
-                "privilege_escalation": False,
-            },
-        )
-        if entry.condition_option_id:
-            binding_state.setdefault("condition_option_ids", set()).add(entry.condition_option_id)
-        if entry.expanded_from_convenience_member:
-            binding_state.setdefault("expanded_from_convenience_members", set()).add(entry.expanded_from_convenience_member)
-        return subject_state
 
     if not entries:
         return {
@@ -1830,114 +1838,17 @@ def _emit_iam_binding_edges_from_entries(
             },
         }
 
-    def _collect_rule_events(rule_set: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        grouped_entries_by_rule_shape: dict[tuple[bool, bool], list[list[BindingPlusScopeEntry]]] = {}
-        for rule in rule_set:
-            same_scope_required = bool(rule.get("same_scope_required", True))
-            same_project_required = bool(rule.get("same_project_required", False))
-            group_key = (same_scope_required, same_project_required)
-            grouped_entries = grouped_entries_by_rule_shape.get(group_key)
-            if grouped_entries is None:
-                groups: dict[tuple[str, str, str, str, str], list[BindingPlusScopeEntry]] = defaultdict(list)
-                for entry in entries:
-                    groups[
-                        (
-                            entry.principal_id,
-                            entry.effective_scope_name if same_scope_required else "",
-                            entry.effective_scope_type if same_scope_required else "",
-                            entry.condition_option_id,
-                            entry.project_id if same_project_required else "",
-                        )
-                    ].append(entry)
-                grouped_entries = list(groups.values())
-                grouped_entries_by_rule_shape[group_key] = grouped_entries
-            for group_entries in grouped_entries:
-                matches = _matches_for_group(rule, group_entries)
-                for match in matches:
-                    contributors: list[BindingPlusScopeEntry] = list(match.get("contributors") or [])
-                    if not contributors:
-                        continue
-                    matched_permissions = set(match.get("matched_permissions") or ())
-                    matched_roles = {entry.role_name for entry in contributors}
-                    contributor_permission_map = _normalize_binding_permission_map(match.get("contributor_permission_map"))
-                    evidence_bindings = sorted(set(entry.binding_composite_id for entry in contributors)) or sorted(contributor_permission_map.keys())
-                    emission_mode = str(match.get("emission_mode") or "binding").strip().lower()
-                    emission_mode = emission_mode if emission_mode in {"binding", "combo"} else "binding"
-                    events.append(
-                        {
-                            "rule_name": str(rule.get("name") or ""),
-                            "rule_description": str(rule.get("description") or "").strip(),
-                            "edge_type": str(rule.get("edge_type") or "POLICY_BINDINGS"),
-                            "target_selector": rule.get("target_selector") or {},
-                            "contributors": contributors,
-                            "matched_permissions": matched_permissions,
-                            "matched_roles": matched_roles,
-                            "evidence_bindings": evidence_bindings,
-                            "combine_across_bindings": bool(match.get("combine_across_bindings", False)),
-                            "emission_mode": emission_mode,
-                            "contributor_permission_map": contributor_permission_map,
-                            "matched_group_contributors": {
-                                str(group_id): _normalized_token_list(binding_ids)
-                                for group_id, binding_ids in (
-                                    (match.get("matched_group_contributors") or {}).items()
-                                    if isinstance(match.get("matched_group_contributors"), dict)
-                                    else ()
-                                )
-                            },
-                            "matched_group_permissions": {
-                                str(group_id): _normalized_token_list(permissions)
-                                for group_id, permissions in (
-                                    (match.get("matched_group_permissions") or {}).items()
-                                    if isinstance(match.get("matched_group_permissions"), dict)
-                                    else ()
-                                )
-                            },
-                            "requires_groups": list(rule.get("requires_groups") or []),
-                            "multi_permission_type": str(rule.get("multi_permission_type") or "simple").strip().lower() or "simple",
-                            "combo_hop": rule.get("combo_hop") or {},
-                            "targets_from_permissions": set(rule.get("targets_from_permissions") or ()),
-                            "privilege_escalation": True,
-                        }
-                    )
-        return events
-
-    def _collect_owner_baseline_events() -> list[dict[str, Any]]:
-        """
-        Always emit ROLE_OWNER edges from owner grants to their bound target
-        resource, even when no dangerous-rule match exists.
-        """
-        owner_rule = dict(_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES.get("roles/owner") or {})
-        owner_edge_type = str(owner_rule.get("edge_type") or "ROLE_OWNER").strip() or "ROLE_OWNER"
-        owner_description = str(owner_rule.get("description") or "").strip()
-        owner_entries = [entry for entry in entries if str(entry.role_name or "").strip() == "roles/owner"]
-        return [
-            {
-                "rule_name": owner_edge_type,
-                "rule_description": owner_description,
-                "edge_type": owner_edge_type,
-                "target_selector": {},
-                "contributors": [entry],
-                "matched_permissions": set(),
-                "matched_roles": {entry.role_name},
-                "evidence_bindings": [entry.binding_composite_id],
-                "combine_across_bindings": False,
-                "emission_mode": "binding",
-                "contributor_permission_map": {entry.binding_composite_id: []},
-                "matched_group_contributors": {},
-                "matched_group_permissions": {},
-                "requires_groups": [],
-                "multi_permission_type": "simple",
-                "combo_hop": {},
-                "targets_from_permissions": set(),
-                "privilege_escalation": False,
-                "scope_only": True,
-            }
-            for entry in owner_entries
-        ]
-
-    dangerous_events = _collect_rule_events(rules)
-    owner_baseline_events = _collect_owner_baseline_events()
+    dangerous_events = collect_rule_events(
+        entries=entries,
+        rules=rules,
+        matches_for_group=_matches_for_group,
+        normalize_binding_permission_map=_normalize_binding_permission_map,
+        normalized_token_list=normalized_token_list,
+    )
+    owner_baseline_events = collect_owner_baseline_events(
+        entries=entries,
+        collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
+    )
     all_events = list(dangerous_events) + list(owner_baseline_events)
 
     bindings_with_dangerous_edges: set[str] = {
@@ -1950,9 +1861,10 @@ def _emit_iam_binding_edges_from_entries(
         entry.binding_composite_id for entry in entries if str(entry.role_name or "").strip() == "roles/owner"
     }
     all_binding_ids = {entry.binding_composite_id for entry in entries}
-    bindings_to_emit = set(all_binding_ids) if include_all else (set(bindings_with_dangerous_edges) | set(owner_grants))
+    bindings_to_emit = all_binding_ids if include_all else (bindings_with_dangerous_edges | owner_grants)
 
     emitted_bindings: set[str] = set()
+    bindings_with_direct_dangerous_edges: set[str] = set()
     for entry in entries:
         if entry.binding_composite_id not in bindings_to_emit or entry.binding_composite_id in emitted_bindings:
             continue
@@ -1961,7 +1873,7 @@ def _emit_iam_binding_edges_from_entries(
             entry=entry,
             privilege_escalation=entry.binding_composite_id in bindings_with_dangerous_edges,
         )
-        subject_state = _ensure_subject_state(entry)
+        subject_state = ensure_subject_state(role_subject_state, entry)
         binding_state = subject_state["bindings"].get(entry.binding_composite_id)
         if binding_state is not None:
             binding_state["privilege_escalation"] = bool(
@@ -1971,80 +1883,7 @@ def _emit_iam_binding_edges_from_entries(
 
     rule_match_records: list[dict[str, Any]] = []
     combo_rule_match_records: list[dict[str, Any]] = []
-    dangerous_edges_emitted = 0
     emitted_combo_bindings: set[str] = set()
-
-    def _record_destination(
-        *,
-        entry: BindingPlusScopeEntry,
-        edge_type: str,
-        rule_name: str,
-        rule_description: str,
-        matched_permissions: Iterable[str],
-        evidence_bindings: Iterable[str],
-        target_id: str,
-        target_name: str,
-        target_type: str,
-        privilege_escalation: bool,
-    ) -> None:
-        subject_state = _ensure_subject_state(entry)
-        binding_state = subject_state["bindings"].get(entry.binding_composite_id)
-        if binding_state is not None:
-            binding_state["privilege_escalation"] = bool(binding_state["privilege_escalation"] or privilege_escalation)
-        dest_key = (target_id, edge_type, entry.condition_option_id)
-        destination = subject_state["destinations"].setdefault(
-            dest_key,
-            {
-                "target_node_id": target_id,
-                "target_resource_id": target_name,
-                "target_resource_type": target_type,
-                "effective_scope_id": entry.effective_scope_name,
-                "effective_scope_type": entry.effective_scope_type,
-                "effective_scope_display": entry.effective_scope_display,
-                "project_id": entry.project_id,
-                "inherited": False,
-                "conditional": False,
-                "condition_option_ids": set(),
-                "condition_hashes": set(),
-                "condition_services": set(),
-                "condition_resource_types": set(),
-                "condition_name_prefixes": set(),
-                "condition_name_equals": set(),
-                "edge_types": set(),
-                "rule_names": set(),
-                "rule_descriptions": set(),
-                "matched_permissions": set(),
-                "evidence_bindings": set(),
-                "attached_scope_ids": set(),
-                "attached_scope_types": set(),
-                "sources": set(),
-                "privilege_escalation": False,
-            },
-        )
-        destination["inherited"] = bool(destination["inherited"] or entry.inherited)
-        destination["conditional"] = bool(destination["conditional"] or entry.conditional)
-        destination["privilege_escalation"] = bool(destination["privilege_escalation"] or privilege_escalation)
-        if entry.condition_option_id:
-            destination["condition_option_ids"].add(entry.condition_option_id)
-        if entry.condition_hash:
-            destination["condition_hashes"].add(entry.condition_hash)
-        destination["condition_services"].update(entry.condition_services)
-        destination["condition_resource_types"].update(entry.condition_resource_types)
-        destination["condition_name_prefixes"].update(entry.condition_name_prefixes)
-        destination["condition_name_equals"].update(entry.condition_name_equals)
-        destination["edge_types"].add(str(edge_type or "").strip())
-        destination["rule_names"].add(str(rule_name or "").strip())
-        if str(rule_description or "").strip():
-            destination["rule_descriptions"].add(str(rule_description).strip())
-        destination["matched_permissions"].update(
-            token for permission in (matched_permissions or ()) if (token := str(permission or "").strip())
-        )
-        destination["evidence_bindings"].update(
-            token for binding_id in (evidence_bindings or ()) if (token := str(binding_id or "").strip())
-        )
-        destination["attached_scope_ids"].add(entry.attached_scope_name)
-        destination["attached_scope_types"].add(entry.attached_scope_type)
-        destination["sources"].add(entry.source)
 
     def _emit_events(events: list[dict[str, Any]]) -> int:
         emitted_dangerous = 0
@@ -2072,7 +1911,7 @@ def _emit_iam_binding_edges_from_entries(
                 multi_permission_type = "simple"
             matched_group_contributors_raw = event.get("matched_group_contributors") or {}
             matched_group_contributors = {
-                str(group_id): _normalized_token_list(binding_ids)
+                str(group_id): normalized_token_list(binding_ids)
                 for group_id, binding_ids in (
                     matched_group_contributors_raw.items() if isinstance(matched_group_contributors_raw, dict) else ()
                 )
@@ -2113,7 +1952,8 @@ def _emit_iam_binding_edges_from_entries(
                 )
                 if not target_id:
                     return 0
-                _record_destination(
+                record_destination(
+                    role_subject_state=role_subject_state,
                     entry=contributor,
                     edge_type=emitted_edge_type or edge_type,
                     rule_name=rule_name,
@@ -2125,6 +1965,9 @@ def _emit_iam_binding_edges_from_entries(
                     target_type=str(target.get("resource_type") or "").strip(),
                     privilege_escalation=privilege_escalation,
                 )
+                resolved_edge_type = str(emitted_edge_type or edge_type).strip()
+                if privilege_escalation or resolved_edge_type in {"ROLE_OWNER", "ROLE_EDITOR"}:
+                    bindings_with_direct_dangerous_edges.add(contributor.binding_composite_id)
                 return 1 if added else 0
 
             def _collect_targets_for_contributor(
@@ -2175,7 +2018,7 @@ def _emit_iam_binding_edges_from_entries(
 
             def _contributors_for_group_ids(group_ids: Iterable[str]) -> list[BindingPlusScopeEntry]:
                 selected: dict[str, BindingPlusScopeEntry] = {}
-                for group_id in _normalized_token_list(group_ids):
+                for group_id in normalized_token_list(group_ids):
                     for binding_id in matched_group_contributors.get(group_id, []):
                         contributor = contributors_by_binding_id.get(binding_id)
                         if contributor is None:
@@ -2220,7 +2063,7 @@ def _emit_iam_binding_edges_from_entries(
                         if hop_mode not in {"capability", "resource"}:
                             hop_mode = "capability"
                         from_groups = set(
-                            _normalized_token_list(
+                            normalized_token_list(
                                 raw_hop.get("from_groups")
                                 or raw_hop.get("from_group")
                                 or raw_hop.get("intermediate_from_group")
@@ -2252,7 +2095,7 @@ def _emit_iam_binding_edges_from_entries(
                         "edge_from_subject": edge_from_subject,
                         "node_mode": hop_mode,
                         "from_groups": set(
-                            _normalized_token_list(
+                            normalized_token_list(
                                 combo_hop_config.get("from_groups")
                                 or combo_hop_config.get("intermediate_from_group")
                                 or []
@@ -2273,40 +2116,53 @@ def _emit_iam_binding_edges_from_entries(
                     }
                 ]
 
-            rule_match_records.append(
-                {
-                    "rule_name": rule_name,
-                    "rule_description": rule_description,
-                    "edge_type": edge_type,
-                    "target_selector": selector,
-                    "principal_ids": _normalized_token_list(entry.principal_id for entry in contributors),
-                    "effective_scope_ids": _normalized_token_list(entry.effective_scope_name for entry in contributors),
-                    "effective_scope_types": _normalized_token_list(entry.effective_scope_type for entry in contributors),
-                    "matched_permissions": _normalized_token_list(matched_permissions),
-                    "matched_roles": _normalized_token_list(matched_roles),
-                    "evidence_bindings": _normalized_token_list(evidence_bindings),
-                    "combine_across_bindings": combine_across_bindings,
-                    "emission_mode": emission_mode,
-                    "contributor_permission_map": contributor_permission_map,
-                    "matched_group_contributors": matched_group_contributors,
-                    "targets_from_permissions": _normalized_token_list(targets_from_permissions),
-                    "privilege_escalation": privilege_escalation,
-                }
-            )
-
             contributors_in_scope: list[tuple[BindingPlusScopeEntry, set[str]]] = []
             if privilege_escalation and isinstance(combo_hop, dict) and combo_hop:
                 for contributor in contributors:
                     if contributor.binding_composite_id not in bindings_to_emit:
                         continue
                     contributing_perms = set(
-                        _normalized_token_list(contributor_permission_map.get(contributor.binding_composite_id) or [])
+                        normalized_token_list(contributor_permission_map.get(contributor.binding_composite_id) or [])
                     )
                     if not contributing_perms:
                         contributing_perms = set(contributor.permissions)
                     if targets_from_permissions and not contributing_perms.intersection(targets_from_permissions):
                         continue
                     contributors_in_scope.append((contributor, contributing_perms))
+
+            # Reduce combo-node churn:
+            # if all contributors are the same role, emit via the simple-binding
+            # path instead of creating a dedicated combo binding node.
+            if emission_mode == "combo" and privilege_escalation:
+                active_contributors = [contributor for contributor, _ in contributors_in_scope] or list(contributors)
+                distinct_roles = {
+                    str(contributor.role_name or "").strip()
+                    for contributor in active_contributors
+                    if isinstance(contributor, BindingPlusScopeEntry) and str(contributor.role_name or "").strip()
+                }
+                if len(distinct_roles) <= 1:
+                    emission_mode = "binding"
+
+            rule_match_records.append(
+                {
+                    "rule_name": rule_name,
+                    "rule_description": rule_description,
+                    "edge_type": edge_type,
+                    "target_selector": selector,
+                    "principal_ids": normalized_token_list(entry.principal_id for entry in contributors),
+                    "effective_scope_ids": normalized_token_list(entry.effective_scope_name for entry in contributors),
+                    "effective_scope_types": normalized_token_list(entry.effective_scope_type for entry in contributors),
+                    "matched_permissions": normalized_token_list(matched_permissions),
+                    "matched_roles": normalized_token_list(matched_roles),
+                    "evidence_bindings": normalized_token_list(evidence_bindings),
+                    "combine_across_bindings": combine_across_bindings,
+                    "emission_mode": emission_mode,
+                    "contributor_permission_map": contributor_permission_map,
+                    "matched_group_contributors": matched_group_contributors,
+                    "targets_from_permissions": normalized_token_list(targets_from_permissions),
+                    "privilege_escalation": privilege_escalation,
+                }
+            )
 
             if emission_mode == "combo" and privilege_escalation:
                 if not contributors:
@@ -2321,22 +2177,22 @@ def _emit_iam_binding_edges_from_entries(
                     key=lambda item: (str(item.binding_composite_id or ""), str(item.attached_scope_name or ""), str(item.role_name or "")),
                 )[0]
                 scope_info = _combo_scope_info(contributors)
-                condition_hashes = _normalized_token_list(
+                condition_hashes = normalized_token_list(
                     str(entry.condition_hash or "").strip()
                     for entry in contributors
                     if str(entry.condition_hash or "").strip()
                 )
-                condition_summaries = _normalized_token_list(
-                    str(entry.condition_summary or entry.condition_option_summary or "").strip()
+                condition_summaries = normalized_token_list(
+                    str((entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary) or "").strip()
                     for entry in contributors
-                    if str(entry.condition_summary or entry.condition_option_summary or "").strip()
+                    if str((entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary) or "").strip()
                 )
-                source_scope_ids = _normalized_token_list(
+                source_scope_ids = normalized_token_list(
                     str(entry.source_scope_name or "").strip()
                     for entry in contributors
                     if str(entry.source_scope_name or "").strip()
                 )
-                source_scope_types = _normalized_token_list(
+                source_scope_types = normalized_token_list(
                     str(entry.source_scope_type or "").strip()
                     for entry in contributors
                     if str(entry.source_scope_type or "").strip()
@@ -2371,9 +2227,20 @@ def _emit_iam_binding_edges_from_entries(
                     )
                     emitted_combo_bindings.add(combo_binding_id)
 
+                # Make combo contribution explicit: simple binding -> combo binding.
+                for contributor in contributors:
+                    builder.add_edge(
+                        contributor.binding_composite_id,
+                        combo_binding_id,
+                        "CONTRIBUTES_TO_COMBO",
+                        rule_name=rule_name,
+                        rule_description=str(rule_description or "").strip(),
+                        privilege_escalation=True,
+                    )
+
                 combo_hops = _normalized_combo_hops(combo_hop if isinstance(combo_hop, dict) else {})
                 combo_target_edge_type = str(combo_hop.get("edge_to_target") or edge_type).strip() or edge_type
-                target_group_ids = _normalized_token_list(combo_hop.get("target_from_groups") or [])
+                target_group_ids = normalized_token_list(combo_hop.get("target_from_groups") or [])
                 group_target_contributors = _contributors_for_group_ids(target_group_ids)
                 target_source_contributors = (
                     group_target_contributors
@@ -2388,7 +2255,7 @@ def _emit_iam_binding_edges_from_entries(
                     hop_mode = str(hop.get("node_mode") or "capability").strip().lower()
                     if hop_mode not in {"capability", "resource"}:
                         hop_mode = "capability"
-                    hop_from_groups = set(_normalized_token_list(hop.get("from_groups") or []))
+                    hop_from_groups = set(normalized_token_list(hop.get("from_groups") or []))
                     hop_group_contributors = _contributors_for_group_ids(hop_from_groups)
                     hop_contributors = hop_group_contributors or target_source_contributors or list(contributors)
                     default_hop_group_selector = {}
@@ -2405,11 +2272,12 @@ def _emit_iam_binding_edges_from_entries(
                     if hop_mode == "capability":
                         for source_node_id in sorted(current_source_node_ids):
                             capability_hop_id = str(hop.get("id") or f"hop_{hop_index + 1}").strip() or f"hop_{hop_index + 1}"
-                            capability_node_id = (
-                                f"{combo_binding_id}:capability:{str(rule_name or '').strip()}"
-                                if len(combo_hops) == 1 and hop_index == 0
-                                else f"{combo_binding_id}:capability:{str(rule_name or '').strip()}:{capability_hop_id}"
+                            scope_token = binding_scope_token(
+                                str(scope_info.get("effective_scope_type") or "resource").strip(),
+                                str(scope_info.get("effective_scope_id") or "").strip(),
+                                project_id=str(scope_info.get("effective_scope_project_id") or "").strip(),
                             )
+                            capability_node_id = f"capability:{str(rule_name or '').strip()}@{scope_token}:{capability_hop_id}"
                             node_label = str(hop.get("node_label") or rule_name).strip() or rule_name
                             node_type = str(hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability"
                             builder.add_node(
@@ -2434,7 +2302,7 @@ def _emit_iam_binding_edges_from_entries(
                                 match_mode="combo_hop",
                                 privilege_escalation=True,
                             )
-                            hop_edge_seen = hop_edge_seen or (edge_key in builder.edge_map)
+                            hop_edge_seen = True
                             if not existed:
                                 combo_branch_emitted += 1
                             next_source_node_ids.add(capability_node_id)
@@ -2566,16 +2434,16 @@ def _emit_iam_binding_edges_from_entries(
                                 "rule_description": rule_description,
                                 "edge_type": combo_target_edge_type,
                                 "principal_id": subject_entry.principal_id,
-                                "principal_member": subject_entry.principal_member,
+                                "principal_member": subject_entry.principal_id,
                                 "effective_scope_id": str(scope_info.get("effective_scope_id") or ""),
                                 "effective_scope_type": str(scope_info.get("effective_scope_type") or ""),
-                                "effective_scope_ids": _normalized_token_list(scope_info.get("effective_scope_ids")),
+                                "effective_scope_ids": normalized_token_list(scope_info.get("effective_scope_ids")),
                                 "target_node_id": target_id,
                                 "target_resource_id": target_name,
                                 "target_resource_type": str(target.get("resource_type") or "").strip(),
-                                "contributing_binding_ids": _normalized_token_list(evidence_bindings),
-                                "contributing_roles": _normalized_token_list(matched_roles),
-                                "contributing_permissions": _normalized_token_list(matched_permissions),
+                                "contributing_binding_ids": normalized_token_list(evidence_bindings),
+                                "contributing_roles": normalized_token_list(matched_roles),
+                                "contributing_permissions": normalized_token_list(matched_permissions),
                                 "contributing_binding_permission_map": contributor_permission_map,
                                 "condition_hashes": condition_hashes,
                                 "inherited": inherited,
@@ -2588,15 +2456,26 @@ def _emit_iam_binding_edges_from_entries(
                     continue
 
                 for pending_record in pending_destination_records:
-                    _record_destination(**pending_record)
+                    record_destination(role_subject_state=role_subject_state, **pending_record)
                 combo_rule_match_records.extend(pending_combo_records)
                 emitted_dangerous += combo_branch_emitted
                 continue
 
             if emission_mode == "binding" and privilege_escalation and isinstance(combo_hop, dict) and combo_hop:
-                hop_mode = str(combo_hop.get("intermediate_node_mode") or "capability").strip().lower()
+                normalized_binding_hops = _normalized_combo_hops(combo_hop)
+                primary_hop = normalized_binding_hops[0] if normalized_binding_hops else {}
+                hop_mode = str(primary_hop.get("node_mode") or combo_hop.get("intermediate_node_mode") or "capability").strip().lower()
                 if hop_mode not in {"capability", "resource"}:
                     hop_mode = "capability"
+                target_group_ids = normalized_token_list(combo_hop.get("target_from_groups") or [])
+                default_target_group_selector = {}
+                if len(target_group_ids) == 1:
+                    default_target_group_selector = _selector_for_group(target_group_ids[0])
+                resolved_target_selector = (
+                    combo_hop.get("target_selector")
+                    if isinstance(combo_hop.get("target_selector"), dict)
+                    else {}
+                ) or default_target_group_selector or selector
                 for contributor, _ in contributors_in_scope:
                     mutation_snapshot = _snapshot_graph_mutation_state()
                     binding_branch_emitted = 0
@@ -2604,16 +2483,19 @@ def _emit_iam_binding_edges_from_entries(
                     pending_destination_records: list[dict[str, Any]] = []
 
                     scope_info = _combo_scope_info([contributor])
-                    condition_hashes = _normalized_token_list(
+                    condition_hashes = normalized_token_list(
                         [str(contributor.condition_hash or "").strip()] if str(contributor.condition_hash or "").strip() else []
                     )
-                    condition_summaries = _normalized_token_list(
+                    condition_summaries = normalized_token_list(
                         [
-                            str(contributor.condition_summary or contributor.condition_option_summary or "").strip()
+                            str(
+                                (contributor.condition_expr_raw[:240] if contributor.condition_expr_raw else contributor.condition_option_summary)
+                                or ""
+                            ).strip()
                         ]
                     )
-                    source_scope_ids = _normalized_token_list([str(contributor.source_scope_name or "").strip()])
-                    source_scope_types = _normalized_token_list([str(contributor.source_scope_type or "").strip()])
+                    source_scope_ids = normalized_token_list([str(contributor.source_scope_name or "").strip()])
+                    source_scope_types = normalized_token_list([str(contributor.source_scope_type or "").strip()])
 
                     combo_target_edge_type = str(combo_hop.get("edge_to_target") or edge_type).strip() or edge_type
                     contribution_map_for_binding = {
@@ -2622,15 +2504,19 @@ def _emit_iam_binding_edges_from_entries(
 
                     if hop_mode == "resource":
                         intermediate_selector = (
-                            combo_hop.get("intermediate_selector")
-                            if isinstance(combo_hop.get("intermediate_selector"), dict)
-                            else {}
+                            primary_hop.get("selector")
+                            if isinstance(primary_hop.get("selector"), dict)
+                            else (
+                                combo_hop.get("intermediate_selector")
+                                if isinstance(combo_hop.get("intermediate_selector"), dict)
+                                else {}
+                            )
                         )
                         hop_target_selector = (
                             combo_hop.get("target_selector")
                             if isinstance(combo_hop.get("target_selector"), dict)
                             else {}
-                        ) or selector
+                        ) or resolved_target_selector
                         intermediate_targets = _collect_targets_for_contributor(
                             contributor,
                             include_fanout=not scope_only,
@@ -2666,6 +2552,7 @@ def _emit_iam_binding_edges_from_entries(
                             )
                             if intermediate_target_id:
                                 intermediate_source_ids.add(intermediate_target_id)
+                                bindings_with_direct_dangerous_edges.add(contributor.binding_composite_id)
                             if added:
                                 binding_branch_emitted += 1
                         if not intermediate_source_ids:
@@ -2726,7 +2613,7 @@ def _emit_iam_binding_edges_from_entries(
                             _rollback_graph_mutation_state(mutation_snapshot)
                             continue
                         for pending_record in pending_destination_records:
-                            _record_destination(**pending_record)
+                            record_destination(role_subject_state=role_subject_state, **pending_record)
                         emitted_dangerous += binding_branch_emitted
                         continue
 
@@ -2736,11 +2623,17 @@ def _emit_iam_binding_edges_from_entries(
                         rule_name=rule_name,
                         rule_description=rule_description,
                         scope_info=scope_info,
-                        combo_hop=combo_hop,
+                        combo_hop={
+                            **combo_hop,
+                            "edge_from_subject": str(primary_hop.get("edge_from_subject") or combo_hop.get("edge_from_subject") or ""),
+                            "id": str(primary_hop.get("id") or combo_hop.get("id") or "hop_1"),
+                            "node_type": str(primary_hop.get("node_type") or combo_hop.get("node_type") or "GCPIamCapability"),
+                            "node_label": str(primary_hop.get("node_label") or combo_hop.get("node_label") or rule_name),
+                        },
                     )
                     if hop_added:
                         binding_branch_emitted += 1
-                    hop_edge_type = str(combo_hop.get("edge_from_subject") or "").strip()
+                    hop_edge_type = str(primary_hop.get("edge_from_subject") or combo_hop.get("edge_from_subject") or "").strip()
                     hop_edge_present = bool(
                         hop_edge_type
                         and (contributor.binding_composite_id, hop_edge_type, combo_target_source_id) in builder.edge_map
@@ -2752,11 +2645,7 @@ def _emit_iam_binding_edges_from_entries(
                     grant_targets = _collect_targets_for_contributor(
                         contributor,
                         include_fanout=not scope_only,
-                        selector_override=(
-                            combo_hop.get("target_selector")
-                            if isinstance(combo_hop.get("target_selector"), dict)
-                            else {}
-                        ) or selector,
+                        selector_override=resolved_target_selector,
                     )
 
                     for target in grant_targets.values():
@@ -2785,6 +2674,7 @@ def _emit_iam_binding_edges_from_entries(
                         if not target_id:
                             continue
                         final_target_edge_seen = True
+                        bindings_with_direct_dangerous_edges.add(contributor.binding_composite_id)
                         if not added:
                             continue
                         pending_destination_records.append(
@@ -2806,7 +2696,7 @@ def _emit_iam_binding_edges_from_entries(
                         _rollback_graph_mutation_state(mutation_snapshot)
                         continue
                     for pending_record in pending_destination_records:
-                        _record_destination(**pending_record)
+                        record_destination(role_subject_state=role_subject_state, **pending_record)
                     emitted_dangerous += binding_branch_emitted
                 continue
 
@@ -2832,124 +2722,33 @@ def _emit_iam_binding_edges_from_entries(
     dangerous_edges_emitted = _emit_events(all_events)
     combo_bindings_emitted = len(emitted_combo_bindings)
 
-    serialized_roles: dict[str, Any] = {}
-    flat_role_subject_destinations: list[dict[str, Any]] = []
-    conditional_paths: list[dict[str, Any]] = []
-    seen_conditional_paths: set[tuple[str, str, str, str]] = set()
-    destination_list_fields = (
-        "condition_option_ids",
-        "condition_hashes",
-        "condition_services",
-        "condition_resource_types",
-        "condition_name_prefixes",
-        "condition_name_equals",
-        "edge_types",
-        "rule_names",
-        "rule_descriptions",
-        "matched_permissions",
-        "evidence_bindings",
-        "attached_scope_ids",
-        "attached_scope_types",
-        "sources",
+    # Only mark simple binding nodes as privilege-escalation when they emit
+    # direct dangerous edges from that binding node (not merely combo contribution).
+    for binding_id in emitted_bindings:
+        node = builder.node_map.get(binding_id)
+        if node is None:
+            continue
+        props = dict(node.properties)
+        props["privilege_escalation"] = binding_id in bindings_with_direct_dangerous_edges
+        builder.node_map[binding_id] = OpenGraphNode(node_id=node.node_id, node_type=node.node_type, properties=props)
+    for role_state in role_subject_state.values():
+        if not isinstance(role_state, dict):
+            continue
+        for subject_state in role_state.values():
+            if not isinstance(subject_state, dict):
+                continue
+            binding_states = subject_state.get("bindings")
+            if not isinstance(binding_states, dict):
+                continue
+            for binding_id, binding_state in binding_states.items():
+                if not isinstance(binding_state, dict):
+                    continue
+                binding_state["privilege_escalation"] = binding_id in bindings_with_direct_dangerous_edges
+
+    serialized_roles, flat_role_subject_destinations, conditional_paths = serialize_role_subject_state(
+        role_subject_state=role_subject_state,
+        normalized_token_list=normalized_token_list,
     )
-    conditional_path_list_fields = (
-        "edge_types",
-        "rule_names",
-        "rule_descriptions",
-        "condition_option_ids",
-        "condition_hashes",
-        "condition_services",
-        "condition_resource_types",
-        "condition_name_prefixes",
-        "condition_name_equals",
-    )
-    for role_name in sorted(role_subject_state.keys()):
-        subjects = role_subject_state.get(role_name, {})
-        serialized_subjects: dict[str, Any] = {}
-        for principal_id in sorted(subjects.keys()):
-            subject_bucket = subjects.get(principal_id, {})
-            destinations = subject_bucket.get("destinations", {})
-            serialized_destinations: list[dict[str, Any]] = []
-            for dest_key in sorted(destinations.keys(), key=lambda value: (str(value[1]), str(value[0]), str(value[2]))):
-                destination = destinations.get(dest_key) or {}
-                serialized_destination = {
-                    "effective_scope_id": str(destination.get("effective_scope_id") or ""),
-                    "effective_scope_type": str(destination.get("effective_scope_type") or ""),
-                    "effective_scope_display": str(destination.get("effective_scope_display") or ""),
-                    "project_id": str(destination.get("project_id") or ""),
-                    "inherited": bool(destination.get("inherited", False)),
-                    "conditional": bool(destination.get("conditional", False)),
-                    "target_node_id": str(destination.get("target_node_id") or ""),
-                    "target_resource_id": str(destination.get("target_resource_id") or ""),
-                    "target_resource_type": str(destination.get("target_resource_type") or ""),
-                    "privilege_escalation": bool(destination.get("privilege_escalation", False)),
-                }
-                serialized_destination.update(
-                    {
-                        field_name: _normalized_token_list(destination.get(field_name))
-                        for field_name in destination_list_fields
-                    }
-                )
-                serialized_destinations.append(serialized_destination)
-                flat_role_subject_destinations.append(
-                    {
-                        "role_name": role_name,
-                        "principal_id": str(subject_bucket.get("principal_id") or principal_id),
-                        "principal_member": str(subject_bucket.get("principal_member") or ""),
-                        **serialized_destination,
-                    }
-                )
-                if bool(serialized_destination.get("conditional")):
-                    evidence_bindings = list(serialized_destination.get("evidence_bindings") or [])
-                    if not evidence_bindings:
-                        evidence_bindings = [""]
-                    for binding_id in evidence_bindings:
-                        dedupe_key = (
-                            str(subject_bucket.get("principal_id") or principal_id),
-                            str(binding_id or ""),
-                            str(serialized_destination.get("target_resource_id") or ""),
-                            ",".join(serialized_destination.get("condition_option_ids") or []),
-                        )
-                        if dedupe_key in seen_conditional_paths:
-                            continue
-                        seen_conditional_paths.add(dedupe_key)
-                        conditional_path = {
-                            "principal_id": str(subject_bucket.get("principal_id") or principal_id),
-                            "principal_member": str(subject_bucket.get("principal_member") or ""),
-                            "role_name": role_name,
-                            "binding_id": str(binding_id or ""),
-                            "target_resource_id": str(serialized_destination.get("target_resource_id") or ""),
-                            "target_resource_type": str(serialized_destination.get("target_resource_type") or ""),
-                            "effective_scope_id": str(serialized_destination.get("effective_scope_id") or ""),
-                            "effective_scope_type": str(serialized_destination.get("effective_scope_type") or ""),
-                        }
-                        conditional_path.update(
-                            {
-                                field_name: list(serialized_destination.get(field_name) or [])
-                                for field_name in conditional_path_list_fields
-                            }
-                        )
-                        conditional_paths.append(conditional_path)
-            serialized_subjects[principal_id] = {
-                "principal_id": str(subject_bucket.get("principal_id") or principal_id),
-                "principal_member": str(subject_bucket.get("principal_member") or ""),
-                "role_name": role_name,
-                "role_permissions": _normalized_token_list(subject_bucket.get("role_permissions")),
-                "binding_ids": _normalized_token_list(subject_bucket.get("binding_ids")),
-                "bindings": [
-                    {
-                        key: (_normalized_token_list(value) if isinstance(value, set) else value)
-                        for key, value in binding.items()
-                    }
-                    for binding in (
-                        subject_bucket.get("bindings", {}).get(binding_id)
-                        for binding_id in _normalized_token_list(subject_bucket.get("binding_ids"))
-                    )
-                    if isinstance(binding, dict)
-                ],
-                "destinations": serialized_destinations,
-            }
-        serialized_roles[role_name] = {"subjects": serialized_subjects}
 
     return {
         "entries_total": len(entries),
@@ -2959,10 +2758,10 @@ def _emit_iam_binding_edges_from_entries(
         "combo_bindings_emitted": combo_bindings_emitted,
         "bindings_composite_total": len(all_binding_ids),
         "bindings_composite_emitted": len(bindings_to_emit),
-        "bindings_composite_with_dangerous_edges": len(bindings_with_dangerous_edges),
+        "bindings_composite_with_dangerous_edges": len(bindings_with_direct_dangerous_edges),
         "bindings_total": len(all_binding_ids),
         "bindings_emitted": len(bindings_to_emit),
-        "bindings_with_dangerous_edges": len(bindings_with_dangerous_edges),
+        "bindings_with_dangerous_edges": len(bindings_with_direct_dangerous_edges),
         "aggregation": {
             "roles": serialized_roles,
             "rule_matches": rule_match_records,

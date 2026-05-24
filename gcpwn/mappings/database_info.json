@@ -779,7 +779,9 @@
             "customer_id",
             "group_name",
             "group_email",
+            "group_member",
             "member_email",
+            "member",
             "member_type",
             "roles",
             "transitive",
@@ -2336,6 +2338,18 @@
             "source_id",
             "destination_id",
             "edge_type"
+          ]
+        },
+        {
+          "table_name": "opengraph_ui_config",
+          "columns": [
+            "custom_nodes_token_id",
+            "custom_nodes_token_key",
+            "custom_nodes_url",
+            "auth_mode"
+          ],
+          "primary_keys": [
+            "custom_nodes_token_id"
           ]
         }
       ]

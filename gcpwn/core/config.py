@@ -15,6 +15,11 @@ class WorkspaceConfig:
     preferred_regions: list[str] | None = None
     preferred_zones: list[str] | None = None
     workspace_customer_id: str | None = None
+    bloodhound_custom_nodes_url: str | None = None
+    bloodhound_custom_node_auth_mode: str | None = None
+    bloodhound_custom_node_token_id: str | None = None
+    bloodhound_custom_node_token_key: str | None = None
+    bloodhound_custom_node_signatures: list[dict[str, str]] | None = None
 
     def __init__(self, json_data: str | None = None):
         self.std_output_format = "text"
@@ -22,6 +27,11 @@ class WorkspaceConfig:
         self.preferred_regions = None
         self.preferred_zones = None
         self.workspace_customer_id = None
+        self.bloodhound_custom_nodes_url = None
+        self.bloodhound_custom_node_auth_mode = None
+        self.bloodhound_custom_node_token_id = None
+        self.bloodhound_custom_node_token_key = None
+        self.bloodhound_custom_node_signatures = None
         if json_data:
             self.from_json(json_data)
 
@@ -34,6 +44,11 @@ class WorkspaceConfig:
         self.preferred_regions = data.get("preferred_regions")
         self.preferred_zones = data.get("preferred_zones")
         self.workspace_customer_id = data.get("workspace_customer_id")
+        self.bloodhound_custom_nodes_url = data.get("bloodhound_custom_nodes_url")
+        self.bloodhound_custom_node_auth_mode = data.get("bloodhound_custom_node_auth_mode")
+        self.bloodhound_custom_node_token_id = data.get("bloodhound_custom_node_token_id")
+        self.bloodhound_custom_node_token_key = data.get("bloodhound_custom_node_token_key")
+        self.bloodhound_custom_node_signatures = data.get("bloodhound_custom_node_signatures")
 
     def to_json_string(self) -> str:
         return json.dumps(
@@ -43,6 +58,11 @@ class WorkspaceConfig:
                 "preferred_regions": self.preferred_regions,
                 "preferred_zones": self.preferred_zones,
                 "workspace_customer_id": self.workspace_customer_id,
+                "bloodhound_custom_nodes_url": self.bloodhound_custom_nodes_url,
+                "bloodhound_custom_node_auth_mode": self.bloodhound_custom_node_auth_mode,
+                "bloodhound_custom_node_token_id": self.bloodhound_custom_node_token_id,
+                "bloodhound_custom_node_token_key": self.bloodhound_custom_node_token_key,
+                "bloodhound_custom_node_signatures": self.bloodhound_custom_node_signatures,
             }
         )
 

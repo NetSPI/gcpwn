@@ -142,6 +142,11 @@ def _split_member_credname_key(token: str) -> tuple[str, str] | None:
     return member, credname
 
 
+def split_member_credname_key(token: str) -> tuple[str, str] | None:
+    """Public helper used by OpenGraph inferred-permission stage."""
+    return _split_member_credname_key(token)
+
+
 def _iter_member_roles_from_policy(
     policy: dict[str, Any],
     *,
@@ -240,35 +245,19 @@ def _build_member_binding_index(
     # {
     #   "user:alice@example.com": {
     #     "project:projects/example-project@example-project": {
-    #       "direct_binding_records": [
+    #       "binding_records": [
     #         {
     #           "role_name": "roles/viewer",
     #           "condition": None,
     #           "attached_scope_type": "project",
     #           "attached_scope_name": "projects/example-project",
-    #           "project_id": "example-project"
+    #           "project_id": "example-project",
+    #           "record_origin": "direct"
     #         }
-    #       ],
-    #       "convenience_binding_records": [],
-    #       "inherited_binding_records": []
-    #     },
-    #     "computeinstance:projects/example-project/zones/us-central1-a/instances/web-01@example-project": {
-    #       "direct_binding_records": [
-    #         {
-    #           "role_name": "roles/compute.instanceAdmin.v1",
-    #           "condition": None,
-    #           "attached_scope_type": "computeinstance",
-    #           "attached_scope_name": "projects/example-project/zones/us-central1-a/instances/web-01",
-    #           "project_id": "example-project"
-    #         }
-    #       ],
-    #       "convenience_binding_records": [],
-    #       "inherited_binding_records": []
+    #       ]
     #     },
     #     "bucket:projects/_/buckets/example-artifacts@example-project": {
-    #       "direct_binding_records": [],
-    #       "convenience_binding_records": [],
-    #       "inherited_binding_records": [
+    #       "binding_records": [
     #         {
     #           "role_name": "roles/storage.objectViewer",
     #           "condition": None,
@@ -276,7 +265,8 @@ def _build_member_binding_index(
     #           "attached_scope_name": "projects/example-project",
     #           "project_id": "example-project",
     #           "inherited": True,
-    #           "inherited_from": "projects/example-project"
+    #           "inherited_from": "projects/example-project",
+    #           "record_origin": "inherited"
     #         }
     #       ]
     #     }
@@ -545,17 +535,21 @@ def _build_member_binding_index(
             continue
         member_out: dict[str, dict[str, Any]] = {}
         for resource_key, role_entry in resource_map.items():
-            record_map = {
-                key: [dict(record) for record in (role_entry.get(key) or []) if isinstance(record, dict)]
-                for key in (
-                    "direct_binding_records",
-                    "convenience_binding_records",
-                    "inherited_binding_records",
-                )
-            }
-            if not any(record_map.values()):
+            binding_records: list[dict[str, Any]] = []
+            for origin, key in (
+                ("direct", "direct_binding_records"),
+                ("convenience", "convenience_binding_records"),
+                ("inherited", "inherited_binding_records"),
+            ):
+                for record in (role_entry.get(key) or []):
+                    if not isinstance(record, dict):
+                        continue
+                    normalized_record = dict(record)
+                    normalized_record["record_origin"] = origin
+                    binding_records.append(normalized_record)
+            if not binding_records:
                 continue
-            member_out[resource_key] = record_map
+            member_out[resource_key] = {"binding_records": binding_records}
         if member_out:
             finalized[member_token] = member_out
     return finalized
@@ -688,14 +682,11 @@ def create_simplified_hierarchy_permissions(
     #   "member_binding_index": {
     #     "user:alice@example.com": {
     #       "project:projects/example-project@example-project": {
-    #         "direct_binding_records": [...],
-    #         "convenience_binding_records": [...],
-    #         "inherited_binding_records": [...]
-    #       },
-    #       "computeinstance:projects/example-project/zones/us-central1-a/instances/web-01@example-project": {
-    #         "direct_binding_records": [...],
-    #         "convenience_binding_records": [],
-    #         "inherited_binding_records": []
+    #         "binding_records": [
+    #           {"role_name": "...", "record_origin": "direct", ...},
+    #           {"role_name": "...", "record_origin": "convenience", ...},
+    #           {"role_name": "...", "record_origin": "inherited", ...}
+    #         ]
     #       }
     #     }
     #   },
@@ -730,14 +721,10 @@ def create_simplified_hierarchy_permissions(
       "member_binding_index": {
         "<normalized-member>": {
           "<resource_type>:<resource_name>@<project_id?>": {
-            "direct_binding_records": [
-              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id"}
-            ],
-            "convenience_binding_records": [
-              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id", "derived_from"}
-            ],
-            "inherited_binding_records": [
-              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id", "inherited", "inherited_from"}
+            "binding_records": [
+              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id", "record_origin"},
+              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id", "derived_from", "record_origin"},
+              {"role_name", "condition", "attached_scope_type", "attached_scope_name", "project_id", "inherited", "inherited_from", "record_origin"}
             ]
           }
         }

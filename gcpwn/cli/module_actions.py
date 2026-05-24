@@ -33,8 +33,15 @@ MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "enum_policy_bindings": (True, True, True),
     "process_iam_bindings": (True, True, True),
     "analyze_vulns": (True, True, True),
-    "enum_gcp_cloud_hound_data": (True, False, False),
+    "process_og_gcpwn_data": (True, False, False),
+    "process_og_node_color_images": (True, False, False),
     "enum_cloud_identity": (True, True, False),
+}
+
+UNAUTH_ALLOWED_MODULE_KEYS: set[str] = {
+    # OpenGraph local-processing / utility modules do not require live GCP API auth.
+    "process_og_gcpwn_data",
+    "process_og_node_color_images",
 }
 
 def _is_unknown_project_token(value: Any) -> bool:
@@ -132,8 +139,9 @@ def get_module_action(module_import_path: str) -> ModuleAction:
 
     key = str(module_import_path or "").replace("/", ".").split(".")[-1]
     run_once, use_context_project, accepts_project_flags = MODULE_POLICY_REGISTRY.get(key, DEFAULT_MODULE_POLICY)
+    requires_auth = key not in UNAUTH_ALLOWED_MODULE_KEYS
     return ModuleAction(
-        requires_auth=not _is_unauth_module(module_import_path),
+        requires_auth=requires_auth,
         run_once=run_once,
         use_context_project=use_context_project,
         accepts_project_flags=accepts_project_flags,

@@ -222,7 +222,12 @@ modules run process_iam_bindings
 # Build BloodHound-compatible graph JSON.
 # Import output.json into BloodHound CE:
 # https://bloodhound.specterops.io/get-started/quickstart/community-edition-quickstart
-modules run enum_gcp_cloud_hound_data --expand-inheritance --reset --out output.json
+modules run process_og_gcpwn_data --expand-inherited --reset --out output.json
+
+# Optional: push BloodHound custom node styling as a separate utility step.
+modules run process_og_node_color_images \
+  --push-custom-node-attributes-url http://127.0.0.1:8080/api/v2/custom-nodes \
+  --push-custom-node-attributes-token <BLOODHOUND_BEARER_TOKEN>
 ```
 
 ## Unauthenticated Run TLDR
@@ -241,12 +246,19 @@ python -m gcpwn --module unauth_apikey_gemini_exploit --api-key AIza...
 
 ## OpenGraph TLDR
 
-By default, the OpenGraph module only graphs edges and related resource edges tied to privilege escalation paths. The default OpenGraph escalation-rule allowlist lives in `gcpwn/mappings/og_privilege_escalation_paths.json`. Review the wiki for explanations of the available flags, but the best option is usually the following:
+By default, OpenGraph only graphs edges and related resource edges tied to privilege escalation paths. The default OpenGraph escalation-rule allowlist lives in `gcpwn/mappings/og_privilege_escalation_paths.json`. Review the wiki for explanations of the available flags, but the best option is usually the following:
 ```bash
-modules run enum_gcp_cloud_hound_data --expand-inheritance --reset --out Bloodhound_Output.json
+modules run process_og_gcpwn_data --expand-inherited --reset --out Bloodhound_Output.json
 ```
 
 ### Graphing Strategy
+
+OpenGraph module structure note:
+
+- User-callable OpenGraph entry modules live under `gcpwn/modules/opengraph/enumeration/`.
+- OpenGraph processing implementations live under `gcpwn/modules/opengraph/processing/`.
+- `process_og_gcpwn_data` is the primary graph generation/export module.
+- `process_og_node_color_images` is the dedicated utility module for pushing custom node color/icon metadata to BloodHound.
 
 You might notice edges go to `role@location` instead of going directly to the project. This preserves authorization fidelity in the graph. If User A has `compute.admin` on Project A and User B has `storage.admin` on Project A, drawing both users directly to Project A and then Project A to all resources would incorrectly imply both users can reach the same resources when User A can only get to compute and User B can only get to storage. The correct model is to route each user through their specific role binding node at that location, and only then fan out to resources that role can actually affect.
 
@@ -269,10 +281,10 @@ User B --> storage_admin@project:A --> Storage Resources in Project A
 Generate OpenGraph JSON:
 
 ```bash
-modules run enum_gcp_cloud_hound_data --out opengraph_output.json --reset [--include-all] [--expand-inherited] [--cond-eval]
+modules run process_og_gcpwn_data --out opengraph_output.json --reset [--include-all] [--expand-inherited] [--cond-eval]
 
 # Example
-(<staging-project-2>:ABC)> modules run enum_gcp_cloud_hound_data --expand-inherited --reset --out my_output.json
+(<staging-project-2>:ABC)> modules run process_og_gcpwn_data --expand-inherited --reset --out my_output.json
 [*] Step 1: users_groups (Users/Groups graph)
 [*] Completed users_groups: +92 nodes, +0 edges
 [*] Step 2: iam_bindings (IAM bindings graph)
@@ -314,6 +326,8 @@ modules run enum_gcp_cloud_hound_data --out opengraph_output.json --reset [--inc
 
 ```
 
+For node color/icon customization in BloodHound, see [OpenGraph Node Customize TLDR](#opengraph-node-customize-tldr) below.
+
 Optional flags:
 
 - `--include-all`: include broader relationship output that might not be a direct privilege-escalation path (for example, a binding that exists but is not a direct avenue to escalate privileges).
@@ -333,8 +347,8 @@ Let's assume we want to call out `cloudkms.cryptoKeys.update` and add it to our 
 
 1. Add to the permission --> role dictionary
    - If your target permission (i.e. `cloudkms.cryptoKeys.update`) is not already included, add the permission on a newline to `scripts/build_predfined_perm_to_role_input.txt`
-   - With your own GCP creds (for example, a free GCP account) in your own private GCP environment, run `./build_predefined_perm_to_roles.sh build_predfined_perm_to_role_input.txt > perm_to_role_mappings.json` as an authenticated user. This bash script gets all permissions for all predefined roles in a GCP environment to show which roles map to your target permission. You can also add the mapping manually to `gcpwn/data/core/mappings/og_permission_to_roles_map.json` using https://docs.cloud.google.com/iam/docs/roles-permissions
-   - You should see the permission --> role(s) mapping in `perm_to_role_mappings.json`. Replace `gcpwn/data/core/mappings/og_permission_to_roles_map.json` with content of `perm_to_role_mappings.json`
+   - With your own GCP creds (for example, a free GCP account) in your own private GCP environment, run `./scripts/build_predefined_perm_to_roles.sh scripts/build_predfined_perm_to_role_input.txt > perm_to_role_mappings.json` as an authenticated user. This script gets all permissions for all predefined roles in a GCP environment to show which roles map to your target permission. You can also add the mapping manually to `gcpwn/mappings/og_permission_to_roles_map.json` using https://docs.cloud.google.com/iam/docs/roles-permissions
+   - You should see the permission --> role(s) mapping in `perm_to_role_mappings.json`. Replace `gcpwn/mappings/og_permission_to_roles_map.json` with content of `perm_to_role_mappings.json`
 2. Add a rule definition to `og_privilege_escalation_paths.json` (Note multi-permission rules are covered in the wiki). In our case, it might look like the entry below. Note `resource_scopes_possible` is where one might see a binding with those permissions, and `resource_types` are the actual resource nodes you will be drawing edges to. For example, you might see `cloudkms.cryptoKeys.update` attached to a project IAM binding or attached directly to a key IAM binding, but the final node in either case will be a key node and NOT a project per the reasoning stated above. If `cloudkms.cryptoKeys.update` is attached to a project IAm binding, gcpwn will fan out edges to key nodes discovered in that project rather than end at a project node.
 
 ```json
@@ -359,6 +373,39 @@ user:alice@example.com
 iambinding:roles/cloudkms.admin@project:my-project
   -[CAN_DISABLE_KMS_KEY]->
 resource:projects/my-project/locations/us-central1/keyRings/prod/cryptoKeys/app-key
+```
+
+### OpenGraph Node Customize TLDR
+
+Use this after importing graph JSON into BloodHound if you want the OpenGraph node colors/icons.
+
+Direct flags:
+
+```bash
+modules run process_og_node_color_images \
+  --push-custom-node-attributes-url http://127.0.0.1:8080/api/v2/custom-nodes \
+  --custom-node-auth-mode signature \
+  --push-custom-node-attributes-token-id <TOKEN_ID> \
+  --push-custom-node-attributes-token-key <TOKEN_KEY>
+```
+
+Interactive:
+
+```text
+(None:None)> modules run process_og_node_color_images
+[*] No arguments supplied. Launching BloodHound custom-node sync setup.
+[*] BloodHound custom-node URL (press Enter to use default: http://127.0.0.1:8080/api/v2/custom-nodes):
+> Custom-node sync: choose auth mode
+>> [1] Bearer JWT
+>> [2] API key signature
+> [3] Exit
+> Choose an option: 2
+> Choose a saved BloodHound API token or enter a new one:
+>> [1] Saved Token ID: <TOKEN_ID> (http://127.0.0.1:8080/api/v2/custom-nodes)
+>> [2] Enter a new API token ID/key
+> [3] Exit
+> Choose an option: 1
+[*] custom-nodes sync complete: unchanged=46, updated=0, created=0
 ```
 
 ### OpenGraph Cypher TLDR
