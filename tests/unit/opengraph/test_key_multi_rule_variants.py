@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gcpwn.modules.opengraph.utilities.helpers.iam_bindings_shared_helpers import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import (
     _normalized_rule,
     expand_multi_permission_rules,
 )

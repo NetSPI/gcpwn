@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import OpenGraphBuilder, OpenGraphNode, node_to_opengraph
-from gcpwn.modules.opengraph.utilities.resource_expansion_builder import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import OpenGraphBuilder, OpenGraphNode, node_to_opengraph
+from gcpwn.modules.opengraph.utilities.stage_4_resource_expansion import (
     _add_project_resource_membership_edges,
     _resource_enrichment_payloads_by_name,
     _row_resourcedata_payload,

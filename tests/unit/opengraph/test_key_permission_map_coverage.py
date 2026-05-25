@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import OpenGraphBuilder
-from gcpwn.modules.opengraph.utilities.helpers.iam_bindings_shared_helpers import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import OpenGraphBuilder
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import (
     BindingPlusScopeEntry,
     ScopeResourceIndexes,
     _normalized_rule,
 )
-from gcpwn.modules.opengraph.utilities.iam_bindings_prepare_builder import (
+from gcpwn.modules.opengraph.utilities.stage_2_policy_bindings import (
     _binding_rule_permission_map_coverage,
-)
-from gcpwn.modules.opengraph.utilities.iam_bindings_single_multi_permission_graph_builder import (
     build_iam_bindings_multi_permission_graph,
 )
 
@@ -17,7 +15,6 @@ from gcpwn.modules.opengraph.utilities.iam_bindings_single_multi_permission_grap
 def _binding_entry(*, role_name: str, permissions: set[str]) -> BindingPlusScopeEntry:
     return BindingPlusScopeEntry(
         principal_id="user:alice@example.com",
-        principal_member="user:alice@example.com",
         expanded_from_convenience_member="",
         binding_composite_id=f"iambinding:{role_name}@project:demo-project",
         role_name=role_name,
@@ -34,10 +31,8 @@ def _binding_entry(*, role_name: str, permissions: set[str]) -> BindingPlusScope
         project_id="demo-project",
         inherited=False,
         source="unit_test",
-        conditional=False,
         condition_expr_raw="",
         condition_hash="",
-        condition_summary="",
         condition_option_id="",
         condition_option_summary="",
         condition_services=frozenset(),

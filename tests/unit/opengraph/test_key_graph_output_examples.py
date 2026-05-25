@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from gcpwn.modules.opengraph.enumeration.enum_gcp_cloud_hound_data import export_opengraph_json
-from gcpwn.modules.opengraph.utilities.helpers.context import OpenGraphBuildContext, OpenGraphBuildOptions
-from gcpwn.modules.opengraph.utilities.principal_builder import build_users_groups_graph
+from gcpwn.modules.opengraph.processing.process_og_gcpwn_data import export_opengraph_json
+from gcpwn.modules.opengraph.utilities.helpers.graph.context import OpenGraphBuildContext, OpenGraphBuildOptions
+from gcpwn.modules.opengraph.utilities.stage_1_principals import build_users_groups_graph
 
 
 class _FakeSession:
@@ -36,8 +36,8 @@ def test_key_opengraph_example_users_groups_to_graph_json() -> None:
             ],
             "workspace_group_memberships": [
                 {
-                    "group_member": "admins@example.com",
-                    "member": "alice@example.com",
+                    "group_member": "group:admins@example.com",
+                    "member": "user:alice@example.com",
                     "member_type": "user",
                     "source": "example_membership",
                 }
@@ -74,8 +74,8 @@ def test_key_opengraph_example_service_account_membership() -> None:
             "workspace_groups": [],
             "workspace_group_memberships": [
                 {
-                    "group_member": "eng@example.com",
-                    "member": "build-bot@demo-project.iam.gserviceaccount.com",
+                    "group_member": "group:eng@example.com",
+                    "member": "serviceAccount:build-bot@demo-project.iam.gserviceaccount.com",
                     "member_type": "service_account",
                     "source": "example_membership",
                 }

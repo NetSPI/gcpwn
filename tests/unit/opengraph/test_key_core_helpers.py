@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gcpwn.modules.opengraph.utilities.helpers.core_helpers import (
+from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphEdge,
     OpenGraphNode,
     edge_to_opengraph,

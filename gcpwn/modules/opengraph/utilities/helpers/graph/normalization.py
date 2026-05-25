@@ -12,6 +12,7 @@ _RESOURCE_TYPE_NORMALIZATION: dict[str, str] = {
     "service-accounts": "service-account",
     "workload-identity-pools": "workloadidentitypool",
     "workload-identity-providers": "workloadidentityprovider",
+    "kmskey": "kmscryptokey",
 }
 
 RESOURCE_TOKEN_TO_NODE_TYPE: dict[str, str] = {
