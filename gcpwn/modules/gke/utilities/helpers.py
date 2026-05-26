@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from google.protobuf.json_format import MessageToDict
-
 from gcpwn.core.utils.module_helpers import (
     extract_location_from_resource_name,
     extract_path_segment,
@@ -13,18 +11,11 @@ from gcpwn.core.utils.module_helpers import (
 )
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.serialization import resource_to_dict
 
 
 def _normalize_row(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    try:
-        return MessageToDict(value, preserving_proto_field_name=True)
-    except Exception:
-        try:
-            return dict(value)
-        except Exception:
-            return {}
+    return resource_to_dict(value)
 
 
 resolve_regions = resolve_regions_args
@@ -54,7 +45,7 @@ class GkeClustersResource:
                 scope_key="project_permissions",
                 scope_label=project_id,
             )
-            return [c for c in clusters if isinstance(c, dict)]
+            return [c for c in clusters if isinstance(c, dict) and c]
         except Exception:
             return None
 
@@ -70,7 +61,7 @@ class GkeClustersResource:
                 resource_type="clusters",
                 resource_label=resource_id,
             )
-            return row
+            return row if row else None
         except Exception:
             return None
 
@@ -117,7 +108,7 @@ class GkeNodePoolsResource:
                     fallback_project=str(getattr(self.session, "project_id", "")),
                 ),
             )
-            return [pool for pool in node_pools if isinstance(pool, dict)]
+            return [pool for pool in node_pools if isinstance(pool, dict) and pool]
         except Exception:
             return None
 
@@ -133,7 +124,7 @@ class GkeNodePoolsResource:
                 resource_type="node_pools",
                 resource_label=resource_id,
             )
-            return row
+            return row if row else None
         except Exception:
             return None
 
