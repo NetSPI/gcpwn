@@ -580,7 +580,7 @@ Tip: If you want an SBOM from GitHub, open this repository and go to `Insights` 
 
 ## Author, Contributors, and License
 
-- Author: NetSPI
+- Author: Scott (@WebbinRoot) via NetSPI
 - License: BSD-3-Clause (`LICENSE`)
 - Contributors: PRs and issues welcome
 
