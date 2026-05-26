@@ -12,6 +12,7 @@ from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_tail, extract_project_id_from_resource, split_path_tokens
 from gcpwn.core.utils.service_runtime import (
+    get_cached_rows,
     parse_component_args,
     parse_csv_file_args,
     parse_csv_arg,
@@ -238,15 +239,22 @@ def _load_service_account_resource_names(args, session, project_id: str) -> list
     if resource_names:
         return list(dict.fromkeys(resource_names))
 
-    cached_sas = session.get_data("iam_service_accounts", columns=["name", "email"]) or []
+    scoped_project_id = str(project_id or "").strip()
+    cached_sas = get_cached_rows(
+        session,
+        "iam_service_accounts",
+        project_id=scoped_project_id or None,
+        columns=["name", "email", "project_id"],
+    ) or []
     for row in cached_sas:
+        row_project_id = str(row.get("project_id") or scoped_project_id).strip()
         name = row.get("name") or ""
         if name:
             resource_names.append(name)
             continue
         email = row.get("email") or ""
         if email:
-            resource_names.append(f"projects/{project_id}/serviceAccounts/{email}")
+            resource_names.append(f"projects/{row_project_id}/serviceAccounts/{email}")
 
     return list(dict.fromkeys([name for name in resource_names if name]))
 
@@ -305,16 +313,20 @@ def run_module(user_args, session):
                     )
                 ] = set()
         else:
-            cached = session.get_data(
+            scoped_project_id = str(project_id or "").strip()
+            cached = get_cached_rows(
+                session,
                 service_accounts_resource.TABLE_NAME,
-                columns=["name", "email", "display_name"],
+                project_id=scoped_project_id or None,
+                columns=["name", "email", "display_name", "project_id"],
                 conditions='email != ""',
             )
             if cached:
                 for row in cached:
-                    name = row.get("name") or f"projects/{project_id}/serviceAccounts/{row.get('email', '')}"
+                    row_project_id = str(row.get("project_id") or scoped_project_id).strip()
+                    name = row.get("name") or f"projects/{row_project_id}/serviceAccounts/{row.get('email', '')}"
                     if name and "serviceAccounts/" in name:
-                        pid = extract_project_id_from_resource(name, fallback_project=project_id)
+                        pid = extract_project_id_from_resource(name, fallback_project=row_project_id or scoped_project_id)
                         all_service_accounts[pid][
                             HashableServiceAccount(
                                 _make_service_account_resource(
