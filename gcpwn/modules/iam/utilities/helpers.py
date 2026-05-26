@@ -11,23 +11,26 @@ from google.api_core.exceptions import Forbidden
 from google.api_core.exceptions import FailedPrecondition
 from google.api_core.exceptions import ResourceExhausted
 from gcpwn.core.contracts import HashableResourceProxy
-from gcpwn.core.utils.service_runtime import build_discovery_service
+from gcpwn.core.utils.service_runtime import (
+    build_discovery_service,
+    extract_discovery_http_error,
+    handle_discovery_error,
+    is_api_disabled_error,
+    paged_list,
+)
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.iam_permissions import call_test_iam_permissions, permissions_with_prefixes
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, extract_project_id_from_resource
-from gcpwn.core.utils.service_runtime import is_api_disabled_error
 
 
 class _IAMBaseDiscoveryResource:
     SERVICE_LABEL = "IAM"
     CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
-    IAM_REST_BASE_URL = "https://iam.googleapis.com/v1"
 
     def __init__(self, session) -> None:
         self.session = session
         self._discovery_service = None
-        self._rest_state = {}
 
     def _get_discovery_service(self):
         if self._discovery_service is None:
@@ -38,126 +41,6 @@ class _IAMBaseDiscoveryResource:
                 scopes=(self.CLOUD_PLATFORM_SCOPE,),
             )
         return self._discovery_service
-
-    def _get_rest_auth(self):
-        session_info = self._rest_state.get("session_info")
-        if session_info:
-            return session_info
-
-        try:
-            import google.auth.credentials  # type: ignore
-            import google.auth.transport.requests  # type: ignore
-            import requests  # type: ignore
-        except Exception as exc:
-            UtilityTools.print_500("IAM REST", "google-auth/requests import", exc)
-            return None
-
-        credentials = getattr(self.session, "credentials", None)
-        if credentials is None:
-            UtilityTools.print_500("IAM REST", "session credentials", Exception("No credentials configured for session"))
-            return None
-
-        try:
-            credentials = google.auth.credentials.with_scopes_if_required(
-                credentials,
-                (self.CLOUD_PLATFORM_SCOPE,),
-            )
-        except Exception:
-            pass
-
-        request_session = requests.Session()
-        auth_request = google.auth.transport.requests.Request(session=request_session)
-        self._rest_state["session_info"] = (request_session, auth_request, credentials)
-        return self._rest_state["session_info"]
-
-    def _refresh_access_token(self):
-        auth = self._get_rest_auth()
-        if auth is None:
-            return None
-
-        request_session, auth_request, credentials = auth
-        access_token = str(getattr(self.session, "access_token", "") or getattr(credentials, "token", "") or "").strip()
-        if access_token and not getattr(credentials, "expired", False):
-            return access_token
-
-        if hasattr(credentials, "refresh"):
-            credentials.refresh(auth_request)
-            access_token = str(getattr(credentials, "token", "") or "").strip()
-            if access_token:
-                self.session.access_token = access_token
-            return access_token
-        return access_token or None
-
-    def _request_iam_rest_json(
-        self,
-        *,
-        api_name: str,
-        method: str,
-        path: str,
-        params: dict | None = None,
-        print_client_error: bool = True,
-    ):
-        auth = self._get_rest_auth()
-        if auth is None:
-            return None, None
-
-        request_session, _auth_request, _credentials = auth
-        request_params = dict(params or {})
-        endpoint = f"{self.IAM_REST_BASE_URL}/{str(path or '').lstrip('/')}"
-
-        try:
-            access_token = self._refresh_access_token()
-            if not access_token:
-                UtilityTools.print_500("IAM REST", api_name, Exception("Unable to acquire access token"))
-                return None, None
-
-            def _do_request(token):
-                return request_session.request(
-                    method=method,
-                    url=endpoint,
-                    params=request_params,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=30,
-                )
-
-            response = _do_request(access_token)
-            if response.status_code == 401 and access_token:
-                new_token = self._refresh_access_token()
-                if new_token and new_token != access_token:
-                    response = _do_request(new_token)
-        except Exception as exc:
-            UtilityTools.print_500(endpoint, api_name, exc)
-            return None, None
-
-        if response.status_code == 400:
-            try:
-                error_payload = response.json()
-                error_msg = (
-                    error_payload.get("error", {})
-                    .get("details", [{}])[0]
-                    .get("message")
-                    or error_payload.get("error", {}).get("message")
-                    or response.text
-                )
-            except Exception:
-                error_msg = response.text
-            if print_client_error:
-                print(
-                    f"{UtilityTools.YELLOW}[!] {api_name} returned a client error for {path}: "
-                    f"{error_msg}{UtilityTools.RESET}"
-                )
-            return None, response
-        if response.status_code == 403:
-            UtilityTools.print_403_api_denied(api_name, project_id=getattr(self.session, "project_id", None))
-            return None, response
-        if response.status_code == 404:
-            UtilityTools.print_404_resource(path)
-            return None, response
-        if response.status_code != 200:
-            UtilityTools.print_500(path, api_name, response.text)
-            return None, response
-
-        return response.json(), response
 
 
 def _get_iam_policy_generic(
@@ -1054,27 +937,32 @@ class IAMWorkloadIdentityPoolsResource(_IAMBaseDiscoveryResource):
 
     def list(self, *, project_id: str, action_dict=None):
         parent = f"projects/{str(project_id or '').strip()}/locations/global"
-        page_token = None
-        rows: list[dict] = []
-        while True:
-            params = {"pageSize": 1000}
-            if page_token:
-                params["pageToken"] = page_token
-            payload, response = self._request_iam_rest_json(
-                api_name=self.LIST_API_NAME,
-                method="GET",
-                path=f"{parent}/workloadIdentityPools",
-                params=params,
+        try:
+            service = self._get_discovery_service()
+            rows = paged_list(
+                lambda page_token: service.projects().locations().workloadIdentityPools().list(
+                    parent=parent,
+                    pageSize=1000,
+                    **({"pageToken": page_token} if page_token else {}),
+                ),
+                items_key="workloadIdentityPools",
             )
-            if payload is None:
-                if response is not None and response.status_code == 400:
-                    return []
-                break
-            page_entries = payload.get("workloadIdentityPools", []) if isinstance(payload, dict) else []
-            rows.extend(item for item in page_entries if isinstance(item, dict))
-            page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
-            if not page_token:
-                break
+        except Exception as exc:
+            status, error_msg = extract_discovery_http_error(exc)
+            if status == 400:
+                print(
+                    f"{UtilityTools.YELLOW}[!] {self.LIST_API_NAME} returned a client error for {parent}: "
+                    f"{error_msg}{UtilityTools.RESET}"
+                )
+                return []
+            result = handle_discovery_error(
+                self.session,
+                self.LIST_API_NAME,
+                parent,
+                exc,
+                service_label=self.SERVICE_LABEL,
+            )
+            return result if result in ("Not Enabled", None) else []
 
         if rows:
             record_permissions(
@@ -1088,12 +976,27 @@ class IAMWorkloadIdentityPoolsResource(_IAMBaseDiscoveryResource):
     def get(self, *, resource_id: str, action_dict=None):
         if not resource_id:
             return None
-        payload, response = self._request_iam_rest_json(
-            api_name=self.GET_API_NAME,
-            method="GET",
-            path=str(resource_id or ""),
-        )
-        if payload:
+        try:
+            service = self._get_discovery_service()
+            payload = service.projects().locations().workloadIdentityPools().get(name=str(resource_id or "")).execute()
+        except Exception as exc:
+            status, error_msg = extract_discovery_http_error(exc)
+            if status == 400:
+                print(
+                    f"{UtilityTools.YELLOW}[!] {self.GET_API_NAME} returned a client error for {resource_id}: "
+                    f"{error_msg}{UtilityTools.RESET}"
+                )
+                return "Not Enabled"
+            result = handle_discovery_error(
+                self.session,
+                self.GET_API_NAME,
+                str(resource_id or ""),
+                exc,
+                service_label=self.SERVICE_LABEL,
+            )
+            return "Not Enabled" if result == "Not Enabled" else None
+
+        if isinstance(payload, dict) and payload:
             record_permissions(
                 action_dict,
                 permissions=self.GET_API_NAME,
@@ -1102,8 +1005,6 @@ class IAMWorkloadIdentityPoolsResource(_IAMBaseDiscoveryResource):
                 resource_label=extract_path_tail(resource_id, default=str(resource_id or "").strip()),
             )
             return payload
-        if response is not None and response.status_code == 400:
-            return "Not Enabled"
         return None
 
     def save(self, rows, *, project_id: str, project_number: str):
@@ -1132,51 +1033,38 @@ class IAMWorkloadIdentityProvidersResource(_IAMBaseDiscoveryResource):
     def list(self, *, pool_name: str, action_dict=None):
         if not pool_name:
             return []
-        page_token = None
-        rows: list[dict] = []
-        while True:
-            params = {"pageSize": 1000}
-            if page_token:
-                params["pageToken"] = page_token
-
-            payload, response = self._request_iam_rest_json(
-                api_name=self.LIST_API_NAME,
-                method="GET",
-                path=f"{str(pool_name).rstrip('/')}/providers",
-                params=params,
-                print_client_error=False,
+        try:
+            service = self._get_discovery_service()
+            rows = paged_list(
+                lambda page_token: service.projects().locations().workloadIdentityPools().providers().list(
+                    parent=str(pool_name or "").rstrip("/"),
+                    pageSize=1000,
+                    **({"pageToken": page_token} if page_token else {}),
+                ),
+                items_key="workloadIdentityPoolProviders",
             )
-            if payload is None:
-                if response is not None and response.status_code == 400:
-                    try:
-                        error_payload = response.json()
-                        error_msg = (
-                            error_payload.get("error", {})
-                            .get("details", [{}])[0]
-                            .get("message")
-                            or error_payload.get("error", {}).get("message")
-                            or response.text
-                        )
-                    except Exception:
-                        error_msg = str(response.text)
-
-                    if "not supported on resource" in error_msg.lower():
-                        print(
-                            f"{UtilityTools.YELLOW}[!] {self.LIST_API_NAME} is not supported on pool "
-                            f"{pool_name}; skipping provider enumeration for this pool.{UtilityTools.RESET}"
-                        )
-                    else:
-                        print(
-                            f"{UtilityTools.YELLOW}[!] {self.LIST_API_NAME} returned a client error for "
-                            f"{pool_name}/providers: {error_msg}{UtilityTools.RESET}"
-                        )
-                    return []
-                break
-            page_entries = payload.get("workloadIdentityPoolProviders", []) if isinstance(payload, dict) else []
-            rows.extend(item for item in page_entries if isinstance(item, dict))
-            page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
-            if not page_token:
-                break
+        except Exception as exc:
+            status, error_msg = extract_discovery_http_error(exc)
+            if status == 400:
+                if "not supported on resource" in error_msg.lower():
+                    print(
+                        f"{UtilityTools.YELLOW}[!] {self.LIST_API_NAME} is not supported on pool "
+                        f"{pool_name}; skipping provider enumeration for this pool.{UtilityTools.RESET}"
+                    )
+                else:
+                    print(
+                        f"{UtilityTools.YELLOW}[!] {self.LIST_API_NAME} returned a client error for "
+                        f"{pool_name}/providers: {error_msg}{UtilityTools.RESET}"
+                    )
+                return []
+            result = handle_discovery_error(
+                self.session,
+                self.LIST_API_NAME,
+                str(pool_name or ""),
+                exc,
+                service_label=self.SERVICE_LABEL,
+            )
+            return result if result in ("Not Enabled", None) else []
 
         if rows:
             record_permissions(
@@ -1191,12 +1079,34 @@ class IAMWorkloadIdentityProvidersResource(_IAMBaseDiscoveryResource):
     def get(self, *, resource_id: str, action_dict=None):
         if not resource_id:
             return None
-        payload, response = self._request_iam_rest_json(
-            api_name=self.GET_API_NAME,
-            method="GET",
-            path=str(resource_id or ""),
-        )
-        if payload:
+        try:
+            service = self._get_discovery_service()
+            payload = (
+                service.projects()
+                .locations()
+                .workloadIdentityPools()
+                .providers()
+                .get(name=str(resource_id or ""))
+                .execute()
+            )
+        except Exception as exc:
+            status, error_msg = extract_discovery_http_error(exc)
+            if status == 400:
+                print(
+                    f"{UtilityTools.YELLOW}[!] {self.GET_API_NAME} returned a client error for {resource_id}: "
+                    f"{error_msg}{UtilityTools.RESET}"
+                )
+                return "Not Enabled"
+            result = handle_discovery_error(
+                self.session,
+                self.GET_API_NAME,
+                str(resource_id or ""),
+                exc,
+                service_label=self.SERVICE_LABEL,
+            )
+            return "Not Enabled" if result == "Not Enabled" else None
+
+        if isinstance(payload, dict) and payload:
             record_permissions(
                 action_dict,
                 permissions=self.GET_API_NAME,
@@ -1205,8 +1115,6 @@ class IAMWorkloadIdentityProvidersResource(_IAMBaseDiscoveryResource):
                 resource_label=extract_path_tail(resource_id, default=str(resource_id or "").strip()),
             )
             return payload
-        if response is not None and response.status_code == 400:
-            return "Not Enabled"
         return None
 
     def save(self, rows, *, project_id: str, project_number: str):

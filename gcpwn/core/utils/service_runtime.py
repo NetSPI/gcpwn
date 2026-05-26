@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterable, Sequence
@@ -100,6 +101,38 @@ def build_discovery_service(credentials, service_name: str, version: str, *, sco
     return build(str(service_name), str(version), credentials=scoped, cache_discovery=False)
 
 
+def extract_discovery_http_error(exc: Exception) -> tuple[int | None, str]:
+    status = None
+    message = str(exc)
+    try:
+        from googleapiclient.errors import HttpError  # type: ignore
+
+        if isinstance(exc, HttpError):
+            resp = getattr(exc, "resp", None)
+            if resp is not None:
+                try:
+                    status = int(getattr(resp, "status", None))
+                except Exception:
+                    status = None
+
+            content = getattr(exc, "content", b"")
+            if isinstance(content, bytes):
+                content = content.decode("utf-8", errors="ignore")
+            if content:
+                try:
+                    payload = json.loads(content)
+                    message = (
+                        payload.get("error", {}).get("details", [{}])[0].get("message")
+                        or payload.get("error", {}).get("message")
+                        or str(content)
+                    )
+                except Exception:
+                    message = str(content)
+    except Exception:
+        pass
+    return status, message
+
+
 def handle_discovery_error(
     session,
     api_name: str,
@@ -108,14 +141,7 @@ def handle_discovery_error(
     *,
     service_label: str | None = None,
 ) -> str | None:
-    status = None
-    try:
-        from googleapiclient.errors import HttpError  # type: ignore
-
-        if isinstance(exc, HttpError) and getattr(exc, "resp", None) is not None:
-            status = int(getattr(exc.resp, "status", None))
-    except Exception:
-        pass
+    status, _message = extract_discovery_http_error(exc)
     if status == 403:
         if service_label and is_api_disabled_error(exc):
             UtilityTools.print_403_api_disabled(service_label, getattr(session, "project_id", None))
