@@ -22,6 +22,19 @@ COMPONENTS = [
 ]
 
 
+def _cluster_parent_name_from_row(row: dict, project_id: str) -> str:
+    if not isinstance(row, dict):
+        return ""
+    name = str(row.get("name") or "").strip()
+    if name.startswith("projects/") and "/clusters/" in name:
+        return name
+
+    location = str(row.get("location") or row.get("zone") or "").strip()
+    if name and location and project_id:
+        return f"projects/{project_id}/locations/{location}/clusters/{name}"
+    return name
+
+
 def _parse_args(user_args):
     def _add_extra_args(parser: argparse.ArgumentParser) -> None:
         regions_group = parser.add_mutually_exclusive_group()
@@ -142,10 +155,18 @@ def run_module(user_args, session):
             for location, listed in listed_by_location:
                 if listed in ("Not Enabled", None) or not listed:
                     continue
+                normalized_listed = [row for row in listed if isinstance(row, dict)]
+                for row in normalized_listed:
+                    canonical_name = _cluster_parent_name_from_row(row, project_id)
+                    if canonical_name and not str(row.get("name") or "").startswith("projects/"):
+                        row["name"] = canonical_name
                 if args.get:
-                    listed = [clusters_resource.get(resource_id=row.get("name", ""), action_dict=api_actions) or row for row in listed]
-                clusters_resource.save(listed, project_id=project_id, location=location)
-                all_clusters.extend(listed)
+                    normalized_listed = [
+                        clusters_resource.get(resource_id=row.get("name", ""), action_dict=api_actions) or row
+                        for row in normalized_listed
+                    ]
+                clusters_resource.save(normalized_listed, project_id=project_id, location=location)
+                all_clusters.extend(normalized_listed)
 
         if all_clusters and manual_cluster_names_requested:
             for row in all_clusters:
@@ -184,15 +205,25 @@ def run_module(user_args, session):
             cluster_targets = list(cluster_names)
             if not cluster_targets:
                 if all_clusters:
-                    cluster_targets = [str(row.get("name", "")).strip() for row in all_clusters if isinstance(row, dict) and row.get("name")]
+                    cluster_targets = [
+                        _cluster_parent_name_from_row(row, project_id)
+                        for row in all_clusters
+                        if isinstance(row, dict)
+                    ]
+                    cluster_targets = [name for name in cluster_targets if name]
                 elif not selected.get("clusters", False):
                     cached_clusters = get_cached_rows(
                         session,
                         clusters_resource.TABLE_NAME,
                         project_id=project_id,
-                        columns=["name"],
+                        columns=["name", "location"],
                     ) or []
-                    cluster_targets = [str(row.get("name", "")).strip() for row in cached_clusters if row.get("name")]
+                    cluster_targets = [
+                        _cluster_parent_name_from_row(row, project_id)
+                        for row in cached_clusters
+                        if isinstance(row, dict)
+                    ]
+                    cluster_targets = [name for name in cluster_targets if name]
 
             if not cluster_targets:
                 print("[*] No cluster parent data available for node pool enumeration. Run this module with --clusters or supply --cluster-names.")
