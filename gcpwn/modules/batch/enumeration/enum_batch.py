@@ -7,7 +7,11 @@ from pathlib import Path
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.service_runtime import parallel_map, parse_component_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
+    parse_component_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.batch.utilities.helpers import BatchJobsResource, resolve_locations
 
 
@@ -95,11 +99,12 @@ def run_module(user_args, session):
 
     if selected.get("jobs", False):
         rows = []
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             locations,
-            lambda location: (
-                location,
-                jobs_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: jobs_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )

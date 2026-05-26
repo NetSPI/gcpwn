@@ -337,6 +337,44 @@ def parallel_map(
     return results
 
 
+def map_regions_with_disabled_short_circuit(
+    regions: Iterable[str],
+    worker: Callable[[str], Any],
+    *,
+    threads: int = 3,
+    progress_label: str | None = None,
+    show_progress: bool = True,
+) -> list[tuple[str, Any]]:
+    region_list = [str(region or "").strip() for region in regions or [] if str(region or "").strip()]
+    if not region_list:
+        return []
+
+    first_region = region_list[0]
+    first_result = worker(first_region)
+    results: list[tuple[str, Any]] = [(first_region, first_result)]
+    if first_result == "Not Enabled":
+        if show_progress:
+            label = str(progress_label or "Region scan").strip() or "Region scan"
+            print(
+                f"[*] {label}: API not enabled (detected in region '{first_region}'); "
+                "skipping remaining regions."
+            )
+        return results
+
+    remaining_regions = region_list[1:]
+    if not remaining_regions:
+        return results
+
+    remaining_results = parallel_map(
+        remaining_regions,
+        lambda region: (region, worker(region)),
+        threads=threads,
+        progress_label=progress_label,
+        show_progress=show_progress,
+    )
+    return [*results, *remaining_results]
+
+
 def get_cached_rows(session, table_name: str, *, project_id: str | None = None, columns="*", conditions: str | None = None):
     final_conditions: list[str] = []
     if project_id:

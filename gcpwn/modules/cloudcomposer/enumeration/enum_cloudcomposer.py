@@ -3,7 +3,11 @@ from __future__ import annotations
 import argparse
 
 from gcpwn.core.console import UtilityTools
-from gcpwn.core.utils.service_runtime import parallel_map, parse_component_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
+    parse_component_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.cloudcomposer.utilities.helpers import ComposerEnvironmentsResource, resolve_regions
 
 
@@ -39,9 +43,9 @@ def run_module(user_args, session):
     regions = resolve_regions(session, args)
     rows = []
     downloaded_paths: list[str] = []
-    listed_by_location = parallel_map(
+    listed_by_location = map_regions_with_disabled_short_circuit(
         regions,
-        lambda location: (location, resource.list(project_id=project_id, location=location)),
+        lambda location: resource.list(project_id=project_id, location=location),
         threads=getattr(args, "threads", 3),
         progress_label="Cloud Composer environments",
     )

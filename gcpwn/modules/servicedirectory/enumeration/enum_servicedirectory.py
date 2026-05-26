@@ -7,7 +7,13 @@ from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import extract_path_segment
-from gcpwn.core.utils.service_runtime import get_cached_rows, parallel_map, parse_component_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    get_cached_rows,
+    map_regions_with_disabled_short_circuit,
+    parallel_map,
+    parse_component_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.servicedirectory.utilities.helpers import (
     ServiceDirectoryEndpointsResource,
     ServiceDirectoryNamespacesResource,
@@ -81,16 +87,13 @@ def run_module(user_args, session):
     endpoints_by_region = defaultdict(list)
 
     if selected.get("namespaces", False):
-        region_batches = parallel_map(
+        region_batches = map_regions_with_disabled_short_circuit(
             regions,
-            lambda region: (
-                region,
-                namespaces_resource.list(
-                    parent=f"projects/{project_id}/locations/{region}",
-                    project_id=project_id,
-                    location_id=region,
-                    action_dict=scope_actions,
-                ),
+            lambda region: namespaces_resource.list(
+                parent=f"projects/{project_id}/locations/{region}",
+                project_id=project_id,
+                location_id=region,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )

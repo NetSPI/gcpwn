@@ -8,6 +8,7 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import name_from_input
 from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     parse_csv_arg,
@@ -46,9 +47,9 @@ def _scan_regions(
         print("[*] No Cloud Build regions available. Supply --regions-list/--regions-file, or use --all-regions if supported.")
         return []
 
-    return parallel_map(
+    return map_regions_with_disabled_short_circuit(
         regions,
-        lambda region: (region, worker(region)),
+        worker,
         threads=threads,
         progress_label=f"Cloud Build {label}",
     )

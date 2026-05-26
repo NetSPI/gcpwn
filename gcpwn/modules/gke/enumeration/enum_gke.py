@@ -6,7 +6,13 @@ from collections import defaultdict
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import extract_path_segment, name_from_input
-from gcpwn.core.utils.service_runtime import get_cached_rows, parallel_map, parse_component_args, parse_csv_file_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    get_cached_rows,
+    map_regions_with_disabled_short_circuit,
+    parse_component_args,
+    parse_csv_file_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.gke.utilities.helpers import GkeClustersResource, GkeNodePoolsResource, resolve_regions
 
 
@@ -124,15 +130,12 @@ def run_module(user_args, session):
                 if isinstance(row, dict) and row:
                     all_clusters.append(row)
         elif not manual_cluster_names_requested:
-            listed_by_location = parallel_map(
+            listed_by_location = map_regions_with_disabled_short_circuit(
                 regions,
-                lambda location: (
-                    location,
-                    clusters_resource.list(
-                        project_id=project_id,
-                        location=location,
-                        action_dict=scope_actions,
-                    ),
+                lambda location: clusters_resource.list(
+                    project_id=project_id,
+                    location=location,
+                    action_dict=scope_actions,
                 ),
                 threads=getattr(args, "threads", 3),
             )

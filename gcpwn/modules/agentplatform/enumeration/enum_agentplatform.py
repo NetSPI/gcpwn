@@ -5,7 +5,11 @@ from collections import defaultdict
 from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
-from gcpwn.core.utils.service_runtime import parallel_map, parse_component_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
+    parse_component_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.agentplatform.utilities.helpers import (
     AgentPlatformDatasetsResource,
     AgentPlatformEndpointsResource,
@@ -79,11 +83,12 @@ def run_module(user_args, session):
     if selected.get("datasets", False):
         all_rows = []
         dataset_locations = ["global"]
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             dataset_locations,
-            lambda location: (
-                location,
-                datasets_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: datasets_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )
@@ -115,11 +120,12 @@ def run_module(user_args, session):
         endpoint_locations = ["global"]
         if args.iam:
             print("[!] Skipping aiplatform endpoint TestIamPermissions: endpoints do not support testIamPermissions.")
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             endpoint_locations,
-            lambda location: (
-                location,
-                endpoints_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: endpoints_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )
@@ -149,11 +155,12 @@ def run_module(user_args, session):
     if selected.get("models", False):
         all_rows = []
         model_locations = ["global"]
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             model_locations,
-            lambda location: (
-                location,
-                models_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: models_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )
@@ -250,11 +257,12 @@ def run_module(user_args, session):
     if selected.get("feature_groups", False):
         all_rows = []
         feature_group_locations = ["global"]
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             feature_group_locations,
-            lambda location: (
-                location,
-                feature_groups_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: feature_groups_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )
@@ -352,11 +360,12 @@ def run_module(user_args, session):
     if selected.get("reasoning_engines", False):
         all_rows = []
         reasoning_engine_locations = ["global"]
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             reasoning_engine_locations,
-            lambda location: (
-                location,
-                reasoning_engines_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: reasoning_engines_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )
@@ -385,11 +394,12 @@ def run_module(user_args, session):
     if selected.get("notebook_runtime_templates", False):
         all_rows = []
         notebook_runtime_template_locations = ["global"]
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             notebook_runtime_template_locations,
-            lambda location: (
-                location,
-                notebook_runtime_templates_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: notebook_runtime_templates_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )

@@ -58,6 +58,24 @@ CONFIG_SET_VALUE_CHOICES = {
     "std_output_format": ["table", "text"],
 }
 
+_READLINE_MODULE: Any | None = None
+_READLINE_IMPORT_ATTEMPTED = False
+
+
+def _optional_readline() -> Any | None:
+    """Return readline when available; None on platforms without it (e.g. Windows)."""
+    global _READLINE_MODULE, _READLINE_IMPORT_ATTEMPTED
+    if _READLINE_IMPORT_ATTEMPTED:
+        return _READLINE_MODULE
+    _READLINE_IMPORT_ATTEMPTED = True
+    try:
+        import readline as _readline  # type: ignore
+    except Exception:
+        _READLINE_MODULE = None
+    else:
+        _READLINE_MODULE = _readline
+    return _READLINE_MODULE
+
 
 def apply_argument_specs(parser: argparse.ArgumentParser, argument_specs: List[ArgumentSpec]) -> None:
     for names, kwargs in argument_specs:
@@ -587,8 +605,10 @@ class CommandProcessor:
         return self._complete_command_args(cmd, args, trailing_space)
 
     def readline_complete(self, text: str, state: int):
-        import readline
-
+        _ = text
+        readline = _optional_readline()
+        if not readline:
+            return None
         line = readline.get_line_buffer()
         candidates = self._command_candidates(line)
         if not candidates:
@@ -2087,12 +2107,9 @@ def initial_instructions(workspace_id: int, workspace_name: str, *, startup_sile
     # Some terminals emit raw ANSI escape sequences (for example arrow keys)
     # unless readline is initialized before input(). Keep startup prompt UX
     # consistent with the main REPL loop.
-    try:
-        import readline  # type: ignore
-
+    readline = _optional_readline()
+    if readline:
         readline.parse_and_bind("tab: complete")
-    except Exception:
-        readline = None  # type: ignore
 
     # Initial print setup
     def first_time_message(available_creds):
@@ -2128,9 +2145,7 @@ def initial_instructions(workspace_id: int, workspace_name: str, *, startup_sile
             }
 
             def _startup_cred_complete(_text: str, state: int):
-                import readline as _readline
-
-                line = (_readline.get_line_buffer() or "").lstrip()
+                line = (readline.get_line_buffer() or "").lstrip()
                 trailing_space = line.endswith(" ")
                 tokens = line.split()
                 candidates: list[str] = []
@@ -2264,12 +2279,13 @@ def workspace_instructions(workspace_id, workspace_name, *, startup_silent: bool
     # Pass workspace ID + populated Session into the command processor.
     command_processor = CommandProcessor(workspace_id, session)
 
-    # Add tab completion + history.
-    import readline
-    readline.parse_and_bind("tab: complete")
-    readline.set_completer_delims(" \t\n")
-    readline.set_completer(command_processor.readline_complete)
-    readline.set_history_length(25)
+    # Add tab completion + history when readline is available.
+    readline = _optional_readline()
+    if readline:
+        readline.parse_and_bind("tab: complete")
+        readline.set_completer_delims(" \t\n")
+        readline.set_completer(command_processor.readline_complete)
+        readline.set_history_length(25)
 
     # Main loop for interactive prompts.
     while True:
@@ -2279,7 +2295,8 @@ def workspace_instructions(workspace_id, workspace_name, *, startup_silent: bool
             user_input = input(f'({cli_prefix})> ')
 
             # Avoid recording setup noise in the readline history.
-            readline.set_auto_history(False)
+            if readline:
+                readline.set_auto_history(False)
 
             keep_running = command_processor.process_command(user_input)
             if keep_running == CommandProcessor.EXIT_SIGNAL:
@@ -2295,4 +2312,5 @@ def workspace_instructions(workspace_id, workspace_name, *, startup_silent: bool
 
         finally:
             # Re-enable readline history tracking.
-            readline.set_auto_history(True)
+            if readline:
+                readline.set_auto_history(True)

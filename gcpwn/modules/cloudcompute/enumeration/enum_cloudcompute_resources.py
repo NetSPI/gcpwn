@@ -13,6 +13,7 @@ from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_t
 from gcpwn.core.utils.serialization import hydrate_get_request_rows
 from gcpwn.core.utils.service_runtime import (
     get_cached_rows,
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     parse_csv_file_args,
@@ -427,7 +428,7 @@ def _list_discovery_rows(
 
     location_scope = str(getattr(spec, "location_scope", "") or "").strip().lower()
     if location_scope == "zone" and zones:
-        listed_batches = parallel_map(
+        listed_batches = map_regions_with_disabled_short_circuit(
             zones,
             lambda zone: resource.list(
                 project_id=project_id,
@@ -438,13 +439,13 @@ def _list_discovery_rows(
             progress_label=spec.summary_title,
         )
         rows: list[dict] = []
-        for batch in listed_batches:
+        for _zone, batch in listed_batches:
             if batch not in ("Not Enabled", None):
                 rows.extend(batch or [])
         return rows
 
     if location_scope == "region" and regions:
-        listed_batches = parallel_map(
+        listed_batches = map_regions_with_disabled_short_circuit(
             regions,
             lambda region: resource.list(
                 project_id=project_id,
@@ -455,7 +456,7 @@ def _list_discovery_rows(
             progress_label=spec.summary_title,
         )
         rows: list[dict] = []
-        for batch in listed_batches:
+        for _region, batch in listed_batches:
             if batch not in ("Not Enabled", None):
                 rows.extend(batch or [])
         return rows
@@ -545,6 +546,27 @@ def _process_discovery_resource(
         )
     else:
         _summary_for_empty(project_id, spec.primary_resource)
+    return rows
+
+
+def _collect_scoped_batches(
+    scopes: list[str],
+    worker,
+    *,
+    threads: int,
+    progress_label: str,
+) -> list[dict]:
+    listed_batches = map_regions_with_disabled_short_circuit(
+        scopes,
+        worker,
+        threads=threads,
+        progress_label=progress_label,
+    )
+    rows: list[dict] = []
+    for _scope, batch in listed_batches:
+        if batch in ("Not Enabled", None):
+            continue
+        rows.extend(batch or [])
     return rows
 
 
@@ -738,11 +760,12 @@ def run_module(user_args, session):
                 all_instances[pid].add(HashableInstance(compute_v1.Instance(name=name, zone=f"zones/{zone}"), validated=False))
         else:
             if explicit_zone_scope and zones:
-                listed_by_zone = parallel_map(
+                listed_by_zone = map_regions_with_disabled_short_circuit(
                     zones,
-                    lambda zone: (
-                        zone,
-                        instances_resource.list(project_id=project_id, zone=zone, action_dict=scope_actions),
+                    lambda zone: instances_resource.list(
+                        project_id=project_id,
+                        zone=zone,
+                        action_dict=scope_actions,
                     ),
                     threads=getattr(args, "threads", 3),
                     progress_label="Compute Instances",
@@ -883,22 +906,15 @@ def run_module(user_args, session):
         primary_resource="Node Groups",
         resource=node_groups_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        zones,
-                        lambda zone: node_groups_resource.list(
-                            project_id=project_id,
-                            zone=zone,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Node Groups",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                zones,
+                lambda zone: node_groups_resource.list(
+                    project_id=project_id,
+                    zone=zone,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Node Groups",
             ) if explicit_zone_scope and zones else node_groups_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -917,22 +933,15 @@ def run_module(user_args, session):
         primary_resource="Node Templates",
         resource=node_templates_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        regions,
-                        lambda region: node_templates_resource.list(
-                            project_id=project_id,
-                            region=region,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Node Templates",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                regions,
+                lambda region: node_templates_resource.list(
+                    project_id=project_id,
+                    region=region,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Node Templates",
             ) if explicit_region_scope and regions else node_templates_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -951,22 +960,15 @@ def run_module(user_args, session):
         primary_resource="Region Disks",
         resource=region_disks_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        regions,
-                        lambda region: region_disks_resource.list(
-                            project_id=project_id,
-                            region=region,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Region Disks",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                regions,
+                lambda region: region_disks_resource.list(
+                    project_id=project_id,
+                    region=region,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Region Disks",
             ) if explicit_region_scope and regions else region_disks_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -985,22 +987,15 @@ def run_module(user_args, session):
         primary_resource="Instant Snapshots",
         resource=instant_snapshots_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        zones,
-                        lambda zone: instant_snapshots_resource.list(
-                            project_id=project_id,
-                            zone=zone,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Instant Snapshots",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                zones,
+                lambda zone: instant_snapshots_resource.list(
+                    project_id=project_id,
+                    zone=zone,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Instant Snapshots",
             ) if explicit_zone_scope and zones else instant_snapshots_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -1019,22 +1014,15 @@ def run_module(user_args, session):
         primary_resource="Region Instant Snapshots",
         resource=region_instant_snapshots_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        regions,
-                        lambda region: region_instant_snapshots_resource.list(
-                            project_id=project_id,
-                            region=region,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Region Instant Snapshots",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                regions,
+                lambda region: region_instant_snapshots_resource.list(
+                    project_id=project_id,
+                    region=region,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Region Instant Snapshots",
             ) if explicit_region_scope and regions else region_instant_snapshots_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -1053,22 +1041,15 @@ def run_module(user_args, session):
         primary_resource="Reservations",
         resource=reservations_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        zones,
-                        lambda zone: reservations_resource.list(
-                            project_id=project_id,
-                            zone=zone,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Reservations",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                zones,
+                lambda zone: reservations_resource.list(
+                    project_id=project_id,
+                    zone=zone,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Reservations",
             ) if explicit_zone_scope and zones else reservations_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -1125,22 +1106,15 @@ def run_module(user_args, session):
         primary_resource="Resource Policies",
         resource=resource_policies_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        regions,
-                        lambda region: resource_policies_resource.list(
-                            project_id=project_id,
-                            region=region,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Resource Policies",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                regions,
+                lambda region: resource_policies_resource.list(
+                    project_id=project_id,
+                    region=region,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Resource Policies",
             ) if explicit_region_scope and regions else resource_policies_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -1159,22 +1133,15 @@ def run_module(user_args, session):
         primary_resource="Storage Pools",
         resource=storage_pools_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        zones,
-                        lambda zone: storage_pools_resource.list(
-                            project_id=project_id,
-                            zone=zone,
-                            action_dict=action_dict,
-                        ),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Storage Pools",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                zones,
+                lambda zone: storage_pools_resource.list(
+                    project_id=project_id,
+                    zone=zone,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Storage Pools",
             ) if explicit_zone_scope and zones else storage_pools_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
@@ -1193,18 +1160,15 @@ def run_module(user_args, session):
         primary_resource="Disks",
         resource=disks_resource,
         list_callback=lambda action_dict: (
-            sum(
-                (
-                    batch or []
-                    for batch in parallel_map(
-                        zones,
-                        lambda zone: disks_resource.list(project_id=project_id, zone=zone, action_dict=action_dict),
-                        threads=getattr(args, "threads", 3),
-                        progress_label="Compute Disks",
-                    )
-                    if batch not in ("Not Enabled", None)
+            _collect_scoped_batches(
+                zones,
+                lambda zone: disks_resource.list(
+                    project_id=project_id,
+                    zone=zone,
+                    action_dict=action_dict,
                 ),
-                [],
+                threads=getattr(args, "threads", 3),
+                progress_label="Compute Disks",
             ) if explicit_zone_scope and zones else disks_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,

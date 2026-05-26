@@ -8,6 +8,7 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import name_from_input
 from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     parse_csv_file_args,
@@ -123,11 +124,12 @@ def run_module(user_args, session):
                 for row in queue_rows:
                     queues_resource.save([row], project_id=project_id, location=str(row.get("location") or "").strip())
         elif not manual_queues_requested:
-            listed_by_location = parallel_map(
+            listed_by_location = map_regions_with_disabled_short_circuit(
                 locations,
-                lambda location: (
-                    location,
-                    queues_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+                lambda location: queues_resource.list(
+                    project_id=project_id,
+                    location=location,
+                    action_dict=scope_actions,
                 ),
                 threads=getattr(args, "threads", 3),
                 progress_label="Cloud Tasks Queues",
@@ -154,11 +156,12 @@ def run_module(user_args, session):
             )
 
     if selected.get("tasks", False) and not discovered_queue_names and need_queue_discovery:
-        listed_by_location = parallel_map(
+        listed_by_location = map_regions_with_disabled_short_circuit(
             locations,
-            lambda location: (
-                location,
-                queues_resource.list(project_id=project_id, location=location, action_dict=scope_actions),
+            lambda location: queues_resource.list(
+                project_id=project_id,
+                location=location,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
             progress_label="Cloud Tasks Queue Discovery",

@@ -8,6 +8,7 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.service_runtime import (
     get_cached_rows,
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     print_missing_dependency,
@@ -70,11 +71,12 @@ def run_module(user_args, session):
 
     if selected.get("keyrings", False):
         all_keyrings = []
-        listed_by_region = parallel_map(
+        listed_by_region = map_regions_with_disabled_short_circuit(
             regions,
-            lambda region: (
-                region,
-                keyrings_resource.list(project_id=project_id, location=region, action_dict=scope_actions),
+            lambda region: keyrings_resource.list(
+                project_id=project_id,
+                location=region,
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )

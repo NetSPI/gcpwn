@@ -8,7 +8,7 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import name_from_input
 from gcpwn.core.utils.service_runtime import (
-    parallel_map,
+    map_regions_with_disabled_short_circuit,
     parse_component_args,
     parse_csv_file_args,
     resolve_selected_components,
@@ -179,15 +179,12 @@ def run_module(user_args, session):
             regions = ["-"]
             print("[*] No explicit Cloud Functions regions provided; attempting wildcard listing (locations/-).")
 
-        listed_by_region = parallel_map(
+        listed_by_region = map_regions_with_disabled_short_circuit(
             regions,
-            lambda region: (
-                region,
-                resource.list(
-                    project_id=project_id,
-                    parent=f"projects/{project_id}/locations/{region}",
-                    action_dict=scope_actions,
-                ),
+            lambda region: resource.list(
+                project_id=project_id,
+                parent=f"projects/{project_id}/locations/{region}",
+                action_dict=scope_actions,
             ),
             threads=getattr(args, "threads", 3),
         )

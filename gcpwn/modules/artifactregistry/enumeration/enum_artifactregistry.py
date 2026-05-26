@@ -19,6 +19,7 @@ from gcpwn.core.utils.module_helpers import (
 )
 from gcpwn.core.utils.serialization import hydrate_get_request_rows
 from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     parse_csv_file_args,
@@ -493,15 +494,12 @@ def run_module(user_args, session):
                 if isinstance(row, dict) and row:
                     repositories_rows.append(row)
         elif not manual_repository_ids_requested:
-            listed_by_region = parallel_map(
+            listed_by_region = map_regions_with_disabled_short_circuit(
                 regions,
-                lambda region: (
-                    region,
-                    repositories_resource.list(
-                        project_id=project_id,
-                        location=region,
-                        action_dict=scope_actions,
-                    ),
+                lambda region: repositories_resource.list(
+                    project_id=project_id,
+                    location=region,
+                    action_dict=scope_actions,
                 ),
                 threads=getattr(args, "threads", 3),
             )

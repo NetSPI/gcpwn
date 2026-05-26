@@ -8,6 +8,7 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 from gcpwn.core.utils.module_helpers import name_from_input
 from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
     parallel_map,
     parse_component_args,
     parse_csv_file_args,
@@ -25,6 +26,18 @@ COMPONENTS = [
     ("services", "Enumerate Cloud Run services"),
     ("jobs", "Enumerate Cloud Run jobs"),
 ]
+
+
+def _scan_regions(*, regions: list[str], threads: int, label: str, worker):
+    if not regions:
+        print("[*] No Cloud Run regions available. Supply --regions-list/--regions-file, or use --all-regions.")
+        return []
+    return map_regions_with_disabled_short_circuit(
+        regions,
+        worker,
+        threads=threads,
+        progress_label=f"Cloud Run {label}",
+    )
 
 
 def _parse_args(user_args):
@@ -143,13 +156,15 @@ def run_module(user_args, session):
                 if row
             ]
         elif not manual_services_requested:
-            listed_by_region = parallel_map(
-                regions,
-                lambda region: (
-                    region,
-                    services_resource.list(project_id=project_id, location=region, action_dict=scope_actions),
-                ),
+            listed_by_region = _scan_regions(
+                regions=regions,
                 threads=getattr(args, "threads", 3),
+                label="services",
+                worker=lambda region: services_resource.list(
+                    project_id=project_id,
+                    location=region,
+                    action_dict=scope_actions,
+                ),
             )
             for region, listed in listed_by_region:
                 if listed in ("Not Enabled", None):
@@ -253,13 +268,15 @@ def run_module(user_args, session):
                 if row
             ]
         elif not manual_jobs_requested:
-            listed_by_region = parallel_map(
-                regions,
-                lambda region: (
-                    region,
-                    jobs_resource.list(project_id=project_id, location=region, action_dict=scope_actions),
-                ),
+            listed_by_region = _scan_regions(
+                regions=regions,
                 threads=getattr(args, "threads", 3),
+                label="jobs",
+                worker=lambda region: jobs_resource.list(
+                    project_id=project_id,
+                    location=region,
+                    action_dict=scope_actions,
+                ),
             )
             for region, listed in listed_by_region:
                 if listed in ("Not Enabled", None):

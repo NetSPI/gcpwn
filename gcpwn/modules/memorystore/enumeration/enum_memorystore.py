@@ -8,7 +8,7 @@ from google.cloud.redis_v1.types import Instance
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_tail, extract_project_id_from_resource
 from gcpwn.core.utils.service_runtime import (
-    parallel_map,
+    map_regions_with_disabled_short_circuit,
     parse_component_args,
     parse_csv_file_args,
     resolve_selected_components,
@@ -73,14 +73,11 @@ def run_module(user_args, session):
             regions = session.workspace_config.preferred_regions
 
         if regions:
-            listed_by_region = parallel_map(
+            listed_by_region = map_regions_with_disabled_short_circuit(
                 regions,
-                lambda region: (
-                    region,
-                    redis_resource.list(
-                        parent=f"projects/{project_id}/locations/{region}",
-                        action_dict=action_dict,
-                    ),
+                lambda region: redis_resource.list(
+                    parent=f"projects/{project_id}/locations/{region}",
+                    action_dict=action_dict,
                 ),
                 threads=getattr(args, "threads", 3),
             )

@@ -5,7 +5,11 @@ from collections import defaultdict
 
 from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.utils.action_recording import has_recorded_actions
-from gcpwn.core.utils.service_runtime import parallel_map, parse_component_args, resolve_selected_components
+from gcpwn.core.utils.service_runtime import (
+    map_regions_with_disabled_short_circuit,
+    parse_component_args,
+    resolve_selected_components,
+)
 from gcpwn.modules.cloudcompute.enumeration.enum_cloudcompute_resources import (
     _process_existing_resource,
     _resolve_regions,
@@ -123,7 +127,7 @@ def run_module(user_args, session):
         list_callback=lambda action_dict: sum(
             (
                 batch or []
-                for batch in parallel_map(
+                for _region, batch in map_regions_with_disabled_short_circuit(
                     regions,
                     lambda region: region_backend_services_resource.list(
                         project_id=project_id,
