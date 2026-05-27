@@ -46,6 +46,21 @@ _DEFAULT_CONDITION_OPTION = ConditionOption(
 )
 
 
+def _progress_interval(total: int) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // 20)
+
+
+def _print_progress(label: str, processed: int, total: int, *, interval: int | None = None) -> None:
+    if total <= 0 or processed <= 0:
+        return
+    step = interval if interval is not None else _progress_interval(total)
+    if processed != 1 and processed != total and processed % step != 0:
+        return
+    print(f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})")
+
+
 @dataclass(frozen=True)
 class _ScopedExpansionContext:
     conditional_evaluation: bool
@@ -636,16 +651,53 @@ def _section_build_binding_entries(
         scope_display_by_name=scope_display_by_name,
         project_id_by_scope=scope_resource_indexes.project_id_by_scope_name,
     )
+    total_members = len(member_binding_index)
+    total_resources = 0
+    total_binding_records = 0
+    for resource_map in member_binding_index.values():
+        if not isinstance(resource_map, dict):
+            continue
+        total_resources += len(resource_map)
+        for payload in resource_map.values():
+            if not isinstance(payload, dict):
+                continue
+            binding_records = payload.get("binding_records") or []
+            if isinstance(binding_records, list):
+                total_binding_records += len(binding_records)
+    print(
+        "[*] Stage 2 tally: "
+        f"members={total_members}, resources={total_resources}, binding_records={total_binding_records}"
+    )
+    processed_members = 0
+    processed_resources = 0
+    processed_binding_records = 0
 
     for member_key, resource_map in member_binding_index.items():
-        
+        processed_members += 1
+        _print_progress("Policy members processed", processed_members, total_members)
+        if not isinstance(resource_map, dict):
+            continue
+
         member_token = principal_node_id(member_key)
 
         # Step through each resoruce for a given member and its correspnding bindings
         for payload in resource_map.values():
+            processed_resources += 1
+            _print_progress("Policy resources processed", processed_resources, total_resources)
+            if not isinstance(payload, dict):
+                continue
+            binding_records = payload.get("binding_records") or []
+            if not isinstance(binding_records, list):
+                continue
 
             # Step through each binding for a given resource for a given member
-            for raw_record in payload["binding_records"]:
+            for raw_record in binding_records:
+                processed_binding_records += 1
+                _print_progress(
+                    "Policy binding records processed",
+                    processed_binding_records,
+                    total_binding_records,
+                )
                 
                 # Inherited rows are generated from direct rows during simplification.
                 # Skip them here and rely on this stage's fan-out logic.

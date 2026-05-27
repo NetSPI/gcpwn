@@ -31,6 +31,19 @@ def _normalized_principal_tokens(values: Iterable[str] | None) -> list[str]:
     )
 
 
+def _progress_interval(total: int) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // 20)
+
+
+def _should_log_progress(processed: int, total: int, *, interval: int | None = None) -> bool:
+    if total <= 0 or processed <= 0:
+        return False
+    step = interval if interval is not None else _progress_interval(total)
+    return processed == total or processed == 1 or processed % step == 0
+
+
 def _ensure_principal_node(
     builder: OpenGraphBuilder,
     member: str,
@@ -70,36 +83,42 @@ def _add_workspace_principal_nodes(
     member_prefix: str,
     node_type: str,
     source: str,
+    progress_label: str,
 ) -> None:
     # Shared Google Workspace principal-node seeding helper.
     # Expected row examples:
     # - user row:  {"email":"alice@example.com","display_name":"Alice","user_id":"123","customer_id":"C..."}
     # - group row: {"email":"eng@example.com","display_name":"Engineering","description":"...","customer_id":"C..."}
     #
-    for row in rows or []:
+    row_list = [row for row in (rows or []) if isinstance(row, dict)]
+    total_rows = len(row_list)
+    for index, row in enumerate(row_list, start=1):
         email = str(row.get("email") or "").strip().lower()
-        if not email:
-            continue
-        member = f"{member_prefix}:{email}"
-        node_id = principal_node_id(member)
-        if not node_id:
-            continue
-        props = dict(principal_member_properties(member))
-        row_display_name = str(row.get("display_name") or "").strip()
-        if row_display_name:
-            props["display_name"] = row_display_name
-            props["name"] = row_display_name
+        if email:
+            member = f"{member_prefix}:{email}"
+            node_id = principal_node_id(member)
+            if node_id:
+                props = dict(principal_member_properties(member))
+                row_display_name = str(row.get("display_name") or "").strip()
+                if row_display_name:
+                    props["display_name"] = row_display_name
+                    props["name"] = row_display_name
 
-        # Keep full workspace row fidelity on the node while preserving canonical
-        # principal properties when keys overlap.
-        extras = dict(row)
-        node_props = {**extras, **props}
-        node_props["source"] = source
-        builder.add_node(
-            node_id,
-            node_type,
-            **node_props,
-        )
+                # Keep full workspace row fidelity on the node while preserving canonical
+                # principal properties when keys overlap.
+                extras = dict(row)
+                node_props = {**extras, **props}
+                node_props["source"] = source
+                builder.add_node(
+                    node_id,
+                    node_type,
+                    **node_props,
+                )
+        if _should_log_progress(index, total_rows):
+            print(
+                f"[*] {progress_label}: {index}/{total_rows} "
+                f"(remaining {max(0, total_rows - index)})"
+            )
 
 
 def _add_workspace_nodes(
@@ -117,6 +136,7 @@ def _add_workspace_nodes(
         member_prefix="user",
         node_type="GoogleUser",
         source="workspace_users",
+        progress_label="Users processed",
     )
     _add_workspace_principal_nodes(
         builder,
@@ -124,33 +144,43 @@ def _add_workspace_nodes(
         member_prefix="group",
         node_type="GoogleGroup",
         source="workspace_groups",
+        progress_label="Groups processed",
     )
 
 
-def _add_group_membership_edges(builder: OpenGraphBuilder, group_memberships: Iterable[dict[str, Any]] | None) -> None:
+def _add_group_membership_edges(
+    builder: OpenGraphBuilder,
+    group_memberships: Iterable[dict[str, Any]] | None,
+) -> None:
     # Add explicit group membership edges from workspace membership rows.
     # Expected row shape (canonical): {"group_member":"group:...","member":"user:/serviceAccount:...","source":"..."}
-    for row in group_memberships or []:
+    row_list = [row for row in (group_memberships or []) if isinstance(row, dict)]
+    total_rows = len(row_list)
+    for index, row in enumerate(row_list, start=1):
         source = str(row.get("source") or "").strip() or "workspace_group_memberships"
         group = principal_node_id(str(row.get("group_member") or "").strip())
         member = principal_node_id(str(row.get("member") or "").strip())
-        if not group or not member:
-            continue
-        if is_convenience_member(member):
-            continue
+        if group and member and not is_convenience_member(member):
+            # Ensure source/destination principal nodes exist before adding edge.
+            _ensure_principal_node(builder, member)
+            _ensure_principal_node(builder, group)
+            builder.add_edge(
+                member,
+                group,
+                "GOOGLE_MEMBER_OF",
+                source=source,
+            )
+        if _should_log_progress(index, total_rows):
+            print(
+                f"[*] Group memberships processed: {index}/{total_rows} "
+                f"(remaining {max(0, total_rows - index)})"
+            )
 
-        # Ensure source/destination principal nodes exist before adding edge.
-        _ensure_principal_node(builder, member)
-        _ensure_principal_node(builder, group)
-        builder.add_edge(
-            member,
-            group,
-            "GOOGLE_MEMBER_OF",
-            source=source,
-        )
 
-
-def _add_iam_member_nodes(builder: OpenGraphBuilder, members: Iterable[str] | None) -> None:
+def _add_iam_member_nodes(
+    builder: OpenGraphBuilder,
+    members: Iterable[str] | None,
+) -> None:
     # Add principals observed in IAM bindings.
     # `members` typically comes from simplified["member_binding_index"].keys(), e.g.
     # ["user:alice@example.com", "group:eng@example.com", "domain:example.com", "allUsers"].
@@ -162,10 +192,16 @@ def _add_iam_member_nodes(builder: OpenGraphBuilder, members: Iterable[str] | No
     # pseudo-principal itself as a standalone identity node in stage 10.
     #
     # Also skip nodes already present (often seeded via Workspace data).
-    for member in _normalized_principal_tokens(members):
-        if not member or is_convenience_member(member) or member in builder.node_map:
-            continue
-        _ensure_principal_node(builder, member, source="iam_members")
+    normalized_members = _normalized_principal_tokens(members)
+    total_members = len(normalized_members)
+    for index, member in enumerate(normalized_members, start=1):
+        if member and not is_convenience_member(member) and member not in builder.node_map:
+            _ensure_principal_node(builder, member, source="iam_members")
+        if _should_log_progress(index, total_members):
+            print(
+                f"[*] IAM principals processed: {index}/{total_members} "
+                f"(remaining {max(0, total_members - index)})"
+            )
 
 
 def _member_email(member: str) -> str:
@@ -292,6 +328,18 @@ def build_users_groups_graph(context) -> dict[str, int | bool]:
     simplified_base = context.simplified_hierarchy_permissions(include_inferred_permissions=False)
     member_binding_index = dict(simplified_base.get("member_binding_index") or {})
     iam_members = sorted(member_binding_index.keys())
+    workspace_users_rows = [row for row in (context.rows("workspace_users") or []) if isinstance(row, dict)]
+    workspace_groups_rows = [row for row in (context.rows("workspace_groups") or []) if isinstance(row, dict)]
+    group_membership_rows = [row for row in (context.rows("group_memberships") or []) if isinstance(row, dict)]
+    iam_service_accounts_rows = [row for row in (context.rows("iam_service_accounts") or []) if isinstance(row, dict)]
+    print(
+        "[*] Stage 1 tally: "
+        f"users={len(workspace_users_rows)}, "
+        f"groups={len(workspace_groups_rows)}, "
+        f"iam_members={len(iam_members)}, "
+        f"group_memberships={len(group_membership_rows)}, "
+        f"service_accounts={len(iam_service_accounts_rows)}"
+    )
 
     hierarchy = context.hierarchy_data()
     hierarchy_rows = context.rows("hierarchy_rows")
@@ -313,8 +361,8 @@ def build_users_groups_graph(context) -> dict[str, int | bool]:
     # 1) Seed workspace users/groups
     _add_workspace_nodes(
         builder,
-        workspace_users=context.rows("workspace_users"),
-        workspace_groups=context.rows("workspace_groups"),
+        workspace_users=workspace_users_rows,
+        workspace_groups=workspace_groups_rows,
     )
 
     # 2) Fill in any remaining IAM principals, including selector-style principals:
@@ -323,7 +371,10 @@ def build_users_groups_graph(context) -> dict[str, int | bool]:
     _add_iam_member_nodes(builder, iam_members)
 
     # 3) Add explicit group membership edges
-    _add_group_membership_edges(builder, context.rows("group_memberships"))
+    _add_group_membership_edges(
+        builder,
+        group_membership_rows,
+    )
 
     # 4) Add inferred domain membership edges when domain nodes exist
     _add_domain_wide_membership_edges(builder)
@@ -332,7 +383,7 @@ def build_users_groups_graph(context) -> dict[str, int | bool]:
     #    are already present in IAM members (project/folder/org SA principal sets).
     _add_crm_service_account_principal_set_edges(
         builder,
-        iam_service_accounts_rows=context.rows("iam_service_accounts"),
+        iam_service_accounts_rows=iam_service_accounts_rows,
         project_scope_by_project_id=project_scope_by_project_id,
         parent_by_name=hierarchy["parent_by_name"],
     )

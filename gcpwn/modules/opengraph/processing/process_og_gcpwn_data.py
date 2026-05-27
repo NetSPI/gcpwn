@@ -20,7 +20,8 @@ Stage map:
 import argparse
 import json
 import time
-from typing import TypedDict
+from pathlib import Path
+from typing import Any, TypedDict
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.modules.opengraph.utilities.stage_2_policy_bindings import (
@@ -69,6 +70,347 @@ _STAGE_REGISTRY: tuple[_StageSpec, ...] = (
         "title": "Resource expansion graph",
     },
 )
+
+_SPLIT_SECTION_KEYS: tuple[str, ...] = (
+    "users_groups",
+    "iam_bindings",
+    "inferred_permissions",
+    "resource_expansion",
+)
+_SPLIT_SECTION_ALIASES: dict[str, str] = {
+    "users_groups": "users_groups",
+    "users-groups": "users_groups",
+    "users/groups": "users_groups",
+    "usersgroups": "users_groups",
+    "groups": "users_groups",
+    "iam_bindings": "iam_bindings",
+    "iam-bindings": "iam_bindings",
+    "iam_policies": "iam_bindings",
+    "iam-policies": "iam_bindings",
+    "iampolicies": "iam_bindings",
+    "inferred_permissions": "inferred_permissions",
+    "inferred-permissions": "inferred_permissions",
+    "inferredpermissions": "inferred_permissions",
+    "resource_expansion": "resource_expansion",
+    "resource-expansion": "resource_expansion",
+    "resourceexpansion": "resource_expansion",
+}
+_USERS_GROUPS_SOURCE_HINTS: tuple[str, ...] = (
+    "workspace_users",
+    "workspace_groups",
+    "workspace_group_memberships",
+    "domain_wide_memberships",
+    "iam_members",
+    "stage_1_principals",
+)
+_RESOURCE_EXPANSION_SOURCE_HINTS: tuple[str, ...] = (
+    "resource_expansion",
+    "service_cache",
+    "cloudcompute_instances",
+    "workload_identity",
+    "iam_sa_keys",
+)
+_PRINCIPAL_NODE_KINDS: set[str] = {
+    "gcpallusers",
+    "gcpallauthenticatedusers",
+    "googleuser",
+    "googlegroup",
+    "gcpserviceaccount",
+    "gcpdomainprincipal",
+    "gcpconveniencemember",
+    "gcpprincipal",
+}
+
+
+def _parse_split_sections(raw_value: str | None) -> list[str]:
+    if raw_value is None or not str(raw_value).strip():
+        return list(_SPLIT_SECTION_KEYS)
+
+    selected: list[str] = []
+    for token in str(raw_value).split(","):
+        normalized = _SPLIT_SECTION_ALIASES.get(str(token or "").strip().lower())
+        if not normalized:
+            raise ValueError(
+                f"Unsupported split section '{token}'. Supported values: "
+                f"{', '.join(_SPLIT_SECTION_KEYS)}"
+            )
+        if normalized not in selected:
+            selected.append(normalized)
+    return selected or list(_SPLIT_SECTION_KEYS)
+
+
+def _source_to_section(source_value: str) -> str | None:
+    source = str(source_value or "").strip().lower()
+    if not source:
+        return None
+    if source == "credential_permission_summary" or "inferred" in source:
+        return "inferred_permissions"
+    if source == "iam_allow_policies" or "iam_bindings" in source:
+        return "iam_bindings"
+    if source.startswith("workspace_") or source in _USERS_GROUPS_SOURCE_HINTS:
+        return "users_groups"
+    if any(hint in source for hint in _RESOURCE_EXPANSION_SOURCE_HINTS):
+        return "resource_expansion"
+    if source == "iam_service_accounts":
+        return "users_groups"
+    return None
+
+
+def _edge_section(edge: dict[str, Any]) -> str:
+    props = edge.get("properties")
+    if isinstance(props, dict):
+        source_section = _source_to_section(str(props.get("source") or ""))
+        if source_section:
+            return source_section
+
+    kind = str(edge.get("kind") or "").strip().upper()
+    if kind.startswith("INFERRED_"):
+        return "inferred_permissions"
+    if "BINDING" in kind:
+        return "iam_bindings"
+    return "resource_expansion"
+
+
+def _node_section(node: dict[str, Any]) -> str:
+    props = node.get("properties")
+    if isinstance(props, dict):
+        source_section = _source_to_section(str(props.get("source") or ""))
+        if source_section:
+            return source_section
+
+    kind_tokens = {str(kind or "").strip().lower() for kind in (node.get("kinds") or []) if str(kind or "").strip()}
+    if kind_tokens & _PRINCIPAL_NODE_KINDS:
+        return "users_groups"
+    if any("iambinding" in token for token in kind_tokens):
+        return "iam_bindings"
+    if any("key" in token or "workloadidentity" in token for token in kind_tokens):
+        return "resource_expansion"
+    return "resource_expansion"
+
+
+def _build_graph_payload(*, metadata: dict[str, Any], nodes: list[dict[str, Any]], edges: list[dict[str, Any]], section: str | None = None) -> dict[str, Any]:
+    metadata_payload = dict(metadata or {})
+    if section:
+        metadata_payload["split_section"] = section
+    return {
+        "metadata": metadata_payload,
+        "graph": {
+            "nodes": list(nodes or []),
+            "edges": list(edges or []),
+        },
+        "summary": {
+            "nodes": len(nodes or []),
+            "edges": len(edges or []),
+        },
+    }
+
+
+def _payload_size_bytes(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _write_split_outputs(
+    *,
+    base_output_path: str,
+    payload: dict[str, Any],
+    selected_sections: list[str],
+    max_size_mb: float,
+    debug: bool = False,
+) -> tuple[list[str], str]:
+    max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
+    metadata = dict(payload.get("metadata") or {})
+    graph = dict(payload.get("graph") or {})
+    all_nodes = [node for node in (graph.get("nodes") or []) if isinstance(node, dict)]
+    all_edges = [edge for edge in (graph.get("edges") or []) if isinstance(edge, dict)]
+    node_index = {
+        str(node.get("id") or "").strip(): node
+        for node in all_nodes
+        if str(node.get("id") or "").strip()
+    }
+
+    section_edges: dict[str, list[dict[str, Any]]] = {key: [] for key in _SPLIT_SECTION_KEYS}
+    section_node_ids: dict[str, set[str]] = {key: set() for key in _SPLIT_SECTION_KEYS}
+
+    for node in all_nodes:
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        section_node_ids[_node_section(node)].add(node_id)
+
+    for edge in all_edges:
+        section_edges[_edge_section(edge)].append(edge)
+
+    base_path = Path(base_output_path)
+    output_dir = base_path.parent
+    stem = base_path.stem
+    written_files: list[str] = []
+    manifest_sections: dict[str, Any] = {}
+
+    for section in selected_sections:
+        edges = list(section_edges.get(section) or [])
+        seeded_node_ids = set(section_node_ids.get(section) or set())
+
+        if not edges and not seeded_node_ids:
+            continue
+
+        referenced_node_ids: set[str] = set()
+        for edge in edges:
+            start = str((((edge.get("start") or {}) if isinstance(edge.get("start"), dict) else {}).get("value") or "")).strip()
+            end = str((((edge.get("end") or {}) if isinstance(edge.get("end"), dict) else {}).get("value") or "")).strip()
+            if start:
+                referenced_node_ids.add(start)
+            if end:
+                referenced_node_ids.add(end)
+        seeded_node_ids.update(referenced_node_ids)
+        seeded_nodes = [
+            node_index[node_id]
+            for node_id in sorted(seeded_node_ids)
+            if node_id in node_index
+        ]
+
+        chunks: list[dict[str, Any]] = []
+        current_edges: list[dict[str, Any]] = []
+        current_edge_node_ids: set[str] = set()
+
+        def _flush_chunk(extra_nodes: list[dict[str, Any]] | None = None) -> None:
+            edge_nodes = [
+                node_index[node_id]
+                for node_id in sorted(current_edge_node_ids)
+                if node_id in node_index
+            ]
+            nodes_for_chunk = edge_nodes
+            if extra_nodes:
+                seen = {str(node.get("id") or "").strip() for node in edge_nodes}
+                for node in extra_nodes:
+                    node_id = str(node.get("id") or "").strip()
+                    if not node_id or node_id in seen:
+                        continue
+                    seen.add(node_id)
+                    nodes_for_chunk.append(node)
+            chunk_payload = _build_graph_payload(
+                metadata=metadata,
+                nodes=nodes_for_chunk,
+                edges=list(current_edges),
+                section=section,
+            )
+            chunks.append(chunk_payload)
+
+        for edge in edges:
+            start = str((((edge.get("start") or {}) if isinstance(edge.get("start"), dict) else {}).get("value") or "")).strip()
+            end = str((((edge.get("end") or {}) if isinstance(edge.get("end"), dict) else {}).get("value") or "")).strip()
+            trial_edges = [*current_edges, edge]
+            trial_edge_node_ids = set(current_edge_node_ids)
+            if start:
+                trial_edge_node_ids.add(start)
+            if end:
+                trial_edge_node_ids.add(end)
+            trial_nodes = [
+                node_index[node_id]
+                for node_id in sorted(trial_edge_node_ids)
+                if node_id in node_index
+            ]
+            trial_payload = _build_graph_payload(
+                metadata=metadata,
+                nodes=trial_nodes,
+                edges=trial_edges,
+                section=section,
+            )
+            if current_edges and _payload_size_bytes(trial_payload) > max_size_bytes:
+                _flush_chunk()
+                current_edges = []
+                current_edge_node_ids = set()
+                trial_edges = [edge]
+                trial_edge_node_ids = set()
+                if start:
+                    trial_edge_node_ids.add(start)
+                if end:
+                    trial_edge_node_ids.add(end)
+
+            current_edges = trial_edges
+            current_edge_node_ids = trial_edge_node_ids
+
+        standalone_nodes = [
+            node
+            for node in seeded_nodes
+            if str(node.get("id") or "").strip() not in current_edge_node_ids
+        ]
+
+        if current_edges:
+            _flush_chunk(extra_nodes=standalone_nodes)
+        elif standalone_nodes:
+            chunk_nodes: list[dict[str, Any]] = []
+            for node in standalone_nodes:
+                trial_nodes = [*chunk_nodes, node]
+                trial_payload = _build_graph_payload(
+                    metadata=metadata,
+                    nodes=trial_nodes,
+                    edges=[],
+                    section=section,
+                )
+                if chunk_nodes and _payload_size_bytes(trial_payload) > max_size_bytes:
+                    chunks.append(
+                        _build_graph_payload(
+                            metadata=metadata,
+                            nodes=list(chunk_nodes),
+                            edges=[],
+                            section=section,
+                        )
+                    )
+                    chunk_nodes = [node]
+                else:
+                    chunk_nodes = trial_nodes
+            if chunk_nodes:
+                chunks.append(
+                    _build_graph_payload(
+                        metadata=metadata,
+                        nodes=list(chunk_nodes),
+                        edges=[],
+                        section=section,
+                    )
+                )
+
+        section_file_paths: list[str] = []
+        for index, chunk in enumerate(chunks, start=1):
+            suffix = f"_part{index}" if len(chunks) > 1 else ""
+            section_filename = f"{stem}_{section}{suffix}.json"
+            section_path = output_dir / section_filename
+            with section_path.open("w", encoding="utf-8") as handle:
+                json.dump(chunk, handle, ensure_ascii=False, indent=2)
+            section_file_paths.append(str(section_path))
+            written_files.append(str(section_path))
+
+        manifest_sections[section] = {
+            "parts": len(section_file_paths),
+            "files": section_file_paths,
+            "nodes": sum(int((chunk.get("summary") or {}).get("nodes") or 0) for chunk in chunks),
+            "edges": sum(int((chunk.get("summary") or {}).get("edges") or 0) for chunk in chunks),
+        }
+        UtilityTools.dlog(
+            debug,
+            "opengraph split section complete",
+            section=section,
+            parts=len(section_file_paths),
+            files=section_file_paths,
+        )
+
+    manifest_payload = {
+        "metadata": {
+            **metadata,
+            "source_file": str(base_path),
+            "max_target_size_mb": float(max_size_mb),
+            "selected_sections": list(selected_sections),
+        },
+        "sections": manifest_sections,
+        "summary": {
+            "files_written": len(written_files),
+            "sections_written": len([section for section in selected_sections if section in manifest_sections]),
+        },
+    }
+    manifest_path = output_dir / f"{stem}_split_manifest.json"
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest_payload, handle, ensure_ascii=False, indent=2)
+    written_files.append(str(manifest_path))
+    return written_files, str(manifest_path)
 
 
 def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = False):
@@ -122,6 +464,30 @@ def _parse_args(user_args):
             "Skip graph rebuild and use existing opengraph_nodes/opengraph_edges from the current workspace. "
             "Useful for re-exporting graph JSON without rebuilding."
         ),
+    )
+    parser.add_argument(
+        "--split-json-output",
+        action="store_true",
+        help=(
+            "Additionally write sectioned/chunked OpenGraph JSON files for easier BloodHound uploads. "
+            "Base single-file export is still written."
+        ),
+    )
+    parser.add_argument(
+        "--split-json-sections",
+        required=False,
+        default="users_groups,iam_bindings,inferred_permissions,resource_expansion",
+        help=(
+            "Comma list of split sections to emit. Supported: "
+            "users_groups, iam_bindings, inferred_permissions, resource_expansion"
+        ),
+    )
+    parser.add_argument(
+        "--split-json-max-size-mb",
+        type=float,
+        default=50.0,
+        required=False,
+        help="Target max size (MB) per split JSON part (best-effort, give-or-take).",
     )
 
     # IAM graph behavior
@@ -403,6 +769,28 @@ def run_module(user_args, session):
         with open(output_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
         exported_path = output_path
+
+        if args.split_json_output:
+            try:
+                selected_sections = _parse_split_sections(getattr(args, "split_json_sections", None))
+                max_split_size_mb = float(getattr(args, "split_json_max_size_mb", 50.0) or 50.0)
+                if max_split_size_mb <= 0:
+                    raise ValueError("--split-json-max-size-mb must be greater than 0")
+                split_files, manifest_path = _write_split_outputs(
+                    base_output_path=output_path,
+                    payload=payload,
+                    selected_sections=selected_sections,
+                    max_size_mb=max_split_size_mb,
+                    debug=args.debug,
+                )
+                print(
+                    f"[*] Wrote {len(split_files) - 1} split JSON graph file(s) "
+                    f"across {len(selected_sections)} selected section(s)."
+                )
+                print(f"[*] Saved split manifest to {manifest_path}")
+            except ValueError as exc:
+                print(f"[X] Split-output configuration error: {exc}")
+                return -1
 
     if should_run_graph_build:
         print(f"[*] OpenGraph generation complete. Nodes: {len(nodes)} | Edges: {len(edges)}")
