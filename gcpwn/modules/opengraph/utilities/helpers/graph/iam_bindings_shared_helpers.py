@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Iterable
@@ -1815,6 +1816,13 @@ def _emit_iam_binding_edges_from_entries(
     scope_display_by_name = hierarchy.get("scope_display_by_name") or {}
     parent_by_name = hierarchy.get("parent_by_name") or {}
     entries = list(entries or [])
+    rule_progress_label = (
+        "single-permission rules checked"
+        if dangerous_rule_mode == "base"
+        else "multi-permission combo rules checked"
+        if dangerous_rule_mode == "advanced"
+        else "rules checked"
+    )
 
     role_subject_state: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -1838,12 +1846,27 @@ def _emit_iam_binding_edges_from_entries(
             },
         }
 
+    def _print_rule_scan_progress(processed_rules: int, total_rules: int, matched_events: int) -> None:
+        if total_rules <= 0:
+            return
+        message = (
+            f"[*] Stage 2 {rule_progress_label}: {processed_rules}/{total_rules} "
+            f"(matched_events={matched_events})"
+        )
+        if sys.stdout.isatty():
+            print(f"\r{message}", end="", flush=True)
+            if processed_rules == total_rules:
+                print("")
+            return
+        print(message)
+
     dangerous_events = collect_rule_events(
         entries=entries,
         rules=rules,
         matches_for_group=_matches_for_group,
         normalize_binding_permission_map=_normalize_binding_permission_map,
         normalized_token_list=normalized_token_list,
+        progress_callback=_print_rule_scan_progress,
     )
     owner_baseline_events = collect_owner_baseline_events(
         entries=entries,

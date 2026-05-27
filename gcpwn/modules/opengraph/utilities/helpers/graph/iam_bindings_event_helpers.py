@@ -11,10 +11,13 @@ def collect_rule_events(
     matches_for_group: Callable[[dict[str, Any], list[Any]], list[dict[str, Any]]],
     normalize_binding_permission_map: Callable[[dict[str, Any] | None], dict[str, list[str]]],
     normalized_token_list: Callable[[Any], list[str]],
+    progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
+    total_rules = len(rules or [])
+    matched_events = 0
     grouped_entries_by_rule_shape: dict[tuple[bool, bool], list[list[Any]]] = {}
-    for rule in rules:
+    for rule_index, rule in enumerate(rules, start=1):
         same_scope_required = bool(rule.get("same_scope_required", True))
         same_project_required = bool(rule.get("same_project_required", False))
         group_key = (same_scope_required, same_project_required)
@@ -83,6 +86,9 @@ def collect_rule_events(
                         "privilege_escalation": True,
                     }
                 )
+                matched_events += 1
+        if progress_callback:
+            progress_callback(rule_index, total_rules, matched_events)
     return events
 
 

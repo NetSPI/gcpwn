@@ -11,6 +11,7 @@ Merged module containing:
 
 from collections import deque
 import hashlib
+import sys
 from typing import Any, Iterable
 
 from gcpwn.core.utils.iam_simplifier import split_member_credname_key
@@ -48,6 +49,44 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import normal
 # Inferred-permissions graphing intentionally skips IAM-condition evaluation.
 # We only review the credential permission summary and materialize:
 #   principal -> HAS_IMPLIED_PERMISSIONS -> implied-IAM-binding -> INFERRED_<EDGE_NAME> -> resource
+
+
+def _progress_interval(total: int) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // 100)
+
+
+def _should_emit_progress(processed: int, total: int) -> bool:
+    if total <= 0 or processed <= 0:
+        return False
+    step = _progress_interval(total)
+    return processed == 1 or processed == total or processed % step == 0
+
+
+def _print_stage3_progress_inline(
+    *,
+    label: str,
+    processed_events: int,
+    total_events: int,
+    implied_bindings_emitted: int,
+    inferred_edges_emitted: int,
+    force: bool = False,
+) -> None:
+    if total_events <= 0 and not force:
+        return
+    if not force and not _should_emit_progress(processed_events, total_events):
+        return
+    message = (
+        f"[*] Stage 3 {label}: events {processed_events}/{total_events}, "
+        f"implied_bindings={implied_bindings_emitted}, inferred_edges={inferred_edges_emitted}"
+    )
+    if sys.stdout.isatty():
+        print(f"\r{message}", end="", flush=True)
+        if force:
+            print("")
+        return
+    print(message)
 
 
 def build_inferred_entries(context) -> tuple[list[BindingPlusScopeEntry], dict[str, dict[str, Any]]]:
@@ -561,6 +600,7 @@ def emit_inferred_permission_edges(
     entry_metadata: dict[str, dict[str, Any]],
     events: list[dict[str, Any]],
     scope_resource_indexes: ScopeResourceIndexes,
+    progress_label: str = "progress",
 ) -> dict[str, Any]:
     # Section A: hydrate shared lookup context and dedupe trackers.
     hierarchy = context.hierarchy_data()
@@ -576,9 +616,26 @@ def emit_inferred_permission_edges(
     skipped_existing_binding_edges = 0
     emitted_targets: set[tuple[str, str, str]] = set()
     emitted_subject_bindings: set[tuple[str, str]] = set()
+    total_events = len(events)
+    processed_events = 0
+    if total_events <= 0:
+        return {
+            "events_total": 0,
+            "implied_bindings_emitted": 0,
+            "edges_emitted": 0,
+            "skipped_existing_binding_edges": 0,
+        }
 
     # Section B: process each rule-match event and emit inferred graph paths.
     for event in events:
+        processed_events += 1
+        _print_stage3_progress_inline(
+            label=progress_label,
+            processed_events=processed_events,
+            total_events=total_events,
+            implied_bindings_emitted=implied_bindings_emitted,
+            inferred_edges_emitted=inferred_edges_emitted,
+        )
         contributors = [entry for entry in (event.get("contributors") or []) if isinstance(entry, BindingPlusScopeEntry)]
         if not contributors:
             continue
@@ -862,6 +919,15 @@ def emit_inferred_permission_edges(
             emitted_targets.add(dedupe_key)
             inferred_edges_emitted += 1
 
+    _print_stage3_progress_inline(
+        label=progress_label,
+        processed_events=processed_events,
+        total_events=total_events,
+        implied_bindings_emitted=implied_bindings_emitted,
+        inferred_edges_emitted=inferred_edges_emitted,
+        force=True,
+    )
+
     # Section D: return compact emission stats for stage_50 orchestration.
     return {
         "events_total": len(events),
@@ -878,6 +944,7 @@ def _emit_inferred_permissions_for_rules(
     entry_metadata: dict[str, dict[str, Any]],
     scope_resource_indexes: ScopeResourceIndexes,
     rules: Iterable[dict[str, Any]],
+    progress_label: str,
 ) -> dict[str, int]:
     rules_list = list(rules or [])
     events = _collect_rule_events_shared(
@@ -887,12 +954,16 @@ def _emit_inferred_permissions_for_rules(
         normalize_binding_permission_map=_normalize_binding_permission_map,
         normalized_token_list=normalized_token_list,
     )
+    print(
+        f"[*] Stage 3 {progress_label} tally: rules={len(rules_list)}, matched_events={len(events)}"
+    )
     emit_stats = emit_inferred_permission_edges(
         context=context,
         entries=entries,
         entry_metadata=entry_metadata,
         events=events,
         scope_resource_indexes=scope_resource_indexes,
+        progress_label=progress_label,
     )
     return {
         "rules_total": len(rules_list),
@@ -917,6 +988,7 @@ def build_inferred_permissions_single_permission(
         entry_metadata=entry_metadata,
         scope_resource_indexes=scope_resource_indexes,
         rules=rules,
+        progress_label="single-permission",
     )
 
 
@@ -934,6 +1006,7 @@ def build_inferred_permissions_multiple_permissions(
         entry_metadata=entry_metadata,
         scope_resource_indexes=scope_resource_indexes,
         rules=rules,
+        progress_label="multi-permission",
     )
 
 
@@ -945,6 +1018,12 @@ def build_iam_inferred_permissions_graph(context) -> dict[str, int | bool]:
     before_nodes, before_edges = context.counts()
     inferred_single_rules, inferred_multi_rules = load_normalized_dangerous_rules_by_family()
     entries, entry_metadata = build_inferred_entries(context)
+    print(
+        "[*] Stage 3 tally: "
+        f"entries={len(entries)}, "
+        f"single_rules={len(inferred_single_rules)}, "
+        f"multi_rules={len(inferred_multi_rules)}"
+    )
     if not entries:
         after_nodes, after_edges = context.counts()
         return {

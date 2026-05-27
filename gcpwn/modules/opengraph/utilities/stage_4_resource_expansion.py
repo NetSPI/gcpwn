@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any, Iterable
 
 from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, parse_json_value
@@ -45,6 +46,49 @@ _WIF_GKE_SUBJECT_SELECTOR_RE = re.compile(r"^ns/([^/]+)/sa/([^/]+)$")
 _WIF_GKE_CLUSTER_SELECTOR_RE = re.compile(
     r"^https://container\.googleapis\.com/v1/projects/([^/]+)/locations/([^/]+)/clusters/(.+)$"
 )
+
+
+def _progress_interval(total: int) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // 100)
+
+
+def _should_emit_progress(processed: int, total: int) -> bool:
+    if total <= 0 or processed <= 0:
+        return False
+    step = _progress_interval(total)
+    return processed == 1 or processed == total or processed % step == 0
+
+
+def _print_inline_progress(label: str, processed: int, total: int, *, force: bool = False) -> None:
+    if total <= 0:
+        return
+    if not force and not _should_emit_progress(processed, total):
+        return
+    message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
+    if sys.stdout.isatty():
+        print(f"\r{message}", end="", flush=True)
+        if force:
+            print("")
+        return
+    print(message)
+
+
+def _print_stage4_section_progress(
+    *,
+    processed_sections: int,
+    total_sections: int,
+    section_label: str,
+    force: bool = False,
+) -> None:
+    message = f"[*] Stage 4 sections: {processed_sections}/{total_sections} ({section_label})"
+    if sys.stdout.isatty():
+        print(f"\r{message}", end="", flush=True)
+        if force:
+            print("")
+        return
+    print(message)
 
 
 def _normalize_graph_scalar(value: Any) -> Any:
@@ -512,10 +556,13 @@ def _add_compute_executes_with_edges(
       compute_instance -> EXECUTES_WITH -> serviceAccount:<email>
     """
     edges_added = 0
-    for row in cloudcompute_instances_rows or []:
+    row_list = [row for row in (cloudcompute_instances_rows or []) if isinstance(row, dict)]
+    total_rows = len(row_list)
+    for index, row in enumerate(row_list, start=1):
         project_id = str(row.get("project_id") or "").strip()
         instance_name = _compute_instance_resource_name(row)
         if not project_id or not instance_name:
+            _print_inline_progress("Stage 4 compute instances processed", index, total_rows)
             continue
         instance_label = resource_leaf_name(instance_name) or instance_name
         instance_region = str(row.get("region_val") or row.get("region") or row.get("location") or "").strip() or resource_location_token(instance_name)
@@ -562,6 +609,8 @@ def _add_compute_executes_with_edges(
                 service_account_email=email,
             )
             edges_added += 1
+        _print_inline_progress("Stage 4 compute instances processed", index, total_rows)
+    _print_inline_progress("Stage 4 compute instances processed", total_rows, total_rows, force=True)
     return edges_added
 
 
@@ -1324,12 +1373,16 @@ def _section_seed_service_account_principals(
     iam_service_accounts_rows: Iterable[dict[str, Any]] | None,
 ) -> int:
     nodes_added = 0
-    for row in iam_service_accounts_rows or []:
+    row_list = [row for row in (iam_service_accounts_rows or []) if isinstance(row, dict)]
+    total_rows = len(row_list)
+    for index, row in enumerate(row_list, start=1):
         principal_type_token = str(row.get("type") or "").strip().lower()
         if "service" not in principal_type_token:
+            _print_inline_progress("Stage 4 service accounts processed", index, total_rows)
             continue
         email = str(row.get("email") or "").strip()
         if not email:
+            _print_inline_progress("Stage 4 service accounts processed", index, total_rows)
             continue
         member = f"serviceAccount:{email}"
         node_id = principal_node_id(member)
@@ -1349,6 +1402,8 @@ def _section_seed_service_account_principals(
         )
         if not existed:
             nodes_added += 1
+        _print_inline_progress("Stage 4 service accounts processed", index, total_rows)
+    _print_inline_progress("Stage 4 service accounts processed", total_rows, total_rows, force=True)
     return nodes_added
 
 
@@ -1359,13 +1414,17 @@ def _section_expand_service_account_keys(
 ) -> tuple[int, int]:
     key_nodes_added = 0
     key_edges_added = 0
-    for row in iam_sa_keys_rows or []:
+    row_list = [row for row in (iam_sa_keys_rows or []) if isinstance(row, dict)]
+    total_rows = len(row_list)
+    for index, row in enumerate(row_list, start=1):
         key_name = str(row.get("name") or "").strip()
         if not key_name:
+            _print_inline_progress("Stage 4 service account keys processed", index, total_rows)
             continue
         service_account_email = extract_path_segment(key_name, "serviceAccounts")
         key_id = extract_path_segment(key_name, "keys")
         if not service_account_email or not key_id:
+            _print_inline_progress("Stage 4 service account keys processed", index, total_rows)
             continue
 
         key_node_id = f"service_account_key:{key_name}"
@@ -1411,6 +1470,8 @@ def _section_expand_service_account_keys(
         )
         if not edge_existed:
             key_edges_added += 1
+        _print_inline_progress("Stage 4 service account keys processed", index, total_rows)
+    _print_inline_progress("Stage 4 service account keys processed", total_rows, total_rows, force=True)
     return key_nodes_added, key_edges_added
 
 
@@ -1483,6 +1544,24 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
     cloudrun_jobs_rows = source_rows["cloudrun_jobs"]
     workload_identity_pools_rows = source_rows["workload_identity_pools"]
     workload_identity_providers_rows = source_rows["workload_identity_providers"]
+    print(
+        "[*] Stage 4 tally: "
+        f"iam_service_accounts={len(iam_service_accounts_rows or [])}, "
+        f"iam_sa_keys={len(iam_sa_keys_rows or [])}, "
+        f"cloudcompute_instances={len(cloudcompute_instances_rows or [])}, "
+        f"cloudfunctions_functions={len(cloudfunctions_functions_rows or [])}, "
+        f"cloudrun_services={len(cloudrun_services_rows or [])}, "
+        f"cloudrun_jobs={len(cloudrun_jobs_rows or [])}, "
+        f"workload_identity_pools={len(workload_identity_pools_rows or [])}, "
+        f"workload_identity_providers={len(workload_identity_providers_rows or [])}"
+    )
+    total_sections = 3
+    processed_sections = 0
+    _print_stage4_section_progress(
+        processed_sections=processed_sections,
+        total_sections=total_sections,
+        section_label="starting",
+    )
 
     section_stats: dict[str, int] = {}
 
@@ -1498,6 +1577,12 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
         cloudrun_jobs_rows=cloudrun_jobs_rows,
         workload_identity_pools_rows=workload_identity_pools_rows,
         workload_identity_providers_rows=workload_identity_providers_rows,
+    )
+    processed_sections += 1
+    _print_stage4_section_progress(
+        processed_sections=processed_sections,
+        total_sections=total_sections,
+        section_label="project/resource topology complete",
     )
 
     # ---------------------------------------------------------------------
@@ -1517,6 +1602,12 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
         context,
         workload_identity_providers_rows=workload_identity_providers_rows,
     )
+    processed_sections += 1
+    _print_stage4_section_progress(
+        processed_sections=processed_sections,
+        total_sections=total_sections,
+        section_label="wif identity workflows complete",
+    )
 
     # ---------------------------------------------------------------------
     # SECTION 30: Attached service accounts (SA principals/keys/runtime attach)
@@ -1534,6 +1625,13 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
     section_stats["compute_executes_with_edges_added"] = _add_compute_executes_with_edges(
         context,
         cloudcompute_instances_rows=cloudcompute_instances_rows,
+    )
+    processed_sections += 1
+    _print_stage4_section_progress(
+        processed_sections=processed_sections,
+        total_sections=total_sections,
+        section_label="service accounts/keys/runtime complete",
+        force=True,
     )
 
     after_nodes, after_edges = context.counts()
