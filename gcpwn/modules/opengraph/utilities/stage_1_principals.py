@@ -10,6 +10,7 @@ Responsibilities:
 - emit inferred domain membership edges when domain nodes exist
 """
 
+import sys
 from typing import Any, Iterable
 
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
@@ -34,7 +35,7 @@ def _normalized_principal_tokens(values: Iterable[str] | None) -> list[str]:
 def _progress_interval(total: int) -> int:
     if total <= 0:
         return 1
-    return max(1, total // 20)
+    return max(1, total // 100)
 
 
 def _should_log_progress(processed: int, total: int, *, interval: int | None = None) -> bool:
@@ -42,6 +43,18 @@ def _should_log_progress(processed: int, total: int, *, interval: int | None = N
         return False
     step = interval if interval is not None else _progress_interval(total)
     return processed == total or processed == 1 or processed % step == 0
+
+
+def _print_progress_inline(label: str, processed: int, total: int) -> None:
+    if not _should_log_progress(processed, total):
+        return
+    message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
+    if sys.stdout.isatty():
+        print(f"\r{message}", end="", flush=True)
+        if processed == total:
+            print("")
+        return
+    print(message)
 
 
 def _ensure_principal_node(
@@ -114,11 +127,7 @@ def _add_workspace_principal_nodes(
                     node_type,
                     **node_props,
                 )
-        if _should_log_progress(index, total_rows):
-            print(
-                f"[*] {progress_label}: {index}/{total_rows} "
-                f"(remaining {max(0, total_rows - index)})"
-            )
+        _print_progress_inline(progress_label, index, total_rows)
 
 
 def _add_workspace_nodes(
@@ -170,11 +179,7 @@ def _add_group_membership_edges(
                 "GOOGLE_MEMBER_OF",
                 source=source,
             )
-        if _should_log_progress(index, total_rows):
-            print(
-                f"[*] Group memberships processed: {index}/{total_rows} "
-                f"(remaining {max(0, total_rows - index)})"
-            )
+        _print_progress_inline("Group memberships processed", index, total_rows)
 
 
 def _add_iam_member_nodes(
@@ -197,11 +202,7 @@ def _add_iam_member_nodes(
     for index, member in enumerate(normalized_members, start=1):
         if member and not is_convenience_member(member) and member not in builder.node_map:
             _ensure_principal_node(builder, member, source="iam_members")
-        if _should_log_progress(index, total_members):
-            print(
-                f"[*] IAM principals processed: {index}/{total_members} "
-                f"(remaining {max(0, total_members - index)})"
-            )
+        _print_progress_inline("IAM principals processed", index, total_members)
 
 
 def _member_email(member: str) -> str:

@@ -245,6 +245,7 @@ def _write_split_outputs(
     stem = base_path.stem
     written_files: list[str] = []
     manifest_sections: dict[str, Any] = {}
+    section_chunk_payloads: dict[str, list[dict[str, Any]]] = {}
 
     for section in selected_sections:
         edges = list(section_edges.get(section) or [])
@@ -368,16 +369,38 @@ def _write_split_outputs(
                         section=section,
                     )
                 )
+        if chunks:
+            section_chunk_payloads[section] = chunks
 
+    planned_sections_with_data = len(section_chunk_payloads)
+    planned_split_files = sum(len(chunks) for chunks in section_chunk_payloads.values())
+    print(
+        "[*] Split planner: "
+        f"selected_sections={len(selected_sections)}, "
+        f"sections_with_data={planned_sections_with_data}, "
+        f"planned_json_files={planned_split_files}"
+    )
+
+    written_split_files = 0
+    for section in selected_sections:
+        chunks = list(section_chunk_payloads.get(section) or [])
+        if not chunks:
+            continue
         section_file_paths: list[str] = []
+        total_section_parts = len(chunks)
         for index, chunk in enumerate(chunks, start=1):
-            suffix = f"_part{index}" if len(chunks) > 1 else ""
+            suffix = f"_part{index}" if total_section_parts > 1 else ""
             section_filename = f"{stem}_{section}{suffix}.json"
             section_path = output_dir / section_filename
             with section_path.open("w", encoding="utf-8") as handle:
                 json.dump(chunk, handle, ensure_ascii=False, indent=2)
             section_file_paths.append(str(section_path))
             written_files.append(str(section_path))
+            written_split_files += 1
+            print(
+                f"[*] Split write progress: {written_split_files}/{planned_split_files} "
+                f"(section={section}, part={index}/{total_section_parts}) -> {section_path}"
+            )
 
         manifest_sections[section] = {
             "parts": len(section_file_paths),
