@@ -19,6 +19,7 @@ Stage map:
 
 import argparse
 import json
+import re
 import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -294,6 +295,7 @@ def _write_split_outputs(
     max_size_mb: float,
     size_tolerance_mb: float = 25.0,
     split_threads: int = 1,
+    split_output_dir: str | None = None,
     debug: bool = False,
 ) -> tuple[list[str], str]:
     max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
@@ -331,7 +333,8 @@ def _write_split_outputs(
     _print_inline_progress("Split planner classify edges", total_all_edges, total_all_edges, force=True)
 
     base_path = Path(base_output_path)
-    output_dir = base_path.parent
+    output_dir = Path(split_output_dir).expanduser() if split_output_dir else base_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
     stem = base_path.stem
     written_files: list[str] = []
     manifest_sections: dict[str, Any] = {}
@@ -694,6 +697,49 @@ def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = Fal
     return payload
 
 
+def _safe_export_token(raw_value: str | None) -> str:
+    token = str(raw_value or "").strip()
+    if not token:
+        return "export"
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", token).strip("_")
+    return normalized or "export"
+
+
+def _resolve_export_paths(session, args) -> tuple[str, str | None]:
+    # Custom output path mode:
+    # - --out/-o is treated as an OUTPUT DIRECTORY, not a file path.
+    # - Single JSON + split outputs are written directly in that directory.
+    custom_out = str(getattr(args, "out", "") or "").strip()
+    if custom_out:
+        out_dir = Path(custom_out).expanduser()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = _safe_export_token(out_dir.name)
+        single_json_path = out_dir / f"opengraph_{out_name}.json"
+        return str(single_json_path), str(out_dir)
+
+    # Default output mode:
+    # - Build snapshot name as before, then create a bundle directory:
+    #   opengraph_<id>/single_json/<single.json>
+    #   opengraph_<id>/split_json/<split files + manifest>
+    default_single = Path(
+        str(
+            session.resolve_output_path(
+                requested_path=None,
+                service_name="reports",
+                filename=f"opengraph_{int(time.time())}.json",
+                subdirs=["snapshots"],
+                target="export",
+            )
+        )
+    )
+    bundle_dir = default_single.parent / default_single.stem
+    single_json_dir = bundle_dir / "single_json"
+    split_json_dir = bundle_dir / "split_json"
+    single_json_dir.mkdir(parents=True, exist_ok=True)
+    split_json_dir.mkdir(parents=True, exist_ok=True)
+    return str(single_json_dir / default_single.name), str(split_json_dir)
+
+
 def _parse_args(user_args):
     parser = argparse.ArgumentParser(
         description="Build GCP OpenGraph data offline from cached SQLite tables",
@@ -704,7 +750,16 @@ def _parse_args(user_args):
     parser.add_argument("-v", "--debug", action="store_true", help="Verbose output")
 
     # Output / persistence
-    parser.add_argument("--out", required=False, help="Optional JSON export path for the generated graph")
+    parser.add_argument(
+        "-o",
+        "--out",
+        required=False,
+        help=(
+            "Optional output directory for OpenGraph JSON exports. "
+            "When provided, files are written into this folder as opengraph_<folder_name>.json "
+            "and matching split outputs."
+        ),
+    )
     parser.add_argument("--reset", action="store_true", help="Delete existing OpenGraph rows for this workspace before rebuilding")
     parser.add_argument(
         "--use-existing-opengraph-db",
@@ -1024,15 +1079,7 @@ def run_module(user_args, session):
 
     should_export_graph_json = bool(nodes or edges)
     if should_export_graph_json:
-        output_path = str(
-            session.resolve_output_path(
-                requested_path=args.out,
-                service_name="reports",
-                filename=f"opengraph_{int(time.time())}.json",
-                subdirs=["snapshots"],
-                target="export",
-            )
-        )
+        output_path, split_output_dir = _resolve_export_paths(session, args)
         payload = export_opengraph_json(
             nodes,
             edges,
@@ -1060,6 +1107,7 @@ def run_module(user_args, session):
                     max_size_mb=max_split_size_mb,
                     size_tolerance_mb=split_size_tolerance_mb,
                     split_threads=split_json_threads,
+                    split_output_dir=split_output_dir,
                     debug=args.debug,
                 )
                 print(
