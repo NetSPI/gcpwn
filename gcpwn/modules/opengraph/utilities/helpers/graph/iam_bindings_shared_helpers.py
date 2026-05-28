@@ -1846,6 +1846,25 @@ def _emit_iam_binding_edges_from_entries(
             },
         }
 
+    progress_line_length = 0
+
+    def _write_inline_progress(message: str) -> None:
+        nonlocal progress_line_length
+        text = str(message or "")
+        padding = ""
+        if progress_line_length > len(text):
+            padding = " " * (progress_line_length - len(text))
+        sys.stdout.write(f"\r{text}{padding}")
+        sys.stdout.flush()
+        progress_line_length = len(text)
+
+    def _finalize_inline_progress() -> None:
+        nonlocal progress_line_length
+        if progress_line_length > 0:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            progress_line_length = 0
+
     def _print_rule_scan_progress(processed_rules: int, total_rules: int, matched_events: int) -> None:
         if total_rules <= 0:
             return
@@ -1853,8 +1872,7 @@ def _emit_iam_binding_edges_from_entries(
             f"[*] Stage 2 {rule_progress_label}: {processed_rules}/{total_rules} "
             f"(matched_events={matched_events})"
         )
-        sys.stdout.write(f"\r{message}")
-        sys.stdout.flush()
+        _write_inline_progress(message)
 
     def _print_rule_group_scan_progress(
         processed_rules: int,
@@ -1866,8 +1884,9 @@ def _emit_iam_binding_edges_from_entries(
     ) -> None:
         if total_groups <= 0:
             return
-        group_step = max(1, total_groups // 100)
-        if processed_groups not in {1, total_groups} and processed_groups % group_step != 0:
+        # Emit group-scan status only when a rule fully completes to avoid
+        # consoles that render carriage-return updates as many new lines.
+        if processed_groups != total_groups:
             return
         rule_label = str(rule_name or "").strip() or f"rule_{processed_rules}"
         if len(rule_label) > 56:
@@ -1877,8 +1896,7 @@ def _emit_iam_binding_edges_from_entries(
             f"[{rule_label}] groups {processed_groups}/{total_groups} "
             f"(matched_events={matched_events})"
         )
-        sys.stdout.write(f"\r{message}")
-        sys.stdout.flush()
+        _write_inline_progress(message)
 
     dangerous_events = collect_rule_events(
         entries=entries,
@@ -1890,8 +1908,7 @@ def _emit_iam_binding_edges_from_entries(
         group_progress_callback=_print_rule_group_scan_progress,
     )
     if rules:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        _finalize_inline_progress()
     owner_baseline_events = collect_owner_baseline_events(
         entries=entries,
         collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,

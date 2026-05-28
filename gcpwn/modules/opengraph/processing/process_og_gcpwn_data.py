@@ -21,6 +21,7 @@ import argparse
 import json
 import sys
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -237,6 +238,11 @@ def _payload_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
+def _write_json_payload(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
 def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -> None:
     metadata = dict(payload.get("metadata") or {})
     graph = dict(payload.get("graph") or {})
@@ -282,6 +288,7 @@ def _write_split_outputs(
     payload: dict[str, Any],
     selected_sections: list[str],
     max_size_mb: float,
+    split_threads: int = 1,
     debug: bool = False,
 ) -> tuple[list[str], str]:
     max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
@@ -316,7 +323,10 @@ def _write_split_outputs(
     stem = base_path.stem
     written_files: list[str] = []
     manifest_sections: dict[str, Any] = {}
-    section_chunk_payloads: dict[str, list[dict[str, Any]]] = {}
+    selected_sections_with_data: list[str] = []
+    written_split_files = 0
+    section_estimated_parts: dict[str, int] = {}
+    worker_count = max(1, int(split_threads or 1))
 
     for section in selected_sections:
         edges = list(section_edges.get(section) or [])
@@ -324,6 +334,7 @@ def _write_split_outputs(
 
         if not edges and not seeded_node_ids:
             continue
+        selected_sections_with_data.append(section)
 
         referenced_node_ids: set[str] = set()
         total_section_edges = len(edges)
@@ -352,11 +363,59 @@ def _write_split_outputs(
             if node_id in node_index
         ]
 
-        chunks: list[dict[str, Any]] = []
         current_edges: list[dict[str, Any]] = []
         current_edge_node_ids: set[str] = set()
+        section_file_paths: list[str] = []
+        section_nodes_written = 0
+        section_edges_written = 0
+        section_part_index = 0
+        section_file_paths_by_part: dict[int, str] = {}
+        pending_writes: list[tuple[Any, int, Path, int, int]] = []
+        executor = ThreadPoolExecutor(max_workers=worker_count) if worker_count > 1 else None
 
-        def _flush_chunk(extra_nodes: list[dict[str, Any]] | None = None) -> None:
+        def _record_completed_writes(completed_items: list[tuple[Any, int, Path, int, int]]) -> None:
+            nonlocal written_split_files, section_nodes_written, section_edges_written
+            for future, part_index, part_path, node_count, edge_count in completed_items:
+                future.result()
+                section_file_paths_by_part[part_index] = str(part_path)
+                written_files.append(str(part_path))
+                written_split_files += 1
+                section_nodes_written += node_count
+                section_edges_written += edge_count
+                print(
+                    f"[*] Split write progress: files_written={written_split_files} "
+                    f"(section={section}, part={part_index}) -> {part_path}"
+                )
+
+        def _drain_pending_writes(*, force: bool) -> None:
+            nonlocal pending_writes
+            if not pending_writes:
+                return
+            if force:
+                completed_items = list(pending_writes)
+                pending_writes = []
+                _record_completed_writes(completed_items)
+                return
+            done_futures, _ = wait(
+                [item[0] for item in pending_writes],
+                return_when=FIRST_COMPLETED,
+            )
+            if not done_futures:
+                return
+            completed_items: list[tuple[Any, int, Path, int, int]] = []
+            remaining_items: list[tuple[Any, int, Path, int, int]] = []
+            for item in pending_writes:
+                if item[0] in done_futures:
+                    completed_items.append(item)
+                else:
+                    remaining_items.append(item)
+            pending_writes = remaining_items
+            _record_completed_writes(completed_items)
+
+        def _flush_chunk(extra_nodes: list[dict[str, Any]] | None = None) -> bool:
+            nonlocal section_part_index, written_split_files, section_nodes_written, section_edges_written
+            if not current_edges and not extra_nodes:
+                return False
             edge_nodes = [
                 node_index[node_id]
                 for node_id in sorted(current_edge_node_ids)
@@ -377,7 +436,28 @@ def _write_split_outputs(
                 edges=list(current_edges),
                 section=section,
             )
-            chunks.append(chunk_payload)
+            section_part_index += 1
+            section_filename = f"{stem}_{section}_part{section_part_index}.json"
+            section_path = output_dir / section_filename
+            chunk_node_count = int((chunk_payload.get("summary") or {}).get("nodes") or 0)
+            chunk_edge_count = int((chunk_payload.get("summary") or {}).get("edges") or 0)
+            if executor is None:
+                _write_json_payload(section_path, chunk_payload)
+                section_file_paths_by_part[section_part_index] = str(section_path)
+                written_files.append(str(section_path))
+                written_split_files += 1
+                section_nodes_written += chunk_node_count
+                section_edges_written += chunk_edge_count
+                print(
+                    f"[*] Split write progress: files_written={written_split_files} "
+                    f"(section={section}, part={section_part_index}) -> {section_path}"
+                )
+            else:
+                future = executor.submit(_write_json_payload, section_path, chunk_payload)
+                pending_writes.append((future, section_part_index, section_path, chunk_node_count, chunk_edge_count))
+                if len(pending_writes) >= max(2, worker_count * 2):
+                    _drain_pending_writes(force=False)
+            return True
 
         for edge_index, edge in enumerate(edges, start=1):
             start = str((((edge.get("start") or {}) if isinstance(edge.get("start"), dict) else {}).get("value") or "")).strip()
@@ -443,64 +523,38 @@ def _write_split_outputs(
                     section=section,
                 )
                 if chunk_nodes and _payload_size_bytes(trial_payload) > max_size_bytes:
-                    chunks.append(
-                        _build_graph_payload(
-                            metadata=metadata,
-                            nodes=list(chunk_nodes),
-                            edges=[],
-                            section=section,
-                        )
-                    )
+                    current_edges = []
+                    current_edge_node_ids = set()
+                    _flush_chunk(extra_nodes=list(chunk_nodes))
                     chunk_nodes = [node]
                 else:
                     chunk_nodes = trial_nodes
             if chunk_nodes:
-                chunks.append(
-                    _build_graph_payload(
-                        metadata=metadata,
-                        nodes=list(chunk_nodes),
-                        edges=[],
-                        section=section,
-                    )
-                )
-        if chunks:
-            section_chunk_payloads[section] = chunks
+                current_edges = []
+                current_edge_node_ids = set()
+                _flush_chunk(extra_nodes=list(chunk_nodes))
 
-    planned_sections_with_data = len(section_chunk_payloads)
-    planned_split_files = sum(len(chunks) for chunks in section_chunk_payloads.values())
-    print(
-        "[*] Split planner: "
-        f"selected_sections={len(selected_sections)}, "
-        f"sections_with_data={planned_sections_with_data}, "
-        f"planned_json_files={planned_split_files}"
-    )
-
-    written_split_files = 0
-    for section in selected_sections:
-        chunks = list(section_chunk_payloads.get(section) or [])
-        if not chunks:
-            continue
-        section_file_paths: list[str] = []
-        total_section_parts = len(chunks)
-        for index, chunk in enumerate(chunks, start=1):
-            suffix = f"_part{index}" if total_section_parts > 1 else ""
-            section_filename = f"{stem}_{section}{suffix}.json"
-            section_path = output_dir / section_filename
-            with section_path.open("w", encoding="utf-8") as handle:
-                json.dump(chunk, handle, ensure_ascii=False, indent=2)
-            section_file_paths.append(str(section_path))
-            written_files.append(str(section_path))
-            written_split_files += 1
-            print(
-                f"[*] Split write progress: {written_split_files}/{planned_split_files} "
-                f"(section={section}, part={index}/{total_section_parts}) -> {section_path}"
-            )
-
+        _drain_pending_writes(force=True)
+        if executor is not None:
+            executor.shutdown(wait=True)
+        section_file_paths = [
+            section_file_paths_by_part[index]
+            for index in sorted(section_file_paths_by_part)
+        ]
+        section_estimated_parts[section] = section_part_index
+        if len(section_file_paths) == 1:
+            legacy_section_path = output_dir / f"{stem}_{section}.json"
+            current_section_path = Path(section_file_paths[0])
+            if current_section_path != legacy_section_path:
+                current_section_path.replace(legacy_section_path)
+                section_file_paths[0] = str(legacy_section_path)
+                if written_files:
+                    written_files[-1] = str(legacy_section_path)
         manifest_sections[section] = {
             "parts": len(section_file_paths),
             "files": section_file_paths,
-            "nodes": sum(int((chunk.get("summary") or {}).get("nodes") or 0) for chunk in chunks),
-            "edges": sum(int((chunk.get("summary") or {}).get("edges") or 0) for chunk in chunks),
+            "nodes": section_nodes_written,
+            "edges": section_edges_written,
         }
         UtilityTools.dlog(
             debug,
@@ -510,11 +564,21 @@ def _write_split_outputs(
             files=section_file_paths,
         )
 
+    planned_sections_with_data = len(selected_sections_with_data)
+    planned_split_files = int(sum(section_estimated_parts.values()))
+    print(
+        "[*] Split planner: "
+        f"selected_sections={len(selected_sections)}, "
+        f"sections_with_data={planned_sections_with_data}, "
+        f"planned_json_files={planned_split_files}"
+    )
+
     manifest_payload = {
         "metadata": {
             **metadata,
             "source_file": str(base_path),
             "max_target_size_mb": float(max_size_mb),
+            "split_threads": worker_count,
             "selected_sections": list(selected_sections),
         },
         "sections": manifest_sections,
@@ -604,7 +668,17 @@ def _parse_args(user_args):
         type=float,
         default=50.0,
         required=False,
-        help="Target max size (MB) per split JSON part (best-effort, give-or-take).",
+        help="Target max size (MB) per split JSON part (best-effort, give-or-take). Default: 50 MB.",
+    )
+    parser.add_argument(
+        "--split-json-threads",
+        type=int,
+        default=1,
+        required=False,
+        help=(
+            "Thread count for writing split JSON output files. "
+            "Default 1 (sequential); increase for parallel writes."
+        ),
     )
 
     # IAM graph behavior
@@ -892,11 +966,15 @@ def run_module(user_args, session):
                 max_split_size_mb = float(getattr(args, "split_json_max_size_mb", 50.0) or 50.0)
                 if max_split_size_mb <= 0:
                     raise ValueError("--split-json-max-size-mb must be greater than 0")
+                split_json_threads = int(getattr(args, "split_json_threads", 1) or 1)
+                if split_json_threads <= 0:
+                    raise ValueError("--split-json-threads must be greater than 0")
                 split_files, manifest_path = _write_split_outputs(
                     base_output_path=output_path,
                     payload=payload,
                     selected_sections=selected_sections,
                     max_size_mb=max_split_size_mb,
+                    split_threads=split_json_threads,
                     debug=args.debug,
                 )
                 print(
