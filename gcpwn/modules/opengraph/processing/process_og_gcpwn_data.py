@@ -243,6 +243,10 @@ def _write_json_payload(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _json_value_size_bytes(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -> None:
     metadata = dict(payload.get("metadata") or {})
     graph = dict(payload.get("graph") or {})
@@ -288,10 +292,14 @@ def _write_split_outputs(
     payload: dict[str, Any],
     selected_sections: list[str],
     max_size_mb: float,
+    size_tolerance_mb: float = 25.0,
     split_threads: int = 1,
     debug: bool = False,
 ) -> tuple[list[str], str]:
     max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
+    tolerance_bytes = max(0, int(float(size_tolerance_mb) * 1024 * 1024))
+    soft_min_bytes = max(1, max_size_bytes - tolerance_bytes)
+    soft_max_bytes = max_size_bytes + tolerance_bytes
     metadata = dict(payload.get("metadata") or {})
     graph = dict(payload.get("graph") or {})
     all_nodes = [node for node in (graph.get("nodes") or []) if isinstance(node, dict)]
@@ -300,6 +308,10 @@ def _write_split_outputs(
         str(node.get("id") or "").strip(): node
         for node in all_nodes
         if str(node.get("id") or "").strip()
+    }
+    node_serialized_size = {
+        node_id: _json_value_size_bytes(node)
+        for node_id, node in node_index.items()
     }
 
     section_edges: dict[str, list[dict[str, Any]]] = {key: [] for key in _SPLIT_SECTION_KEYS}
@@ -327,6 +339,12 @@ def _write_split_outputs(
     written_split_files = 0
     section_estimated_parts: dict[str, int] = {}
     worker_count = max(1, int(split_threads or 1))
+    print(
+        "[*] Split size policy: "
+        f"target={float(max_size_mb):g}MB, "
+        f"tolerance=+/-{float(size_tolerance_mb):g}MB, "
+        f"range={soft_min_bytes / (1024 * 1024):.2f}-{soft_max_bytes / (1024 * 1024):.2f}MB"
+    )
 
     for section in selected_sections:
         edges = list(section_edges.get(section) or [])
@@ -365,6 +383,17 @@ def _write_split_outputs(
 
         current_edges: list[dict[str, Any]] = []
         current_edge_node_ids: set[str] = set()
+        current_edges_bytes = 0
+        current_nodes_bytes = 0
+        current_node_count = 0
+        base_chunk_overhead_bytes = _payload_size_bytes(
+            _build_graph_payload(
+                metadata=metadata,
+                nodes=[],
+                edges=[],
+                section=section,
+            )
+        )
         section_file_paths: list[str] = []
         section_nodes_written = 0
         section_edges_written = 0
@@ -464,34 +493,62 @@ def _write_split_outputs(
             end = str((((edge.get("end") or {}) if isinstance(edge.get("end"), dict) else {}).get("value") or "")).strip()
             trial_edges = [*current_edges, edge]
             trial_edge_node_ids = set(current_edge_node_ids)
+            new_node_ids: list[str] = []
             if start:
+                if start not in trial_edge_node_ids and start in node_index:
+                    new_node_ids.append(start)
                 trial_edge_node_ids.add(start)
             if end:
+                if end not in trial_edge_node_ids and end in node_index:
+                    new_node_ids.append(end)
                 trial_edge_node_ids.add(end)
-            trial_nodes = [
-                node_index[node_id]
-                for node_id in sorted(trial_edge_node_ids)
-                if node_id in node_index
-            ]
-            trial_payload = _build_graph_payload(
-                metadata=metadata,
-                nodes=trial_nodes,
-                edges=trial_edges,
-                section=section,
+            edge_size = _json_value_size_bytes(edge)
+            new_node_bytes = sum(node_serialized_size.get(node_id, 0) for node_id in new_node_ids)
+            trial_edges_bytes = current_edges_bytes + edge_size
+            trial_nodes_bytes = current_nodes_bytes + new_node_bytes
+            trial_node_count = current_node_count + len(new_node_ids)
+            trial_edge_count = len(current_edges) + 1
+            trial_estimated_bytes = (
+                base_chunk_overhead_bytes
+                + trial_edges_bytes
+                + trial_nodes_bytes
+                + max(0, trial_edge_count - 1)
+                + max(0, trial_node_count - 1)
             )
-            if current_edges and _payload_size_bytes(trial_payload) > max_size_bytes:
+            current_estimated_bytes = (
+                base_chunk_overhead_bytes
+                + current_edges_bytes
+                + current_nodes_bytes
+                + max(0, len(current_edges) - 1)
+                + max(0, current_node_count - 1)
+            )
+            if current_edges and trial_estimated_bytes > soft_max_bytes and current_estimated_bytes >= soft_min_bytes:
                 _flush_chunk()
                 current_edges = []
                 current_edge_node_ids = set()
+                current_edges_bytes = 0
+                current_nodes_bytes = 0
+                current_node_count = 0
                 trial_edges = [edge]
                 trial_edge_node_ids = set()
+                new_node_ids = []
                 if start:
+                    if start in node_index:
+                        new_node_ids.append(start)
                     trial_edge_node_ids.add(start)
                 if end:
+                    if end in node_index and end not in new_node_ids:
+                        new_node_ids.append(end)
                     trial_edge_node_ids.add(end)
+                trial_edges_bytes = edge_size
+                trial_nodes_bytes = sum(node_serialized_size.get(node_id, 0) for node_id in new_node_ids)
+                trial_node_count = len(new_node_ids)
 
             current_edges = trial_edges
             current_edge_node_ids = trial_edge_node_ids
+            current_edges_bytes = trial_edges_bytes
+            current_nodes_bytes = trial_nodes_bytes
+            current_node_count = trial_node_count
             _print_inline_progress(
                 f"Split planner ({section}) chunk edges",
                 edge_index,
@@ -514,21 +571,31 @@ def _write_split_outputs(
             _flush_chunk(extra_nodes=standalone_nodes)
         elif standalone_nodes:
             chunk_nodes: list[dict[str, Any]] = []
+            chunk_nodes_bytes = 0
             for node in standalone_nodes:
-                trial_nodes = [*chunk_nodes, node]
-                trial_payload = _build_graph_payload(
-                    metadata=metadata,
-                    nodes=trial_nodes,
-                    edges=[],
-                    section=section,
+                node_id = str(node.get("id") or "").strip()
+                node_size = node_serialized_size.get(node_id, _json_value_size_bytes(node))
+                trial_nodes_bytes = chunk_nodes_bytes + node_size
+                trial_node_count = len(chunk_nodes) + 1
+                trial_estimated_bytes = (
+                    base_chunk_overhead_bytes
+                    + trial_nodes_bytes
+                    + max(0, trial_node_count - 1)
                 )
-                if chunk_nodes and _payload_size_bytes(trial_payload) > max_size_bytes:
+                current_estimated_bytes = (
+                    base_chunk_overhead_bytes
+                    + chunk_nodes_bytes
+                    + max(0, len(chunk_nodes) - 1)
+                )
+                if chunk_nodes and trial_estimated_bytes > soft_max_bytes and current_estimated_bytes >= soft_min_bytes:
                     current_edges = []
                     current_edge_node_ids = set()
                     _flush_chunk(extra_nodes=list(chunk_nodes))
                     chunk_nodes = [node]
+                    chunk_nodes_bytes = node_size
                 else:
-                    chunk_nodes = trial_nodes
+                    chunk_nodes.append(node)
+                    chunk_nodes_bytes = trial_nodes_bytes
             if chunk_nodes:
                 current_edges = []
                 current_edge_node_ids = set()
@@ -578,6 +645,7 @@ def _write_split_outputs(
             **metadata,
             "source_file": str(base_path),
             "max_target_size_mb": float(max_size_mb),
+            "size_tolerance_mb": float(size_tolerance_mb),
             "split_threads": worker_count,
             "selected_sections": list(selected_sections),
         },
@@ -668,7 +736,20 @@ def _parse_args(user_args):
         type=float,
         default=50.0,
         required=False,
-        help="Target max size (MB) per split JSON part (best-effort, give-or-take). Default: 50 MB.",
+        help=(
+            "Target split-part size center (MB). Used with --split-json-size-tolerance-mb "
+            "as an approximate +/- range. Default center: 50 MB."
+        ),
+    )
+    parser.add_argument(
+        "--split-json-size-tolerance-mb",
+        type=float,
+        default=25.0,
+        required=False,
+        help=(
+            "Tolerance (MB) around --split-json-max-size-mb for faster chunking "
+            "(approximate range, best-effort). Default: +/-25 MB."
+        ),
     )
     parser.add_argument(
         "--split-json-threads",
@@ -966,6 +1047,9 @@ def run_module(user_args, session):
                 max_split_size_mb = float(getattr(args, "split_json_max_size_mb", 50.0) or 50.0)
                 if max_split_size_mb <= 0:
                     raise ValueError("--split-json-max-size-mb must be greater than 0")
+                split_size_tolerance_mb = float(getattr(args, "split_json_size_tolerance_mb", 25.0) or 0.0)
+                if split_size_tolerance_mb < 0:
+                    raise ValueError("--split-json-size-tolerance-mb cannot be negative")
                 split_json_threads = int(getattr(args, "split_json_threads", 1) or 1)
                 if split_json_threads <= 0:
                     raise ValueError("--split-json-threads must be greater than 0")
@@ -974,6 +1058,7 @@ def run_module(user_args, session):
                     payload=payload,
                     selected_sections=selected_sections,
                     max_size_mb=max_split_size_mb,
+                    size_tolerance_mb=split_size_tolerance_mb,
                     split_threads=split_json_threads,
                     debug=args.debug,
                 )
