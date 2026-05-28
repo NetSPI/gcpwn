@@ -12,6 +12,7 @@ def collect_rule_events(
     normalize_binding_permission_map: Callable[[dict[str, Any] | None], dict[str, list[str]]],
     normalized_token_list: Callable[[Any], list[str]],
     progress_callback: Callable[[int, int, int], None] | None = None,
+    group_progress_callback: Callable[[int, int, int, int, int, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     total_rules = len(rules or [])
@@ -37,7 +38,8 @@ def collect_rule_events(
             grouped_entries = list(groups.values())
             grouped_entries_by_rule_shape[group_key] = grouped_entries
 
-        for group_entries in grouped_entries:
+        total_groups = len(grouped_entries)
+        for group_index, group_entries in enumerate(grouped_entries, start=1):
             matches = matches_for_group(rule, group_entries)
             for match in matches:
                 contributors = list(match.get("contributors") or [])
@@ -87,6 +89,15 @@ def collect_rule_events(
                     }
                 )
                 matched_events += 1
+            if group_progress_callback:
+                group_progress_callback(
+                    rule_index,
+                    total_rules,
+                    group_index,
+                    total_groups,
+                    matched_events,
+                    str(rule.get("name") or f"rule_{rule_index}"),
+                )
         if progress_callback:
             progress_callback(rule_index, total_rules, matched_events)
     return events

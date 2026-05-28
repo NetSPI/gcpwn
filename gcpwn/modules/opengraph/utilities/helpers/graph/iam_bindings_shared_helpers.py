@@ -1860,6 +1860,34 @@ def _emit_iam_binding_edges_from_entries(
             return
         print(message)
 
+    def _print_rule_group_scan_progress(
+        processed_rules: int,
+        total_rules: int,
+        processed_groups: int,
+        total_groups: int,
+        matched_events: int,
+        rule_name: str,
+    ) -> None:
+        if total_groups <= 0:
+            return
+        group_step = max(1, total_groups // 100)
+        if processed_groups not in {1, total_groups} and processed_groups % group_step != 0:
+            return
+        rule_label = str(rule_name or "").strip() or f"rule_{processed_rules}"
+        if len(rule_label) > 56:
+            rule_label = f"{rule_label[:53]}..."
+        message = (
+            f"[*] Stage 2 {rule_progress_label}: rule {processed_rules}/{total_rules} "
+            f"[{rule_label}] groups {processed_groups}/{total_groups} "
+            f"(matched_events={matched_events})"
+        )
+        if sys.stdout.isatty():
+            print(f"\r{message}", end="", flush=True)
+            if processed_groups == total_groups:
+                print("")
+            return
+        print(message)
+
     dangerous_events = collect_rule_events(
         entries=entries,
         rules=rules,
@@ -1867,6 +1895,7 @@ def _emit_iam_binding_edges_from_entries(
         normalize_binding_permission_map=_normalize_binding_permission_map,
         normalized_token_list=normalized_token_list,
         progress_callback=_print_rule_scan_progress,
+        group_progress_callback=_print_rule_group_scan_progress,
     )
     owner_baseline_events = collect_owner_baseline_events(
         entries=entries,

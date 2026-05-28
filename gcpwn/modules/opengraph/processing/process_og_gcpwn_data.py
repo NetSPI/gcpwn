@@ -19,6 +19,7 @@ Stage map:
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any, TypedDict
@@ -122,6 +123,33 @@ _PRINCIPAL_NODE_KINDS: set[str] = {
 }
 
 
+def _progress_interval(total: int) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // 100)
+
+
+def _should_emit_progress(processed: int, total: int) -> bool:
+    if total <= 0 or processed <= 0:
+        return False
+    step = _progress_interval(total)
+    return processed == 1 or processed == total or processed % step == 0
+
+
+def _print_inline_progress(label: str, processed: int, total: int, *, force: bool = False) -> None:
+    if total <= 0:
+        return
+    if not force and not _should_emit_progress(processed, total):
+        return
+    message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
+    if sys.stdout.isatty():
+        print(f"\r{message}", end="", flush=True)
+        if force:
+            print("")
+        return
+    print(message)
+
+
 def _parse_split_sections(raw_value: str | None) -> list[str]:
     if raw_value is None or not str(raw_value).strip():
         return list(_SPLIT_SECTION_KEYS)
@@ -209,6 +237,45 @@ def _payload_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
+def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -> None:
+    metadata = dict(payload.get("metadata") or {})
+    graph = dict(payload.get("graph") or {})
+    nodes = [node for node in (graph.get("nodes") or []) if isinstance(node, dict)]
+    edges = [edge for edge in (graph.get("edges") or []) if isinstance(edge, dict)]
+    summary = dict(payload.get("summary") or {"nodes": len(nodes), "edges": len(edges)})
+    total_records = len(nodes) + len(edges)
+
+    print(f"[*] Main JSON write tally: nodes={len(nodes)}, edges={len(edges)}, total_records={total_records}")
+
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write("{\n")
+        handle.write('  "metadata": ')
+        json.dump(metadata, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write(",\n")
+        handle.write('  "graph": {\n')
+        handle.write('    "nodes": [')
+        for index, node in enumerate(nodes, start=1):
+            if index > 1:
+                handle.write(",")
+            json.dump(node, handle, ensure_ascii=False, separators=(",", ":"))
+            _print_inline_progress("Main JSON write (nodes)", index, len(nodes))
+        _print_inline_progress("Main JSON write (nodes)", len(nodes), len(nodes), force=True)
+        handle.write("],\n")
+        handle.write('    "edges": [')
+        for index, edge in enumerate(edges, start=1):
+            if index > 1:
+                handle.write(",")
+            json.dump(edge, handle, ensure_ascii=False, separators=(",", ":"))
+            overall = len(nodes) + index
+            _print_inline_progress("Main JSON write (overall)", overall, total_records)
+        _print_inline_progress("Main JSON write (overall)", total_records, total_records, force=True)
+        handle.write("]\n")
+        handle.write("  },\n")
+        handle.write('  "summary": ')
+        json.dump(summary, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n}\n")
+
+
 def _write_split_outputs(
     *,
     base_output_path: str,
@@ -236,9 +303,13 @@ def _write_split_outputs(
         if not node_id:
             continue
         section_node_ids[_node_section(node)].add(node_id)
+    _print_inline_progress("Split planner classify nodes", len(all_nodes), len(all_nodes), force=True)
 
-    for edge in all_edges:
+    total_all_edges = len(all_edges)
+    for index, edge in enumerate(all_edges, start=1):
         section_edges[_edge_section(edge)].append(edge)
+        _print_inline_progress("Split planner classify edges", index, total_all_edges)
+    _print_inline_progress("Split planner classify edges", total_all_edges, total_all_edges, force=True)
 
     base_path = Path(base_output_path)
     output_dir = base_path.parent
@@ -255,13 +326,25 @@ def _write_split_outputs(
             continue
 
         referenced_node_ids: set[str] = set()
-        for edge in edges:
+        total_section_edges = len(edges)
+        for edge_index, edge in enumerate(edges, start=1):
             start = str((((edge.get("start") or {}) if isinstance(edge.get("start"), dict) else {}).get("value") or "")).strip()
             end = str((((edge.get("end") or {}) if isinstance(edge.get("end"), dict) else {}).get("value") or "")).strip()
             if start:
                 referenced_node_ids.add(start)
             if end:
                 referenced_node_ids.add(end)
+            _print_inline_progress(
+                f"Split planner ({section}) map edge refs",
+                edge_index,
+                total_section_edges,
+            )
+        _print_inline_progress(
+            f"Split planner ({section}) map edge refs",
+            total_section_edges,
+            total_section_edges,
+            force=True,
+        )
         seeded_node_ids.update(referenced_node_ids)
         seeded_nodes = [
             node_index[node_id]
@@ -296,7 +379,7 @@ def _write_split_outputs(
             )
             chunks.append(chunk_payload)
 
-        for edge in edges:
+        for edge_index, edge in enumerate(edges, start=1):
             start = str((((edge.get("start") or {}) if isinstance(edge.get("start"), dict) else {}).get("value") or "")).strip()
             end = str((((edge.get("end") or {}) if isinstance(edge.get("end"), dict) else {}).get("value") or "")).strip()
             trial_edges = [*current_edges, edge]
@@ -329,6 +412,17 @@ def _write_split_outputs(
 
             current_edges = trial_edges
             current_edge_node_ids = trial_edge_node_ids
+            _print_inline_progress(
+                f"Split planner ({section}) chunk edges",
+                edge_index,
+                total_section_edges,
+            )
+        _print_inline_progress(
+            f"Split planner ({section}) chunk edges",
+            total_section_edges,
+            total_section_edges,
+            force=True,
+        )
 
         standalone_nodes = [
             node
@@ -789,8 +883,7 @@ def run_module(user_args, session):
             edges,
             debug=args.debug,
         )
-        with open(output_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        _write_graph_json_with_progress(output_path, payload)
         exported_path = output_path
 
         if args.split_json_output:
