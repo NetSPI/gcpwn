@@ -1853,12 +1853,8 @@ def _emit_iam_binding_edges_from_entries(
             f"[*] Stage 2 {rule_progress_label}: {processed_rules}/{total_rules} "
             f"(matched_events={matched_events})"
         )
-        if sys.stdout.isatty():
-            print(f"\r{message}", end="", flush=True)
-            if processed_rules == total_rules:
-                print("")
-            return
-        print(message)
+        sys.stdout.write(f"\r{message}")
+        sys.stdout.flush()
 
     def _print_rule_group_scan_progress(
         processed_rules: int,
@@ -1881,12 +1877,8 @@ def _emit_iam_binding_edges_from_entries(
             f"[{rule_label}] groups {processed_groups}/{total_groups} "
             f"(matched_events={matched_events})"
         )
-        if sys.stdout.isatty():
-            print(f"\r{message}", end="", flush=True)
-            if processed_groups == total_groups:
-                print("")
-            return
-        print(message)
+        sys.stdout.write(f"\r{message}")
+        sys.stdout.flush()
 
     dangerous_events = collect_rule_events(
         entries=entries,
@@ -1897,6 +1889,9 @@ def _emit_iam_binding_edges_from_entries(
         progress_callback=_print_rule_scan_progress,
         group_progress_callback=_print_rule_group_scan_progress,
     )
+    if rules:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
     owner_baseline_events = collect_owner_baseline_events(
         entries=entries,
         collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
