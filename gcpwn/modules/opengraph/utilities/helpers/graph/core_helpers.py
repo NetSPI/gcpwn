@@ -13,6 +13,9 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
     normalized_token_list,
 )
 
+RESOURCE_DERIVED_EXPORT_STRING_LIMIT = 100
+RESOURCE_DERIVED_EXPORT_TRUNCATION_SUFFIX = "[TRUNCATED]"
+
 @dataclass(frozen=True)
 class OpenGraphNode:
     """In-memory OpenGraph node model used during pipeline assembly."""
@@ -711,6 +714,29 @@ def _flatten_resourcedata_value(value: Any, *, prefix: str, output: dict[str, An
         output[prefix] = normalized
 
 
+def _truncate_resource_derived_export_fields(props: dict[str, Any]) -> dict[str, Any]:
+    """
+    Cap long resource-derived fields that were flattened into top-level
+    `resourcedata.*` export keys.
+    """
+    output = dict(props or {})
+    limit = int(RESOURCE_DERIVED_EXPORT_STRING_LIMIT)
+    suffix = str(RESOURCE_DERIVED_EXPORT_TRUNCATION_SUFFIX or "")
+    if limit <= 0:
+        return output
+
+    for key, value in list(output.items()):
+        token = str(key or "").strip()
+        if not token.startswith("resourcedata."):
+            continue
+        if not isinstance(value, str):
+            continue
+        if len(value) <= limit:
+            continue
+        output[key] = f"{value[:limit]}{suffix}"
+    return output
+
+
 def node_to_opengraph(node: OpenGraphNode) -> dict[str, Any]:
     """
     Convert in-memory node to final OpenGraph JSON shape.
@@ -737,6 +763,8 @@ def node_to_opengraph(node: OpenGraphNode) -> dict[str, Any]:
         props = {}
     if is_resource_node and str(props.get("resourcedata.status") or "").strip():
         props.pop("status", None)
+    if is_resource_node:
+        props = _truncate_resource_derived_export_fields(props)
 
     if not props.get("name"):
         props["name"] = str(raw_props.get("name") or node.node_id)
