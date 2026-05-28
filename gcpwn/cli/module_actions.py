@@ -507,7 +507,28 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
             )
             return -1
 
-        module = importlib.import_module(module_import_path)
+        try:
+            module = importlib.import_module(module_import_path)
+        except ModuleNotFoundError as exc:
+            missing_name = str(getattr(exc, "name", "") or "").strip()
+            if not missing_name:
+                raise
+            missing_target_module = (
+                missing_name == module_import_path
+                or module_import_path.startswith(f"{missing_name}.")
+            )
+            if not missing_target_module:
+                raise
+
+            print(
+                f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Failed to load module import path "
+                f"'{module_import_path}' (missing '{missing_name}').{UtilityTools.RESET}"
+            )
+            print(
+                f"{UtilityTools.YELLOW}[!] Verify module mappings and package contents for this runtime."
+                f"{UtilityTools.RESET}"
+            )
+            return -1
         run_module = getattr(module, "run_module", None)
         if not callable(run_module):
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Module has no callable run_module().{UtilityTools.RESET}")

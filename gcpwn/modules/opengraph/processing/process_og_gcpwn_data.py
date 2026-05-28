@@ -235,6 +235,26 @@ def _build_graph_payload(*, metadata: dict[str, Any], nodes: list[dict[str, Any]
     }
 
 
+def _source_kind_only_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    token = str((metadata or {}).get("source_kind") or "").strip()
+    if not token:
+        return {}
+    return {"source_kind": token}
+
+
+def _build_split_graph_payload(*, metadata: dict[str, Any], nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Build split-file payload with strict OpenGraph top-level shape for import:
+    - optional metadata with only source_kind
+    - graph with nodes/edges
+    """
+    payload: dict[str, Any] = {"graph": {"nodes": list(nodes or []), "edges": list(edges or [])}}
+    split_metadata = _source_kind_only_metadata(metadata)
+    if split_metadata:
+        payload["metadata"] = split_metadata
+    return payload
+
+
 def _payload_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -249,7 +269,7 @@ def _json_value_size_bytes(value: Any) -> int:
 
 
 def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -> None:
-    metadata = dict(payload.get("metadata") or {})
+    metadata = _source_kind_only_metadata(dict(payload.get("metadata") or {}))
     graph = dict(payload.get("graph") or {})
     nodes = [node for node in (graph.get("nodes") or []) if isinstance(node, dict)]
     edges = [edge for edge in (graph.get("edges") or []) if isinstance(edge, dict)]
@@ -296,6 +316,7 @@ def _write_split_outputs(
     size_tolerance_mb: float = 25.0,
     split_threads: int = 1,
     split_output_dir: str | None = None,
+    manifest_output_dir: str | None = None,
     debug: bool = False,
 ) -> tuple[list[str], str]:
     max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
@@ -390,11 +411,10 @@ def _write_split_outputs(
         current_nodes_bytes = 0
         current_node_count = 0
         base_chunk_overhead_bytes = _payload_size_bytes(
-            _build_graph_payload(
+            _build_split_graph_payload(
                 metadata=metadata,
                 nodes=[],
                 edges=[],
-                section=section,
             )
         )
         section_file_paths: list[str] = []
@@ -462,17 +482,16 @@ def _write_split_outputs(
                         continue
                     seen.add(node_id)
                     nodes_for_chunk.append(node)
-            chunk_payload = _build_graph_payload(
+            chunk_payload = _build_split_graph_payload(
                 metadata=metadata,
                 nodes=nodes_for_chunk,
                 edges=list(current_edges),
-                section=section,
             )
             section_part_index += 1
             section_filename = f"{stem}_{section}_part{section_part_index}.json"
             section_path = output_dir / section_filename
-            chunk_node_count = int((chunk_payload.get("summary") or {}).get("nodes") or 0)
-            chunk_edge_count = int((chunk_payload.get("summary") or {}).get("edges") or 0)
+            chunk_node_count = len(nodes_for_chunk)
+            chunk_edge_count = len(current_edges)
             if executor is None:
                 _write_json_payload(section_path, chunk_payload)
                 section_file_paths_by_part[section_part_index] = str(section_path)
@@ -658,7 +677,14 @@ def _write_split_outputs(
             "sections_written": len([section for section in selected_sections if section in manifest_sections]),
         },
     }
-    manifest_path = output_dir / f"{stem}_split_manifest.json"
+    if manifest_output_dir:
+        manifest_dir = Path(manifest_output_dir).expanduser()
+    elif output_dir.name == "split_json":
+        manifest_dir = output_dir.parent
+    else:
+        manifest_dir = output_dir
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / f"{stem}_split_manifest.json"
     with manifest_path.open("w", encoding="utf-8") as handle:
         json.dump(manifest_payload, handle, ensure_ascii=False, indent=2)
     written_files.append(str(manifest_path))
@@ -825,6 +851,14 @@ def _parse_args(user_args):
         action="store_true",
         help="Run IAM conditional workflow in pass-through mode (currently no-op filtering)",
     )
+    parser.add_argument(
+        "--exclude-service-agents",
+        action="store_true",
+        help=(
+            "Exclude nodes classified as service agents from the generated OpenGraph snapshot "
+            "before persistence, and drop edges connected to those nodes."
+        ),
+    )
 
     # Step selection
     parser.add_argument("--groups", action="store_true", help="Run users/groups mapping step")
@@ -964,6 +998,56 @@ def _print_trim_summary(trim_stats: dict[str, dict[str, int]]) -> None:
         print(f"{prefix} ({', '.join(details)}).")
 
 
+def _coerce_bool_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    token = str(value or "").strip().lower()
+    return token in {"1", "true", "t", "yes", "y"}
+
+
+def _exclude_service_agent_nodes(
+    nodes: list[OpenGraphNode],
+    edges: list[OpenGraphEdge],
+) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
+    service_agent_node_ids = {
+        str(node.node_id or "").strip()
+        for node in (nodes or [])
+        if str(node.node_id or "").strip()
+        and _coerce_bool_flag(dict(node.properties or {}).get("is_service_agent", False))
+    }
+    if not service_agent_node_ids:
+        return (
+            list(nodes or []),
+            list(edges or []),
+            {
+                "service_agent_nodes_removed": 0,
+                "edges_removed": 0,
+            },
+        )
+
+    filtered_nodes = [
+        node
+        for node in (nodes or [])
+        if str(node.node_id or "").strip() not in service_agent_node_ids
+    ]
+    filtered_edges = [
+        edge
+        for edge in (edges or [])
+        if str(edge.source_id or "").strip() not in service_agent_node_ids
+        and str(edge.destination_id or "").strip() not in service_agent_node_ids
+    ]
+    return (
+        filtered_nodes,
+        filtered_edges,
+        {
+            "service_agent_nodes_removed": len(nodes or []) - len(filtered_nodes),
+            "edges_removed": len(edges or []) - len(filtered_edges),
+        },
+    )
+
+
 def run_module(user_args, session):
     # Phase 1: parse args + mode selection.
     args = _parse_args(user_args)
@@ -1057,6 +1141,13 @@ def run_module(user_args, session):
         # Phase 4: apply default-mode trim passes.
         nodes = list(context.builder.node_map.values())
         edges = list(context.builder.edge_map.values())
+        if args.exclude_service_agents:
+            nodes, edges, service_agent_exclusion_stats = _exclude_service_agent_nodes(nodes, edges)
+            print(
+                "[*] Excluded service-agent nodes from generated graph "
+                f"(nodes_removed={int(service_agent_exclusion_stats.get('service_agent_nodes_removed', 0))}, "
+                f"edges_removed={int(service_agent_exclusion_stats.get('edges_removed', 0))})."
+            )
         if args.include_all:
             trim_stats = {
                 "service_account_binding_islands": {"pairs_removed": 0, "key_islands_removed": 0, "nodes_removed": 0, "edges_removed": 0},
