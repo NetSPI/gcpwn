@@ -5,7 +5,7 @@ requests==2.34.2
 
 # Google API / auth libraries
 google-api-core==2.30.3
-google-api-python-client==2.196.0
+google-api-python-client==2.197.0
 google-auth-httplib2==0.4.0
 google-auth-oauthlib==1.4.0
 
