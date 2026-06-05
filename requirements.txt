@@ -16,7 +16,7 @@ google-cloud-api-gateway==1.15.0
 google-cloud-api-keys==0.8.0
 google-cloud-appengine-admin==1.17.0
 google-cloud-artifact-registry==1.21.0
-google-cloud-batch==0.21.0
+google-cloud-batch==0.22.0
 google-cloud-bigquery==3.41.0
 google-cloud-bigtable==2.38.0
 google-cloud-billing==1.19.0
