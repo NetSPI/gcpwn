@@ -44,7 +44,7 @@ google-cloud-service-directory==1.17.0
 google-cloud-speech==2.39.0
 google-cloud-storage==3.11.0
 google-cloud-storage-transfer==1.20.0
-google-cloud-storageinsights==0.4.0
+google-cloud-storageinsights==0.5.0
 google-cloud-tasks==2.22.0
 google-cloud-translate==3.26.0
 google-cloud-videointelligence==2.19.0
