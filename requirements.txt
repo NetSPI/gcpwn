@@ -11,7 +11,7 @@ google-auth-oauthlib==1.4.0
 
 # Google Cloud Python libraries
 google-cloud-access-approval==1.19.0
-google-cloud-aiplatform==1.154.0
+google-cloud-aiplatform==1.156.0
 google-cloud-api-gateway==1.15.0
 google-cloud-api-keys==0.9.0
 google-cloud-appengine-admin==1.17.0
