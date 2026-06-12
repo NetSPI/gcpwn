@@ -39,7 +39,7 @@ google-cloud-resource-manager==1.17.0
 google-cloud-run==0.16.0
 google-cloud-runtimeconfig==0.37.0
 google-cloud-scheduler==2.20.0
-google-cloud-secret-manager==2.28.0
+google-cloud-secret-manager==2.29.0
 google-cloud-service-directory==1.18.0
 google-cloud-speech==2.39.0
 google-cloud-storage==3.11.0
