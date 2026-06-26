@@ -35,7 +35,7 @@ google-cloud-netapp==0.10.0
 google-cloud-orchestration-airflow==1.21.0
 google-cloud-pubsub==2.39.0
 google-cloud-redis==2.21.0
-google-cloud-resource-manager==1.17.0
+google-cloud-resource-manager==1.18.0
 google-cloud-run==0.16.0
 google-cloud-runtimeconfig==0.37.0
 google-cloud-scheduler==2.20.0
