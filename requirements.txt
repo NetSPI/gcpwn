@@ -1,5 +1,5 @@
 # Core utilities
-boto3>=1.43.33,<2
+boto3>=1.43.36,<2
 pandas==3.0.3
 requests==2.34.2
 
