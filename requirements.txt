@@ -18,7 +18,7 @@ google-cloud-appengine-admin==1.18.0
 google-cloud-artifact-registry==1.22.0
 google-cloud-batch==0.22.0
 google-cloud-bigquery==3.42.0
-google-cloud-bigtable==2.38.0
+google-cloud-bigtable==2.40.0
 google-cloud-billing==1.20.0
 google-cloud-build==3.37.0
 google-cloud-compute==1.48.0
