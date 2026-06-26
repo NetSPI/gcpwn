@@ -31,7 +31,7 @@ google-cloud-kms==3.13.0
 google-cloud-language==2.20.0
 google-cloud-logging==3.16.0
 google-cloud-monitoring==2.31.0
-google-cloud-netapp==0.10.0
+google-cloud-netapp==0.10.1
 google-cloud-orchestration-airflow==1.21.0
 google-cloud-pubsub==2.39.0
 google-cloud-redis==2.21.0
