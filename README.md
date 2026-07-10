@@ -15,9 +15,10 @@
 - [Documentation](#documentation)
 - [Installation TLDR](#installation-tldr)
 - [First-Run TLDR](#first-run-tldr)
-- [Unauthenticated Run TLDR](#unauthenticated-run-tldr)
+- [Passthrough Mode TLDR](#passthrough-mode-tldr)
 - [OpenGraph TLDR](#opengraph-tldr)
 - [Module/Data Output TLDR](#moduledata-output-tldr)
+- [Audit / Logging TLDR](#audit--logging-tldr)
 - [Scripts Folder TLDR](#scripts-folder-tldr)
 - [Dependency Inventory](#dependency-inventory)
 - [Repository Layout](#repository-layout)
@@ -180,24 +181,48 @@ docker run --rm -it \
 3. Start with broad enumeration, ideally with **ONE of the options below**:
 
 ```bash
-# Minimal first pass: enumerate discovered resources only (no testIamPermissions or download calls).
-modules run enum_all
+# Minimal first pass: enumerate discovered GCP resources only (no testIamPermissions or download calls).
+modules run enum_gcp
 
 # Common first pass: run testIamPermissions checks on supported resources.
 # Also runs a condensed list of permissions for org/folder/project resources.
-modules run enum_all --iam
+modules run enum_gcp --iam
 
 # Common first pass + downloads: run testIamPermissions and attempt content downloads where supported.
-modules run enum_all --iam --download
+# Optional [--download-timeout <seconds>] restricts downloads to that many seconds PER service
+# (per bucket for Cloud Storage, per download type per project elsewhere) -- once the limit is hit
+# it skips the rest of that service's downloads and moves on.
+modules run enum_gcp --iam --download [--download-timeout <seconds>]
 
 # In-depth pass: --all-permissions includes large org/folder/project permission sets (10,000+ perms, executed in batches). Can take some time.
-# See: gcpwn/modules/resourcemanager/utilities/data/all_*_permissions.txt for the full list or to customize it.
-modules run enum_all --iam --all-permissions
+# See: gcpwn/modules/gcp/resourcemanager/utilities/data/all_*_permissions.txt for the full list or to customize it.
+modules run enum_gcp --iam --all-permissions
 
 # In-depth pass + downloads: enable artifact/content downloads where supported.
-# Use `modules run enum_all -h` for token options.
+# Use `modules run enum_gcp -h` for token options.
 # Example token: cloudrun_revision_env
-modules run enum_all --iam --all-permissions --download
+modules run enum_gcp --iam --all-permissions --download
+
+# ---- Scope + speed ----
+# The commands above run enum_gcp (GCP only). Both enum_gcp and enum_all accept --parallel-services
+# to enumerate GCP services concurrently across projects (default is 1 = sequential; set higher to fan out).
+# enum_google_workspace is tenant-scoped -> it runs once and does NOT take --parallel-services.
+
+# Same GCP sweep, but 3 services concurrently:
+modules run enum_gcp --iam --parallel-services 3
+
+# Google Workspace only (users/groups/admin-roles/OUs/domains/devices/OAuth grants).
+# Needs Workspace admin creds, OR a service account with domain-wide delegation ->
+# pass --impersonate <admin@domain> (or set it once: `configs set workspace_admin_subject <admin@domain>`):
+modules run enum_google_workspace --impersonate admin@yourdomain.com
+
+# Everything at once: enum_all = the GCP sweep + a once-only Google Workspace phase at the end:
+modules run enum_all --iam --parallel-services 3
+
+# Google Drive content download is opt-in (NOT covered by --download above). Add --download-google-drive
+# to ALSO pull Drive file content in the Workspace phase (runs enum_drive --all-users --download).
+# NOTE: beta / early version -- treat Drive download as experimental for now.
+modules run enum_all --iam --parallel-services 3 --download-google-drive
 ```
 
 4. Review what was collected:
@@ -230,19 +255,34 @@ modules run process_og_node_color_images \
   --push-custom-node-attributes-token <BLOODHOUND_BEARER_TOKEN>
 ```
 
-## Unauthenticated Run TLDR
+## Passthrough Mode TLDR
 
-Sometimes you may want to run unauthenticated or quick modules without starting a full interactive session. You can run unauthenticated modules directly without entering the interactive workspace shell. This implicitly creates a workspace called `PASSTHROUGH`.
+Passthrough mode runs a **single module from the shell** without dropping into the interactive workspace REPL — handy for CI, scripting, or one-off runs. There are two flavors:
+
+- **Unauthenticated** — run a `unauth_*` module with **no credentials at all**. This implicitly uses a workspace called `PASSTHROUGH`.
+- **Authenticated (drive-through)** — run any module against a **stored credential** by naming the workspace and credential. That credential must already have been added to the workspace in a prior interactive session.
 
 Examples:
 
 ```bash
-# Run via installed console script
+# --- Unauthenticated (no creds needed; unauth_* modules only) ---
+# Via the installed console script:
 gcpwn --module unauth_apikey_enum_all_scopes --api-key AIza...
+# Same thing via the python module entrypoint:
+python -m gcpwn --module unauth_bucketbrute --keyword acme --check
 
-# Same flow via python module entrypoint
-python -m gcpwn --module unauth_apikey_gemini_exploit --api-key AIza...
+# --- Authenticated drive-through (runs against a stored credential) ---
+# Enumerate IAM against the credential's own project:
+gcpwn --module enum_iam --workspace WORKSPACE_NAME --cred CRED_NAME --current-project
+# Target a specific project (or a comma-separated list):
+gcpwn --module enum_iam --workspace WORKSPACE_NAME --cred CRED_NAME --project-id my-project
+# Fan out across every project already known to the workspace, 3 services at a time:
+gcpwn --module enum_gcp --workspace WORKSPACE_NAME --cred CRED_NAME --all-projects --parallel-services 3
 ```
+
+Everything after the recognized flags is passed straight to the module, so `-h` and module-specific flags work in passthrough too. `--workspace`/`--cred` are what switch it from the unauthenticated path to the authenticated drive-through.
+
+As in the first-run examples, `--parallel-services N` (accepted by `enum_all`/`enum_gcp`) enumerates GCP services concurrently across projects — **default is `1` = sequential**; set it higher to fan out. In drive-through it's resumable: if a run is interrupted, re-run the exact same command and completed `(project, service)` units are skipped.
 
 ## OpenGraph TLDR
 
@@ -510,6 +550,38 @@ data sql --db service "SELECT * FROM iam_allow_policies LIMIT 25"
 data wipe-service --yes
 ```
 
+## Audit / Logging TLDR
+
+GCPwn records what it does in a few places, so you can (a) reconstruct your own activity and (b) study the audit footprint your enumeration/downloads leave on the target. The main types:
+
+**1. Run history (on disk, automatic).** Every module run is appended, timestamped, to a per-workspace log at `gcpwn_output/<workspace>/tool_logs/history_log.txt` — a `[START_MODULE]` / `[END_MODULE]` boundary per run (with the project id when it is per-project):
+
+```text
+[2026-07-10 14:31:02] [START_MODULE] Entering enum_iam module for prod-project-123...
+[2026-07-10 14:31:07] [END_MODULE] Exiting enum_iam module for prod-project-123...
+[2026-07-10 14:31:07] [START_MODULE] Entering enum_cloudstorage module for prod-project-123...
+[2026-07-10 14:31:44] [END_MODULE] Exiting enum_cloudstorage module for prod-project-123...
+```
+
+**2. Console output lines.** Live output is prefix-tagged so it is easy to skim or grep: `[*]` info, `[!]` warning, `[X]` error, `[***]` progress. Add `-v` / `--debug` for verbose detail:
+
+```text
+[*] prod-project-123: 42 bucket(s), 3 externally/publicly exposed
+[!] Download time budget (120s) reached for bucket acme-backups; skipping the rest and moving on.
+[X] Module failed for project prod-project-123. Details below:
+```
+
+**3. Content-download audit records (`[DOWNLOAD]`).** Each file pulled to disk emits one greppable line — handy in a lab to correlate with the target's own Cloud/Drive audit logs. `--throttle <seconds>` paces the pulls so the pattern is deliberately observable for blue-team detection:
+
+```text
+[DOWNLOAD] downloader=alice@corp.com file='q3-financials.xlsx' id=1AbC...xyz exposure=anyone_with_link owner=bob@corp.com bytes=48213 -> gcpwn_output/PROD/downloads/drive/alice@corp.com/q3-financials.xlsx
+```
+
+```bash
+# Pull Drive content slowly (2s between files) and pluck just the download records:
+modules run enum_drive --all-users --download --throttle 2 | grep '^\[DOWNLOAD\]'
+```
+
 ## Scripts Folder TLDR
 
 Scripts under `scripts/` are included in this GitHub repository to support setup, customization, and development workflows.
@@ -526,27 +598,27 @@ Direct runtime dependencies are sourced from `requirements.txt` (and loaded via 
 
 ### Core utilities
 
-- `boto3>=1.43.6,<2` (includes `botocore` transitively)
-- `pandas==3.0.2`
-- `requests==2.33.1`
+- `boto3>=1.43.45,<2` (includes `botocore` transitively)
+- `pandas==3.0.3`
+- `requests==2.34.2`
 
 ### Google API and auth libraries
 
-- `google-api-core==2.30.3`
-- `google-api-python-client==2.196.0`
+- `google-api-core==2.31.0`
+- `google-api-python-client==2.198.0`
 - `google-auth-httplib2==0.4.0`
 
 ### Google Cloud client libraries
 
-- `google-cloud-*` packages are pinned in `requirements.txt` (for example: `google-cloud-compute`, `google-cloud-storage`, `google-cloud-resource-manager`, `google-cloud-container`, etc.).
+- The 44 `google-cloud-*` service client libraries (roughly one per enumerated service) are pinned in `requirements.txt` — e.g. `google-cloud-compute`, `google-cloud-storage`, `google-cloud-resource-manager`, `google-cloud-bigquery`, `google-cloud-secret-manager`, `google-cloud-iam`, `google-cloud-container`, etc.
 
 ### Vertex/GenAI support
 
-- `google-genai==1.74.0`
+- `google-genai==2.11.0`
 
 ### Optional extras
 
-- `prettytable==3.17.0` via `pip install "gcpwn[table]"`
+- `prettytable==3.18.0` via `pip install "gcpwn[table]"`
 - `xlsxwriter==3.2.9` via `pip install "gcpwn[excel]"`
 
 ### Dev-only extra
@@ -564,11 +636,15 @@ Tip: If you want an SBOM from GitHub, open this repository and go to `Insights` 
 
 - `gcpwn/`: main package root.
 - `gcpwn/__main__.py`: `python -m gcpwn` entrypoint.
-- `gcpwn/cli/`: command processor and workspace command handlers.
-- `gcpwn/core/`: session/config/db/runtime/export primitives.
-- `gcpwn/modules/`: service modules (`everything`, `opengraph`, service-specific modules).
-- `gcpwn/mappings/`: static mapping/config data used across modules.
-- `tests/`: unit/integration/module tests.
+- `gcpwn/cli/`: command processor, workspace command handlers, and module dispatch.
+- `gcpwn/core/`: session/config/db/runtime/export primitives, plus the shared helpers in `gcpwn/core/utils/` (enum framework, serialization, IAM, hierarchy, resume, etc.).
+- `gcpwn/modules/`: the module tree, grouped by domain:
+  - `gcpwn/modules/gcp/<service>/`: GCP service modules (e.g. `cloudstorage`, `cloudcompute`, `iam`, `bigquery`), each with `enumeration/`, optional `exploit/` / `unauthenticated/`, and `utilities/` (the real API logic).
+  - `gcpwn/modules/workspace/`: Google Workspace / Cloud Identity modules (Drive, directory, groups settings, data transfer) plus shared `common.py` (domain-wide-delegation + service builders).
+  - `gcpwn/modules/everything/`: cross-cutting orchestrators — `enum_all`, `enum_gcp`, `enum_google_workspace`, `enum_gcp_policy_bindings`, `exploit_gcp_setiampolicy`, `process_gcp_iam_bindings`.
+  - `gcpwn/modules/opengraph/`: BloodHound OpenGraph build/export (processing stages + graph helpers).
+- `gcpwn/mappings/`: static mapping/config data (`module_mappings.json`, `database_info.json`, `service_locations.txt`, `og_*.json` for IAM/escalation/service-agent data).
+- `tests/`: unit and module-contract tests.
 - `databases/`: a single SQLite database (`gcpwn.db`) holding workspaces, sessions, and service data (workspace deletes cascade to all of a workspace's rows).
 
 ## Who Is This For?
