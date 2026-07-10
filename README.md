@@ -217,7 +217,7 @@ creds info
 creds info --csv
 
 # Process enumerated IAM bindings and build IAM summaries.
-modules run process_iam_bindings
+modules run process_gcp_iam_bindings
 
 # Build BloodHound-compatible graph JSON.
 # Import output.json into BloodHound CE:
@@ -503,10 +503,10 @@ data export excel --out-file ./gcpwn_export.xlsx
 # Export hierarchy image (SVG)
 data export treeimage
 
-# Run direct SQL against SQLite (service DB by default)
+# Run direct SQL against SQLite (service tables by default)
 data sql --db service "SELECT * FROM iam_allow_policies LIMIT 25"
 
-# Wipe service DB rows for current workspace (destructive)
+# Wipe service tables for current workspace (destructive; leaves creds/workspace intact)
 data wipe-service --yes
 ```
 
@@ -535,7 +535,6 @@ Direct runtime dependencies are sourced from `requirements.txt` (and loaded via 
 - `google-api-core==2.30.3`
 - `google-api-python-client==2.196.0`
 - `google-auth-httplib2==0.4.0`
-- `google-auth-oauthlib==1.4.0`
 
 ### Google Cloud client libraries
 
@@ -570,7 +569,7 @@ Tip: If you want an SBOM from GitHub, open this repository and go to `Insights` 
 - `gcpwn/modules/`: service modules (`everything`, `opengraph`, service-specific modules).
 - `gcpwn/mappings/`: static mapping/config data used across modules.
 - `tests/`: unit/integration/module tests.
-- `databases/`: SQLite stores for workspaces, sessions, and service data.
+- `databases/`: a single SQLite database (`gcpwn.db`) holding workspaces, sessions, and service data (workspace deletes cascade to all of a workspace's rows).
 
 ## Who Is This For?
 

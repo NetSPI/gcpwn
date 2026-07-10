@@ -10,9 +10,11 @@ Responsibilities:
 - emit inferred domain membership edges when domain nodes exist
 """
 
+import json
 import sys
 from typing import Any, Iterable
 
+from gcpwn.core.utils.module_helpers import normalize_str_set
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphBuilder,
     is_convenience_member,
@@ -180,6 +182,275 @@ def _add_group_membership_edges(
                 source=source,
             )
         _print_progress_inline("Group memberships processed", index, total_rows)
+
+
+def _add_admin_role_edges(
+    builder: OpenGraphBuilder,
+    *,
+    admin_roles: Iterable[dict[str, Any]] | None,
+    role_assignments: Iterable[dict[str, Any]] | None,
+    workspace_users: Iterable[dict[str, Any]] | None,
+) -> None:
+    # A Google Workspace SUPER-ADMIN can impersonate, and reset the password of, ANY
+    # user in the tenant -> emit CAN_IMPERSONATE / CAN_RESET_PASSWORD edges from each
+    # super-admin principal to every Workspace user node (a user who then holds GCP IAM
+    # is an attack path: super-admin -> user -> GCP resource).
+    #
+    # ADD-ONLY / no-op safety: when no super-admin role data is present -- which is the
+    # case for every graph built before Workspace admin-role enumeration existed -- this
+    # returns immediately, so existing graph output is byte-for-byte unchanged. New
+    # edges appear ONLY once workspace_admin_roles + workspace_role_assignments have been
+    # enumerated. Edge kinds match the BloodHound edge-kind regex ^[A-Za-z0-9_]+$.
+    super_admin_role_ids = {
+        str(role.get("role_id") or "").strip()
+        for role in (admin_roles or [])
+        if isinstance(role, dict) and str(role.get("is_super_admin_role") or "").strip().lower() == "true"
+    }
+    super_admin_role_ids.discard("")
+    if not super_admin_role_ids:
+        return
+
+    # Workspace user id -> principal node id, plus the full set of user nodes (targets).
+    user_node_by_id: dict[str, str] = {}
+    user_nodes: list[str] = []
+    for user in workspace_users or []:
+        if not isinstance(user, dict):
+            continue
+        email = str(user.get("email") or "").strip()
+        if not email:
+            continue
+        node = principal_node_id(f"user:{email}")
+        if not node:
+            continue
+        user_nodes.append(node)
+        user_id = str(user.get("user_id") or "").strip()
+        if user_id:
+            user_node_by_id[user_id] = node
+    if not user_nodes:
+        return
+
+    # roleAssignments.assignedTo is the directory user id; fall back to an email-like value.
+    super_admins: set[str] = set()
+    for assignment in role_assignments or []:
+        if not isinstance(assignment, dict):
+            continue
+        if str(assignment.get("role_id") or "").strip() not in super_admin_role_ids:
+            continue
+        assigned_to = str(assignment.get("assigned_to") or "").strip()
+        node = user_node_by_id.get(assigned_to)
+        if not node and "@" in assigned_to:
+            node = principal_node_id(f"user:{assigned_to}")
+        if node:
+            super_admins.add(node)
+    if not super_admins:
+        return
+
+    for admin in sorted(super_admins):
+        _ensure_principal_node(builder, admin)
+        for target in user_nodes:
+            if target == admin:
+                continue
+            _ensure_principal_node(builder, target)
+            builder.add_edge(admin, target, "CAN_IMPERSONATE", source="workspace_role_assignments")
+            builder.add_edge(admin, target, "CAN_RESET_PASSWORD", source="workspace_role_assignments")
+
+
+def _add_domain_wide_delegation_edges(
+    builder: OpenGraphBuilder,
+    *,
+    delegations: Iterable[dict[str, Any]] | None,
+    workspace_users: Iterable[dict[str, Any]] | None,
+) -> None:
+    # A SERVICE ACCOUNT with Google Workspace domain-wide delegation (DWD) can
+    # impersonate ANY user in the tenant -> emit a DOMAIN_WIDE_DELEG edge from the SA
+    # principal to every Workspace user node, plus a GoogleWorkspaceTenant hub node the
+    # SA DELEGATES_INTO and users are WORKSPACE_MEMBER of. This is a GCP->Workspace
+    # takeover path invisible to normal IAM enumeration (the grant lives in the Admin
+    # console; gcpwn proves it by successfully impersonating an admin, recorded in
+    # workspace_delegations).
+    #
+    # ADD-ONLY / no-op safety: returns immediately when no workspace_delegations rows
+    # exist -- i.e. every graph built before a SA was proven to hold DWD -- so existing
+    # graph output is byte-for-byte unchanged. Edge kinds match ^[A-Za-z0-9_]+$.
+    delegation_rows = [row for row in (delegations or []) if isinstance(row, dict)]
+    if not delegation_rows:
+        return
+
+    users_by_customer: dict[str, list[str]] = {}
+    for user in workspace_users or []:
+        if not isinstance(user, dict):
+            continue
+        email = str(user.get("email") or "").strip()
+        node = principal_node_id(f"user:{email}") if email else ""
+        if not node:
+            continue
+        users_by_customer.setdefault(str(user.get("customer_id") or "").strip(), []).append(node)
+
+    # Tenant hub node + user membership, once per customer that has a proven delegation.
+    delegated_customers = sorted(
+        normalize_str_set([row.get('customer_id') for row in delegation_rows])
+    )
+    for customer in delegated_customers:
+        tenant_node = f"workspace_tenant:{customer}"
+        builder.add_node(
+            tenant_node,
+            "GoogleWorkspaceTenant",
+            customer_id=customer,
+            name=customer,
+            display_name=customer,
+            source="workspace_delegations",
+        )
+        for target in users_by_customer.get(customer, []):
+            _ensure_principal_node(builder, target)
+            builder.add_edge(target, tenant_node, "WORKSPACE_MEMBER", source="workspace_users")
+
+    # SA -> DELEGATES_INTO -> tenant, and SA -> DOMAIN_WIDE_DELEG -> every user in it.
+    for row in delegation_rows:
+        sa_email = str(row.get("sa_email") or "").strip()
+        customer = str(row.get("customer_id") or "").strip()
+        if not (sa_email and customer):
+            continue
+        sa_node = principal_node_id(f"serviceAccount:{sa_email}")
+        if not sa_node:
+            continue
+        tenant_node = f"workspace_tenant:{customer}"
+        _ensure_principal_node(builder, sa_node)
+        builder.add_edge(
+            sa_node,
+            tenant_node,
+            "DELEGATES_INTO",
+            source="workspace_delegations",
+            admin_subject=str(row.get("admin_subject") or ""),
+        )
+        for target in users_by_customer.get(customer, []):
+            _ensure_principal_node(builder, target)
+            builder.add_edge(sa_node, target, "DOMAIN_WIDE_DELEG", source="workspace_delegations", customer_id=customer)
+
+
+def _add_group_join_edges(
+    builder: OpenGraphBuilder,
+    *,
+    group_settings: Iterable[dict[str, Any]] | None,
+) -> None:
+    # Self-join-open Google Workspace groups are an attack path: a principal who can
+    # self-join a group inherits every IAM binding / membership that group holds. Emit
+    # a CAN_JOIN edge into each open group from the broadest principal that can join it:
+    #   whoCanJoin=ALL_IN_DOMAIN_CAN_JOIN -> PrincipalsInOrg (any authenticated user in
+    #     the tenant/org; one node per directoryCustomerId)
+    #   whoCanJoin=ANYONE_CAN_JOIN        -> GCPAllUsers (anyone on the internet /
+    #     anonymous -- the existing "allUsers" node, connecting to the GCP graph)
+    # Groups requiring an invite / request-with-approval are NOT open and get no edge.
+    #
+    # ADD-ONLY / no-op safety: returns immediately with no workspace_group_settings rows
+    # (or none open-join), so existing graph output is byte-for-byte unchanged.
+    rows = [row for row in (group_settings or []) if isinstance(row, dict)]
+    if not rows:
+        return
+
+    for row in rows:
+        group_email = str(row.get("group_email") or "").strip()
+        group_node = principal_node_id(f"group:{group_email}") if group_email else ""
+        if not group_node:
+            continue
+        who_can_join = str(row.get("who_can_join") or "").strip().upper()
+        allow_external = str(row.get("allow_external_members") or "").strip().lower() == "true"
+
+        if who_can_join == "ANYONE_CAN_JOIN":
+            origin = principal_node_id("allUsers")  # GCPAllUsers -- anonymous / anyone
+            _ensure_principal_node(builder, origin)
+        elif who_can_join == "ALL_IN_DOMAIN_CAN_JOIN":
+            customer = str(row.get("customer_id") or "").strip() or "unknown"
+            origin = f"principals_in_org:{customer}"
+            # add_node only (NOT _ensure_principal_node, which would re-type it to a
+            # generic principal kind and drop PrincipalsInOrg).
+            builder.add_node(
+                origin,
+                "PrincipalsInOrg",
+                customer_id=customer,
+                name="Principals In Org",
+                display_name="Principals In Org",
+                source="workspace_group_settings",
+            )
+        else:
+            continue
+
+        _ensure_principal_node(builder, group_node)
+        builder.add_edge(
+            origin,
+            group_node,
+            "CAN_JOIN",
+            source="workspace_group_settings",
+            who_can_join=who_can_join,
+            allow_external_members=str(allow_external).lower(),
+        )
+
+
+def _add_drive_share_edges(
+    builder: OpenGraphBuilder,
+    *,
+    drive_files: Iterable[dict[str, Any]] | None,
+) -> None:
+    # A Drive file shared to "anyone" is a direct data-exposure path: anyone on the
+    # internet (public / anyone-with-link) can read it. Emit a GoogleDriveFile node and
+    # a CAN_READ edge into it from GCPAllUsers (the existing anonymous "allUsers" node),
+    # tying Drive exposure into the same graph as public buckets/IAM.
+    #
+    # ADD-ONLY / no-op safety: only public + anyone_with_link files produce edges, so the
+    # graph is byte-for-byte unchanged until such a file is enumerated.
+    rows = [row for row in (drive_files or []) if isinstance(row, dict)]
+    if not rows:
+        return
+
+    for row in rows:
+        exposure = str(row.get("exposure") or "").strip().lower()
+        if exposure not in ("public", "anyone_with_link"):
+            continue
+        file_id = str(row.get("file_id") or "").strip()
+        if not file_id:
+            continue
+        # OpenGraph node ids must not contain ':' -> use a '_' separator.
+        file_node = f"drive_file_{file_id}"
+        name = str(row.get("name") or file_id)
+        builder.add_node(
+            file_node,
+            "GoogleDriveFile",
+            name=name,
+            display_name=name,
+            file_id=file_id,
+            exposure=exposure,
+            owner=str(row.get("owner_email") or ""),
+            web_view_link=str(row.get("web_view_link") or ""),
+            source="workspace_drive_files",
+        )
+        origin = principal_node_id("allUsers")  # GCPAllUsers -- anonymous / anyone
+        _ensure_principal_node(builder, origin)
+        # Role of the "anyone" grant (reader/writer/commenter), if present in raw ACLs.
+        role = _anyone_role(row)
+        builder.add_edge(
+            origin,
+            file_node,
+            "CAN_READ",
+            source="workspace_drive_files",
+            exposure=exposure,
+            role=role,
+        )
+
+
+def _anyone_role(row: dict[str, Any]) -> str:
+    # raw_json is a dict in-process at save time but comes back from the DB as a JSON
+    # string, so accept either -- otherwise a world-*writable* public file would be
+    # mislabeled role="reader" on its CAN_READ edge.
+    raw = row.get("raw_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raw = None
+    if isinstance(raw, dict):
+        for perm in raw.get("permissions") or []:
+            if isinstance(perm, dict) and str(perm.get("type") or "") == "anyone":
+                return str(perm.get("role") or "reader")
+    return "reader"
 
 
 def _add_iam_member_nodes(
@@ -387,6 +658,39 @@ def build_users_groups_graph(context) -> dict[str, int | bool]:
         iam_service_accounts_rows=iam_service_accounts_rows,
         project_scope_by_project_id=project_scope_by_project_id,
         parent_by_name=hierarchy["parent_by_name"],
+    )
+
+    # 6) Workspace super-admins -> CAN_IMPERSONATE / CAN_RESET_PASSWORD over every user.
+    #    Add-only: a no-op until Workspace admin-role data has been enumerated.
+    _add_admin_role_edges(
+        builder,
+        admin_roles=[row for row in (context.rows("workspace_admin_roles") or []) if isinstance(row, dict)],
+        role_assignments=[row for row in (context.rows("workspace_role_assignments") or []) if isinstance(row, dict)],
+        workspace_users=workspace_users_rows,
+    )
+
+    # 7) Service accounts with Google Workspace domain-wide delegation -> DOMAIN_WIDE_DELEG
+    #    over every user in the tenant (+ a GoogleWorkspaceTenant hub node). Add-only: a
+    #    no-op until a SA is proven to hold DWD (workspace_delegations populated).
+    _add_domain_wide_delegation_edges(
+        builder,
+        delegations=[row for row in (context.rows("workspace_delegations") or []) if isinstance(row, dict)],
+        workspace_users=workspace_users_rows,
+    )
+
+    # 8) Self-join-open groups -> CAN_JOIN from WorkspaceAllAuthenticatedPrincipals
+    #    (ALL_IN_DOMAIN_CAN_JOIN) or GCPAllUsers/anonymous (ANYONE_CAN_JOIN). Add-only:
+    #    a no-op until group settings are enumerated (enum_group_settings).
+    _add_group_join_edges(
+        builder,
+        group_settings=[row for row in (context.rows("workspace_group_settings") or []) if isinstance(row, dict)],
+    )
+
+    # 9) Public / anyone-with-link Google Drive files -> CAN_READ from GCPAllUsers
+    #    (anonymous). Add-only: a no-op until Drive files are enumerated (enum_drive).
+    _add_drive_share_edges(
+        builder,
+        drive_files=[row for row in (context.rows("workspace_drive_files") or []) if isinstance(row, dict)],
     )
 
     after_nodes, after_edges = context.counts()

@@ -14,6 +14,6 @@ def test_service_specific_iam_enum_modules_do_not_exist() -> None:
         if "gcpwn/modules/iam/" not in path.as_posix()
     ]
     assert offenders == [], (
-        "IAM binding enumeration should live in enum_policy_bindings/IAMPolicyBindingsResource, "
+        "IAM binding enumeration should live in enum_gcp_policy_bindings/IAMPolicyBindingsResource, "
         f"not service-specific *_iam modules: {offenders}"
     )

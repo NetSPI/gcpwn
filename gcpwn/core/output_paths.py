@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
+from typing import Any
 
 
 OUTPUT_ROOT_DIR_NAME = "gcpwn_output"
@@ -12,7 +13,7 @@ OUTPUT_DIR_NAMES = {
     "logs": "tool_logs",
 }
 
-NAMED_SAVE_PATHS = {
+NAMED_SAVE_PATHS: dict[str, dict[str, Any]] = {
     "Storage": {"bucket": "downloads", "service": "storage", "scope": "global"},
     "Secrets": {"bucket": "downloads", "service": "secretmanager", "scope": "global"},
     "Compute Base": {"bucket": "downloads", "service": "compute", "scope": "global"},
@@ -47,6 +48,14 @@ NAMED_SAVE_PATHS = {
 
 
 def safe_path_component(value: str) -> str:
+    """Sanitize one untrusted value into a single safe filesystem path segment.
+
+    Strips path separators and ``:`` (Windows drive/ADS), collapses whitespace to
+    ``_``, drops anything outside ``[A-Za-z0-9_.-]``, and trims leading/trailing
+    ``._-``. Guards against path traversal when building output paths from
+    attacker-influenced names (bucket/resource/project ids). May return "" if the
+    input has no safe characters -- callers supply a fallback (e.g. ``or "file"``).
+    """
     text = str(value or "")
     text = text.replace("/", "_").replace("\\", "_").replace(":", "_")
     text = re.sub(r"\s+", "_", text)
@@ -90,7 +99,7 @@ def build_output_path(
     output_root = (Path.cwd() / OUTPUT_ROOT_DIR_NAME) / safe_slug
     if mkdir:
         output_root.mkdir(parents=True, exist_ok=True)
-    parts = [output_root, OUTPUT_DIR_NAMES[bucket]]
+    parts: list[str | Path] = [output_root, OUTPUT_DIR_NAMES[bucket]]
 
     if service_name:
         parts.append(safe_path_component(service_name) or "service")
@@ -131,3 +140,51 @@ def resolve_named_save_path(
         subdirs=path_config.get("subdirs"),
         mkdir=mkdir,
     )
+
+
+def resolve_download_path(
+    session,
+    *,
+    service_name: str,
+    project_id: str,
+    filename: str = "",
+    output: str | None = None,
+    subdirs: list[str] | None = None,
+    sanitize_fallback: bool = False,
+) -> Path:
+    """Resolve where a per-service downloaded loot file should be written.
+
+    Shared replacement for the per-service ``_download_path`` helpers. Precedence:
+
+    1. explicit ``output`` dir (``--output``) -> ``<output>/<filename>``;
+    2. else ``session.get_download_save_path`` -- the canonical, workspace-slugged
+       and sanitized path (authenticated runs);
+    3. else a hand-built ``./gcpwn_output/downloads/<service>/<project>[/<subdirs>]/<filename>``
+       fallback, reached only when the session lacks that method (unauth runs).
+
+    The session branch forwards the *raw* ``filename`` (``get_download_save_path``
+    sanitizes internally, and ``compact_filename_component`` is idempotent); the
+    hand-built ``output``/fallback branches run it through
+    ``compact_filename_component`` only when ``sanitize_fallback=True``. The parent
+    directory is created for the ``output`` and fallback branches (the session
+    branch already creates it).
+    """
+    fallback_name = compact_filename_component(filename) if sanitize_fallback else filename
+    if output:
+        destination = Path(output).expanduser() / fallback_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        return destination
+    if hasattr(session, "get_download_save_path"):
+        return Path(
+            session.get_download_save_path(
+                service_name=service_name,
+                filename=filename,
+                project_id=project_id,
+                subdirs=subdirs,
+            )
+        )
+    fallback_dir = Path.cwd() / OUTPUT_ROOT_DIR_NAME / OUTPUT_DIR_NAMES["downloads"] / service_name / project_id
+    for part in subdirs or []:
+        fallback_dir = fallback_dir / str(part)
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    return fallback_dir / fallback_name

@@ -1,2357 +1,3117 @@
 {
-  "databases": [
+  "tables": [
     {
-      "database_name": "service_info",
-      "tables": [
-        {
-          "table_name": "cloudstorage_buckets",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "storage_class",
-            "location",
-            "location_type",
-            "cors",
-            "default_event_based_hold",
-            "default_kms_key_name",
-            "metageneration",
-            "iam_configuration_public_access_prevention",
-            "retention_policy_effective_time",
-            "retention_period",
-            "retention_policy_locked",
-            "requester_pays",
-            "self_link",
-            "time_created",
-            "versioning_enabled",
-            "labels",
-            "iam_policy",
-            "external_curl"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudstorage_bucketblobs",
-          "columns": [
-            "project_id",
-            "name",
-            "bucket_name",
-            "storage_class",
-            "id",
-            "size",
-            "updated",
-            "generation",
-            "metageneration",
-            "etag",
-            "owner",
-            "component_count",
-            "crc32c",
-            "md5_hash",
-            "cache_control",
-            "content_type",
-            "content_disposition",
-            "content_encoding",
-            "content_language",
-            "metadata",
-            "media_link",
-            "custom_time",
-            "temporary_hold",
-            "event_based_hold",
-            "retention_expiration_time"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudstorage_hmac_keys",
-          "columns": [
-            "access_id",
-            "secret",
-            "etag",
-            "id",
-            "path",
-            "project_id",
-            "service_account_email",
-            "state",
-            "time_created",
-            "updated",
-            "user_project"
-          ],
-          "primary_keys": [
-            "access_id",
-            "project_id",
-            "service_account_email"
-          ]
-        },
-        {
-          "table_name": "cloudfunctions_functions",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "state",
-            "update_time",
-            "labels",
-            "state_messages",
-            "environment",
-            "url",
-            "kms_key_name",
-            "build_config",
-            "service_config",
-            "event_trigger",
-            "iam_policy",
-            "external_curl"
-          ],
-          "primary_keys": [
-            "name",
-            "project_id"
-          ]
-        },
-        {
-          "table_name": "apigateway_gateways",
-          "columns": [
-            "project_id",
-            "name",
-            "display_name",
-            "api_config",
-            "default_hostname",
-            "state",
-            "create_time",
-            "update_time",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "apigateway_apis",
-          "columns": [
-            "project_id",
-            "name",
-            "managed_service",
-            "display_name",
-            "state",
-            "create_time",
-            "update_time",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "apigateway_api_configs",
-          "columns": [
-            "project_id",
-            "api_name",
-            "name",
-            "display_name",
-            "gateway_service_account",
-            "service_config_id",
-            "state",
-            "create_time",
-            "update_time",
-            "labels",
-            "openapi_documents",
-            "grpc_services",
-            "managed_service_configs",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "bigquery_datasets",
-          "columns": [
-            "project_id",
-            "dataset_id",
-            "full_dataset_id",
-            "friendly_name",
-            "description",
-            "location",
-            "labels",
-            "default_table_expiration_ms",
-            "default_partition_expiration_ms",
-            "created",
-            "modified",
-            "access_entries"
-          ],
-          "primary_keys": [
-            "project_id",
-            "dataset_id"
-          ]
-        },
-        {
-          "table_name": "bigquery_tables",
-          "columns": [
-            "project_id",
-            "dataset_id",
-            "table_id",
-            "full_table_id",
-            "table_type",
-            "friendly_name",
-            "description",
-            "labels",
-            "expires",
-            "created",
-            "modified",
-            "num_rows",
-            "num_bytes",
-            "location",
-            "partitioning_type",
-            "time_partitioning",
-            "range_partitioning",
-            "clustering_fields",
-            "schema_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "dataset_id",
-            "table_id"
-          ]
-        },
-        {
-          "table_name": "bigquery_routines",
-          "columns": [
-            "project_id",
-            "dataset_id",
-            "routine_id",
-            "full_routine_id",
-            "routine_type",
-            "language",
-            "creation_time",
-            "last_modified_time",
-            "imported_libraries",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "full_routine_id"
-          ]
-        },
-        {
-          "table_name": "pubsub_topics",
-          "columns": [
-            "project_id",
-            "name",
-            "topic_id",
-            "kms_key_name",
-            "labels",
-            "message_storage_policy",
-            "schema_settings",
-            "iam_policy",
-            "satisfies_pzs"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "pubsub_subscriptions",
-          "columns": [
-            "project_id",
-            "name",
-            "subscription_id",
-            "topic",
-            "ack_deadline_seconds",
-            "retain_acked_messages",
-            "message_retention_duration",
-            "labels",
-            "enable_exactly_once_delivery",
-            "enable_message_ordering",
-            "filter",
-            "push_config",
-            "bigquery_config",
-            "dead_letter_policy",
-            "expiration_policy",
-            "iam_policy",
-            "state",
-            "detached"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "iam_unauth_permissions",
-          "columns": [
-            "member",
-            "project_id",
-            "name",
-            "display_name",
-            "type",
-            "permissions"
-          ],
-          "primary_keys": [
-            "member",
-            "project_id",
-            "type",
-            "name"
-          ]
-        },
-        {
-          "table_name": "iam_allow_policies",
-          "columns": [
-            "project_id",
-            "resource_type",
-            "resource_name",
-            "policy"
-          ],
-          "primary_keys": [
-            "project_id",
-            "resource_type",
-            "resource_name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_instances",
-          "columns": [
-            "project_id",
-            "advanced_machine_features",
-            "can_ip_forward",
-            "confidential_instance_config",
-            "cpu_platform",
-            "creation_timestamp",
-            "deletion_protection",
-            "description",
-            "disks",
-            "guest_accelerators",
-            "network_interfaces",
-            "scheduling",
-            "display_device",
-            "fingerprint",
-            "hostname",
-            "id",
-            "instance_encryption_key",
-            "key_revocation_action_type",
-            "kind",
-            "label_fingerprint",
-            "labels",
-            "last_start_timestamp",
-            "last_stop_timestamp",
-            "last_suspended_timestamp",
-            "machine_type",
-            "metadata_enable_os_login",
-            "metadata",
-            "min_cpu_platform",
-            "name",
-            "network_performance_config",
-            "params",
-            "private_ipv6_google_access",
-            "reservation_affinity",
-            "resource_policies",
-            "resource_status",
-            "satisfies_pzi",
-            "satisfies_pzs",
-            "self_link",
-            "service_accounts",
-            "shielded_instance_config",
-            "shielded_instance_integrity_policy",
-            "source_machine_image",
-            "source_machine_image_encryption_key",
-            "start_restricted",
-            "status",
-            "status_message",
-            "tags",
-            "zone",
-            "iam_policy"
-          ],
-          "primary_keys": [
-            "project_id",
-            "id",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_projects",
-          "columns": [
-            "cloud_armor_tier",
-            "common_instance_metadata",
-            "creation_timestamp",
-            "default_network_tier",
-            "default_service_account",
-            "description",
-            "enabled_features",
-            "id",
-            "kind",
-            "project_id",
-            "quotas",
-            "self_link",
-            "usage_export_location",
-            "vm_dns_setting",
-            "xpn_project_status",
-            "metadata_enable_os_login"
-          ],
-          "primary_keys": [
-            "project_id",
-            "id"
-          ]
-        },
-        {
-          "table_name": "abstract_tree_hierarchy",
-          "columns": [
-            "name",
-            "display_name",
-            "project_id",
-            "type",
-            "parent",
-            "state",
-            "iam_policy"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "member_permissions_summary",
-          "columns": [
-            "crednames",
-            "member",
-            "roles_and_assets",
-            "permissions_and_assets"
-          ],
-          "primary_keys": [
-            "member"
-          ]
-        },
-        {
-          "table_name": "iam_service_accounts",
-          "columns": [
-            "credname",
-            "name",
-            "project_id",
-            "unique_id",
-            "email",
-            "display_name",
-            "etag",
-            "description",
-            "oauth2_client_id",
-            "disabled",
-            "type",
-            "iam_policy"
-          ],
-          "primary_keys": [
-            "email",
-            "project_id",
-            "unique_id",
-            "type"
-          ]
-        },
-        {
-          "table_name": "iam_sa_keys",
-          "columns": [
-            "name",
-            "private_key_type",
-            "key_algorithm",
-            "private_key_data",
-            "public_key_data",
-            "valid_after_time",
-            "valid_before_time",
-            "key_origin",
-            "key_type",
-            "disabled"
-          ],
-          "primary_keys": [
-            "name"
-          ]
-        },
-        {
-          "table_name": "iam_roles",
-          "columns": [
-            "name",
-            "title",
-            "description",
-            "included_permissions",
-            "stage",
-            "etag",
-            "deleted",
-            "scope_of_custom_role"
-          ],
-          "primary_keys": [
-            "name"
-          ]
-        },
-        {
-          "table_name": "workload_identity_pools",
-          "columns": [
-            "project_id",
-            "project_number",
-            "location",
-            "pool_id",
-            "name",
-            "display_name",
-            "description",
-            "state",
-            "disabled",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "workload_identity_providers",
-          "columns": [
-            "project_id",
-            "project_number",
-            "location",
-            "pool_name",
-            "pool_id",
-            "provider_id",
-            "name",
-            "display_name",
-            "description",
-            "state",
-            "disabled",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "secretsmanager_secrets",
-          "columns": [
-            "project_id",
-            "project_name",
-            "name",
-            "replication",
-            "create_time",
-            "labels",
-            "topics",
-            "expire_time",
-            "ttl",
-            "etag",
-            "rotation",
-            "version_aliases",
-            "annotations",
-            "version_destroy_ttl",
-            "customer_managed_encryption",
-            "iam_policy",
-            "version"
-          ],
-          "primary_keys": [
-            "name"
-          ]
-        },
-        {
-          "table_name": "secretsmanager_secretversions",
-          "columns": [
-            "project_id",
-            "project_name",
-            "version_num",
-            "name",
-            "create_time",
-            "destroy_time",
-            "state",
-            "replication_status",
-            "etag",
-            "client_specified_payload_checksum",
-            "scheduled_destroy_time",
-            "customer_managed_encryption",
-            "secret_value"
-          ],
-          "primary_keys": [
-            "name"
-          ]
-        },
-        {
-          "table_name": "storagetransfer_transferjobs",
-          "columns": [
-            "name",
-            "description",
-            "project_id",
-            "transfer_spec",
-            "notification_config",
-            "logging_config",
-            "schedule",
-            "event_stream",
-            "status",
-            "creation_time",
-            "last_modification_time",
-            "deletion_time",
-            "latest_operation_name"
-          ],
-          "primary_keys": [
-            "name",
-            "project_id"
-          ]
-        },
-        {
-          "table_name": "storagetransfer_agentpools",
-          "columns": [
-            "name",
-            "display_name",
-            "state",
-            "bandwidth_limit"
-          ],
-          "primary_keys": [
-            "name"
-          ]
-        },
-        {
-          "table_name": "memorystore-redis",
-          "columns": [
-            "project_id",
-            "name",
-            "display_name",
-            "labels",
-            "location_id",
-            "alternative_location_id",
-            "redis_version",
-            "reserved_ip_range",
-            "secondary_ip_range",
-            "host",
-            "port",
-            "current_location_id",
-            "create_time",
-            "state",
-            "status_message",
-            "memory_size_gb",
-            "authorized_network",
-            "persistence_iam_identity",
-            "connect_mode",
-            "auth_enabled",
-            "transit_encryption_mode",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "iam_group_memberships",
-          "columns": [
-            "group",
-            "member",
-            "source",
-            "notes"
-          ],
-          "primary_keys": [
-            "group",
-            "member"
-          ]
-        },
-        {
-          "table_name": "clouddns_managed_zones",
-          "columns": [
-            "project_id",
-            "name",
-            "dns_name",
-            "description",
-            "visibility",
-            "labels",
-            "name_servers",
-            "creation_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "clouddns_record_sets",
-          "columns": [
-            "project_id",
-            "zone_name",
-            "name",
-            "type",
-            "ttl",
-            "rrdatas",
-            "routing_policy",
-            "signature_rrdatas",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "zone_name",
-            "name",
-            "type"
-          ]
-        },
-        {
-          "table_name": "servicedirectory_namespaces",
-          "columns": [
-            "project_id",
-            "location_id",
-            "name",
-            "namespace_id",
-            "labels",
-            "uid",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "servicedirectory_services",
-          "columns": [
-            "project_id",
-            "location_id",
-            "namespace_name",
-            "name",
-            "service_id",
-            "labels",
-            "uid",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "servicedirectory_endpoints",
-          "columns": [
-            "project_id",
-            "location_id",
-            "service_name",
-            "name",
-            "endpoint_id",
-            "address",
-            "port",
-            "network",
-            "uid",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "workspace_groups",
-          "columns": [
-            "customer_id",
-            "name",
-            "email",
-            "display_name",
-            "description",
-            "labels",
-            "create_time",
-            "update_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "customer_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "workspace_users",
-          "columns": [
-            "customer_id",
-            "email",
-            "user_id",
-            "display_name",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "customer_id",
-            "email"
-          ]
-        },
-        {
-          "table_name": "workspace_group_memberships",
-          "columns": [
-            "customer_id",
-            "group_name",
-            "group_email",
-            "group_member",
-            "member_email",
-            "member",
-            "member_type",
-            "roles",
-            "transitive",
-            "source",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "customer_id",
-            "group_name",
-            "member_email",
-            "transitive"
-          ]
-        },
-        {
-          "table_name": "cloudsql_instances",
-          "columns": [
-            "project_id",
-            "name",
-            "database_version",
-            "region",
-            "gce_zone",
-            "state",
-            "backend_type",
-            "connection_name",
-            "ip_addresses",
-            "settings_tier",
-            "settings_activation_policy",
-            "settings_ip_configuration_authorized_networks",
-            "settings_ip_configuration_ipv4_enabled",
-            "settings_ip_configuration_require_ssl",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudsql_databases",
-          "columns": [
-            "project_id",
-            "instance",
-            "name",
-            "charset",
-            "collation",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "instance",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudsql_users",
-          "columns": [
-            "project_id",
-            "instance",
-            "name",
-            "host",
-            "type",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "instance",
-            "name",
-            "host"
-          ]
-        },
-        {
-          "table_name": "cloudrun_services",
-          "columns": [
-            "project_id",
-            "location",
-            "service_id",
-            "name",
-            "url",
-            "ingress",
-            "latest_ready_revision",
-            "create_time",
-            "update_time",
-            "labels",
-            "annotations",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudrun_jobs",
-          "columns": [
-            "project_id",
-            "location",
-            "job_id",
-            "name",
-            "create_time",
-            "update_time",
-            "labels",
-            "annotations",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "kms_keyrings",
-          "columns": [
-            "project_id",
-            "location",
-            "keyring_id",
-            "name",
-            "create_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "kms_keys",
-          "columns": [
-            "project_id",
-            "location",
-            "keyring_name",
-            "key_id",
-            "name",
-            "purpose",
-            "primary_state",
-            "next_rotation_time",
-            "rotation_period",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "kms_key_versions",
-          "columns": [
-            "project_id",
-            "location",
-            "key_name",
-            "version_id",
-            "name",
-            "state",
-            "create_time",
-            "destroy_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "artifactregistry_repositories",
-          "columns": [
-            "project_id",
-            "location",
-            "repository_id",
-            "name",
-            "format",
-            "description",
-            "create_time",
-            "update_time",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "artifactregistry_packages",
-          "columns": [
-            "project_id",
-            "location",
-            "repository",
-            "package_id",
-            "name",
-            "create_time",
-            "update_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "artifactregistry_versions",
-          "columns": [
-            "project_id",
-            "location",
-            "package",
-            "version_id",
-            "name",
-            "create_time",
-            "update_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "gke_clusters",
-          "columns": [
-            "project_id",
-            "location",
-            "cluster_id",
-            "name",
-            "status",
-            "endpoint",
-            "master_version",
-            "node_count",
-            "private_cluster",
-            "network",
-            "subnetwork",
-            "create_time",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "gke_node_pools",
-          "columns": [
-            "project_id",
-            "location",
-            "cluster_name",
-            "node_pool_id",
-            "name",
-            "status",
-            "version",
-            "initial_node_count",
-            "config_machine_type",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudbuild_triggers",
-          "columns": [
-            "project_id",
-            "location",
-            "trigger_id",
-            "name",
-            "description",
-            "disabled",
-            "create_time",
-            "service_account",
-            "substitutions",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "trigger_id"
-          ]
-        },
-        {
-          "table_name": "cloudbuild_builds",
-          "columns": [
-            "project_id",
-            "location",
-            "build_id",
-            "status",
-            "create_time",
-            "finish_time",
-            "log_url",
-            "service_account",
-            "images",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "build_id"
-          ]
-        },
-        {
-          "table_name": "cloudbuild_connections",
-          "columns": [
-            "project_id",
-            "location",
-            "connection_id",
-            "name",
-            "disabled",
-            "create_time",
-            "update_time",
-            "reconciling",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudtasks_queues",
-          "columns": [
-            "project_id",
-            "location",
-            "queue_id",
-            "name",
-            "state",
-            "rate_limits",
-            "retry_config",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudtasks_tasks",
-          "columns": [
-            "project_id",
-            "location",
-            "queue_id",
-            "task_id",
-            "name",
-            "dispatch_type",
-            "schedule_time",
-            "create_time",
-            "dispatch_deadline",
-            "http_method",
-            "url",
-            "auth_required",
-            "http_request",
-            "app_engine_http_request",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "apikeys_keys",
-          "columns": [
-            "project_id",
-            "location",
-            "key_id",
-            "name",
-            "uid",
-            "display_name",
-            "state",
-            "restrictions",
-            "etag",
-            "key_string",
-            "create_time",
-            "update_time",
-            "delete_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "unauth_apikey_permissions",
-          "columns": [
-            "key_fingerprint",
-            "key_preview",
-            "api",
-            "method",
-            "status",
-            "cost_reference",
-            "detail",
-            "project_number",
-            "last_tested"
-          ],
-          "primary_keys": [
-            "key_fingerprint",
-            "api"
-          ]
-        },
-        {
-          "table_name": "unauth_apikey_gemini_models",
-          "columns": [
-            "key_fingerprint",
-            "key_preview",
-            "model",
-            "source",
-            "detail",
-            "last_seen"
-          ],
-          "primary_keys": [
-            "key_fingerprint",
-            "model"
-          ]
-        },
-        {
-          "table_name": "unauth_apikey_vertex_models",
-          "columns": [
-            "key_fingerprint",
-            "key_preview",
-            "model",
-            "source",
-            "detail",
-            "last_seen"
-          ],
-          "primary_keys": [
-            "key_fingerprint",
-            "model"
-          ]
-        },
-        {
-          "table_name": "pubsub_schemas",
-          "columns": [
-            "project_id",
-            "name",
-            "schema_id",
-            "type",
-            "definition",
-            "iam_policy"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "pubsub_snapshots",
-          "columns": [
-            "project_id",
-            "name",
-            "snapshot_id",
-            "topic",
-            "expire_time",
-            "labels",
-            "iam_policy"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_disks",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "zone",
-            "size_gb",
-            "type",
-            "status",
-            "source_image",
-            "source_snapshot",
-            "users",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_snapshots",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "status",
-            "disk_size_gb",
-            "storage_bytes",
-            "creation_timestamp",
-            "source_disk",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_images",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "family",
-            "status",
-            "creation_timestamp",
-            "source_disk",
-            "source_snapshot",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_instance_templates",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "creation_timestamp",
-            "properties",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_instance_groups",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "zone",
-            "region",
-            "network",
-            "subnetwork",
-            "size",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_instance_group_managers",
-          "columns": [
-            "project_id",
-            "name",
-            "id",
-            "zone",
-            "region",
-            "base_instance_name",
-            "target_size",
-            "instance_template",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_backend_buckets",
-          "columns": [
-            "project_id",
-            "name",
-            "bucket_name",
-            "enable_cdn",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_backend_services",
-          "columns": [
-            "project_id",
-            "name",
-            "protocol",
-            "load_balancing_scheme",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_firewall_policies",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_instant_snapshots",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "region",
-            "status",
-            "source_disk",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_interconnect_attachment_groups",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_interconnect_groups",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_licenses",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_machine_images",
-          "columns": [
-            "project_id",
-            "name",
-            "creation_timestamp",
-            "source_instance",
-            "status",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_network_attachments",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_network_firewall_policies",
-          "columns": [
-            "project_id",
-            "name",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_node_groups",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "region",
-            "status",
-            "node_template",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_node_templates",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "node_type",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_backend_buckets",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "bucket_name",
-            "enable_cdn",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_backend_services",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "protocol",
-            "load_balancing_scheme",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_disks",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "size_gb",
-            "type",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_instant_snapshots",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "source_disk",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_network_firewall_policies",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "description",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_region_snapshots",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "source_disk",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_reservations",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "region",
-            "specific_reservation_required",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_reservation_blocks",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "reservation",
-            "count",
-            "in_use_count",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "reservation",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_reservation_sub_blocks",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "reservation",
-            "reservation_block",
-            "count",
-            "in_use_count",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "reservation",
-            "reservation_block",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_resource_policies",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_service_attachments",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "target_service",
-            "connection_preference",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_storage_pools",
-          "columns": [
-            "project_id",
-            "name",
-            "zone",
-            "region",
-            "status",
-            "storage_pool_type",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "zone"
-          ]
-        },
-        {
-          "table_name": "cloudcompute_subnetworks",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "network",
-            "ip_cidr_range",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "bigtable_instances",
-          "columns": [
-            "project_id",
-            "name",
-            "instance_id",
-            "display_name",
-            "state",
-            "type",
-            "labels",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "bigtable_clusters",
-          "columns": [
-            "project_id",
-            "instance_name",
-            "name",
-            "cluster_id",
-            "location_id",
-            "state",
-            "serve_nodes",
-            "default_storage_type",
-            "encryption_config",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "bigtable_tables",
-          "columns": [
-            "project_id",
-            "instance_name",
-            "name",
-            "table_id",
-            "granularity",
-            "deletion_protection",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "bigtable_backups",
-          "columns": [
-            "project_id",
-            "instance_name",
-            "name",
-            "backup_id",
-            "source_table",
-            "state",
-            "expire_time",
-            "start_time",
-            "end_time",
-            "size_bytes",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "bigtable_authorized_views",
-          "columns": [
-            "project_id",
-            "table_name",
-            "name",
-            "authorized_view_id",
-            "deletion_protection",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "firestore_databases",
-          "columns": [
-            "project_id",
-            "name",
-            "database_id",
-            "location_id",
-            "type",
-            "concurrency_mode",
-            "app_engine_integration_mode",
-            "point_in_time_recovery_enablement",
-            "delete_protection_state",
-            "etag",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "firestore_rules",
-          "columns": [
-            "project_id",
-            "database_id",
-            "release_name",
-            "ruleset_name",
-            "attachment_point",
-            "services",
-            "create_time",
-            "source_files",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "release_name",
-            "ruleset_name"
-          ]
-        },
-        {
-          "table_name": "firestore_collections",
-          "columns": [
-            "project_id",
-            "database_id",
-            "collection_id",
-            "collection_path",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "database_id",
-            "collection_path"
-          ]
-        },
-        {
-          "table_name": "firebase_android_apps",
-          "columns": [
-            "project_id",
-            "name",
-            "app_id",
-            "display_name",
-            "package_name",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "app_id"
-          ]
-        },
-        {
-          "table_name": "firebase_ios_apps",
-          "columns": [
-            "project_id",
-            "name",
-            "app_id",
-            "display_name",
-            "bundle_id",
-            "app_store_id",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "app_id"
-          ]
-        },
-        {
-          "table_name": "firebase_auth_users",
-          "columns": [
-            "project_id",
-            "uid",
-            "email",
-            "display_name",
-            "phone_number",
-            "disabled",
-            "email_verified",
-            "tenant_id",
-            "provider_ids",
-            "custom_claims",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "uid"
-          ]
-        },
-        {
-          "table_name": "cloudcomposer_environments",
-          "columns": [
-            "project_id",
-            "location",
-            "name",
-            "environment_id",
-            "state",
-            "config_gke_cluster",
-            "config_airflow_uri",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "agentplatform_endpoints",
-          "columns": [
-            "project_id",
-            "location",
-            "name",
-            "endpoint_id",
-            "display_name",
-            "create_time",
-            "update_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "agentplatform_models",
-          "columns": [
-            "project_id",
-            "location",
-            "name",
-            "model_id",
-            "display_name",
-            "create_time",
-            "update_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "appengine_apps",
-          "columns": [
-            "project_id",
-            "name",
-            "location_id",
-            "serving_status",
-            "auth_domain",
-            "code_bucket",
-            "default_bucket",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "appengine_services",
-          "columns": [
-            "project_id",
-            "name",
-            "service_id",
-            "split",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "appengine_versions",
-          "columns": [
-            "project_id",
-            "service_name",
-            "name",
-            "version_id",
-            "runtime",
-            "env",
-            "serving_status",
-            "create_time",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "appengine_instances",
-          "columns": [
-            "project_id",
-            "version_name",
-            "name",
-            "instance_id",
-            "vm_id",
-            "availability",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_networks",
-          "columns": [
-            "project_id",
-            "name",
-            "auto_create_subnetworks",
-            "routing_mode",
-            "peerings",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_subnetworks",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "network",
-            "ip_cidr_range",
-            "private_ip_google_access",
-            "purpose",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_firewalls",
-          "columns": [
-            "project_id",
-            "name",
-            "network",
-            "direction",
-            "priority",
-            "disabled",
-            "source_ranges",
-            "target_tags",
-            "allowed",
-            "denied",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_routes",
-          "columns": [
-            "project_id",
-            "name",
-            "network",
-            "dest_range",
-            "next_hop_gateway",
-            "next_hop_ip",
-            "next_hop_instance",
-            "next_hop_vpn_tunnel",
-            "priority",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_routers",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "network",
-            "bgp",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "vpc_router_nats",
-          "columns": [
-            "project_id",
-            "router_name",
-            "region",
-            "name",
-            "nat_ip_allocate_option",
-            "source_subnetwork_ip_ranges_to_nat",
-            "nat_ips",
-            "log_config",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "router_name",
-            "region",
-            "name"
-          ]
-        },
-        {
-          "table_name": "vpc_vpn_gateways",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "network",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "vpc_target_vpn_gateways",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "network",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "vpc_vpn_tunnels",
-          "columns": [
-            "project_id",
-            "name",
-            "region",
-            "status",
-            "target_vpn_gateway",
-            "vpn_gateway",
-            "router",
-            "peer_ip",
-            "ike_version",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name",
-            "region"
-          ]
-        },
-        {
-          "table_name": "lb_forwarding_rules",
-          "columns": [
-            "project_id",
-            "scope",
-            "name",
-            "ip_address",
-            "ip_protocol",
-            "port_range",
-            "load_balancing_scheme",
-            "target",
-            "network_tier",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "scope",
-            "name"
-          ]
-        },
-        {
-          "table_name": "lb_backend_services",
-          "columns": [
-            "project_id",
-            "scope",
-            "name",
-            "protocol",
-            "load_balancing_scheme",
-            "backends",
-            "health_checks",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "scope",
-            "name"
-          ]
-        },
-        {
-          "table_name": "lb_url_maps",
-          "columns": [
-            "project_id",
-            "name",
-            "default_service",
-            "host_rules",
-            "path_matchers",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "lb_target_proxies",
-          "columns": [
-            "project_id",
-            "proxy_type",
-            "name",
-            "service",
-            "url_map",
-            "self_link",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "proxy_type",
-            "name"
-          ]
-        },
-        {
-          "table_name": "batch_jobs",
-          "columns": [
-            "project_id",
-            "location",
-            "name",
-            "job_id",
-            "uid",
-            "create_time",
-            "status_state",
-            "logs_policy",
-            "raw_json"
-          ],
-          "primary_keys": [
-            "project_id",
-            "name"
-          ]
-        },
-        {
-          "table_name": "opengraph_nodes",
-          "columns": [
-            "node_id",
-            "node_type",
-            "name",
-            "display_name",
-            "properties_json"
-          ],
-          "primary_keys": [
-            "node_id"
-          ]
-        },
-        {
-          "table_name": "opengraph_edges",
-          "columns": [
-            "source_id",
-            "destination_id",
-            "edge_type",
-            "source_type",
-            "destination_type",
-            "properties_json",
-            "evidence_source"
-          ],
-          "primary_keys": [
-            "source_id",
-            "destination_id",
-            "edge_type"
-          ]
-        },
-        {
-          "table_name": "opengraph_ui_config",
-          "columns": [
-            "custom_nodes_token_id",
-            "custom_nodes_token_key",
-            "custom_nodes_url",
-            "auth_mode"
-          ],
-          "primary_keys": [
-            "custom_nodes_token_id"
-          ]
-        }
+      "table_name": "cloudstorage_buckets",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "storage_class",
+        "location",
+        "location_type",
+        "cors",
+        "default_event_based_hold",
+        "default_kms_key_name",
+        "metageneration",
+        "iam_configuration_public_access_prevention",
+        "retention_policy_effective_time",
+        "retention_period",
+        "retention_policy_locked",
+        "requester_pays",
+        "self_link",
+        "time_created",
+        "versioning_enabled",
+        "labels",
+        "iam_policy",
+        "external_curl"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudstorage_bucketblobs",
+      "columns": [
+        "project_id",
+        "name",
+        "bucket_name",
+        "storage_class",
+        "id",
+        "size",
+        "updated",
+        "generation",
+        "metageneration",
+        "etag",
+        "owner",
+        "component_count",
+        "crc32c",
+        "md5_hash",
+        "cache_control",
+        "content_type",
+        "content_disposition",
+        "content_encoding",
+        "content_language",
+        "metadata",
+        "media_link",
+        "custom_time",
+        "temporary_hold",
+        "event_based_hold",
+        "retention_expiration_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudstorage_hmac_keys",
+      "columns": [
+        "access_id",
+        "secret",
+        "etag",
+        "id",
+        "path",
+        "project_id",
+        "service_account_email",
+        "state",
+        "time_created",
+        "updated",
+        "user_project"
+      ],
+      "primary_keys": [
+        "access_id",
+        "project_id",
+        "service_account_email"
+      ]
+    },
+    {
+      "table_name": "cloudfunctions_functions",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "state",
+        "update_time",
+        "labels",
+        "state_messages",
+        "environment",
+        "url",
+        "kms_key_name",
+        "build_config",
+        "service_config",
+        "event_trigger",
+        "iam_policy",
+        "external_curl"
+      ],
+      "primary_keys": [
+        "name",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "apigateway_gateways",
+      "columns": [
+        "project_id",
+        "name",
+        "display_name",
+        "api_config",
+        "default_hostname",
+        "state",
+        "create_time",
+        "update_time",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "apigateway_apis",
+      "columns": [
+        "project_id",
+        "name",
+        "managed_service",
+        "display_name",
+        "state",
+        "create_time",
+        "update_time",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "apigateway_api_configs",
+      "columns": [
+        "project_id",
+        "api_name",
+        "name",
+        "display_name",
+        "gateway_service_account",
+        "service_config_id",
+        "state",
+        "create_time",
+        "update_time",
+        "labels",
+        "openapi_documents",
+        "grpc_services",
+        "managed_service_configs",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigquery_datasets",
+      "columns": [
+        "project_id",
+        "dataset_id",
+        "full_dataset_id",
+        "friendly_name",
+        "description",
+        "location",
+        "labels",
+        "default_table_expiration_ms",
+        "default_partition_expiration_ms",
+        "created",
+        "modified",
+        "access_entries"
+      ],
+      "primary_keys": [
+        "project_id",
+        "dataset_id"
+      ]
+    },
+    {
+      "table_name": "bigquery_tables",
+      "columns": [
+        "project_id",
+        "dataset_id",
+        "table_id",
+        "full_table_id",
+        "table_type",
+        "friendly_name",
+        "description",
+        "labels",
+        "expires",
+        "created",
+        "modified",
+        "num_rows",
+        "num_bytes",
+        "location",
+        "partitioning_type",
+        "time_partitioning",
+        "range_partitioning",
+        "clustering_fields",
+        "schema_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "dataset_id",
+        "table_id"
+      ]
+    },
+    {
+      "table_name": "bigquery_routines",
+      "columns": [
+        "project_id",
+        "dataset_id",
+        "routine_id",
+        "full_routine_id",
+        "routine_type",
+        "language",
+        "creation_time",
+        "last_modified_time",
+        "imported_libraries",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "full_routine_id"
+      ]
+    },
+    {
+      "table_name": "pubsub_topics",
+      "columns": [
+        "project_id",
+        "name",
+        "topic_id",
+        "kms_key_name",
+        "labels",
+        "message_storage_policy",
+        "schema_settings",
+        "iam_policy",
+        "satisfies_pzs"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "pubsub_subscriptions",
+      "columns": [
+        "project_id",
+        "name",
+        "subscription_id",
+        "topic",
+        "ack_deadline_seconds",
+        "retain_acked_messages",
+        "message_retention_duration",
+        "labels",
+        "enable_exactly_once_delivery",
+        "enable_message_ordering",
+        "filter",
+        "push_config",
+        "bigquery_config",
+        "dead_letter_policy",
+        "expiration_policy",
+        "iam_policy",
+        "state",
+        "detached"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "iam_unauth_permissions",
+      "columns": [
+        "member",
+        "project_id",
+        "name",
+        "display_name",
+        "type",
+        "permissions"
+      ],
+      "primary_keys": [
+        "member",
+        "project_id",
+        "type",
+        "name"
+      ]
+    },
+    {
+      "table_name": "iam_allow_policies",
+      "columns": [
+        "project_id",
+        "resource_type",
+        "resource_name",
+        "policy"
+      ],
+      "primary_keys": [
+        "project_id",
+        "resource_type",
+        "resource_name"
+      ]
+    },
+    {
+      "table_name": "iam_deny_policies",
+      "columns": [
+        "scope_type",
+        "scope_name",
+        "project_id",
+        "policy_id",
+        "display_name",
+        "etag",
+        "rule_count",
+        "denied_principals",
+        "denied_permissions",
+        "exception_principals",
+        "rules_json",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "scope_name",
+        "policy_id"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_instances",
+      "columns": [
+        "project_id",
+        "advanced_machine_features",
+        "can_ip_forward",
+        "confidential_instance_config",
+        "cpu_platform",
+        "creation_timestamp",
+        "deletion_protection",
+        "description",
+        "disks",
+        "guest_accelerators",
+        "network_interfaces",
+        "scheduling",
+        "display_device",
+        "fingerprint",
+        "hostname",
+        "id",
+        "instance_encryption_key",
+        "key_revocation_action_type",
+        "kind",
+        "label_fingerprint",
+        "labels",
+        "last_start_timestamp",
+        "last_stop_timestamp",
+        "last_suspended_timestamp",
+        "machine_type",
+        "metadata_enable_os_login",
+        "metadata",
+        "min_cpu_platform",
+        "name",
+        "network_performance_config",
+        "params",
+        "private_ipv6_google_access",
+        "reservation_affinity",
+        "resource_policies",
+        "resource_status",
+        "satisfies_pzi",
+        "satisfies_pzs",
+        "self_link",
+        "service_accounts",
+        "shielded_instance_config",
+        "shielded_instance_integrity_policy",
+        "source_machine_image",
+        "source_machine_image_encryption_key",
+        "start_restricted",
+        "status",
+        "status_message",
+        "tags",
+        "zone",
+        "iam_policy"
+      ],
+      "primary_keys": [
+        "project_id",
+        "id",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_projects",
+      "columns": [
+        "cloud_armor_tier",
+        "common_instance_metadata",
+        "creation_timestamp",
+        "default_network_tier",
+        "default_service_account",
+        "description",
+        "enabled_features",
+        "id",
+        "kind",
+        "project_id",
+        "quotas",
+        "self_link",
+        "usage_export_location",
+        "vm_dns_setting",
+        "xpn_project_status",
+        "metadata_enable_os_login"
+      ],
+      "primary_keys": [
+        "project_id",
+        "id"
+      ]
+    },
+    {
+      "table_name": "abstract_tree_hierarchy",
+      "columns": [
+        "name",
+        "display_name",
+        "project_id",
+        "type",
+        "parent",
+        "state",
+        "iam_policy"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "member_permissions_summary",
+      "columns": [
+        "crednames",
+        "member",
+        "roles_and_assets",
+        "permissions_and_assets"
+      ],
+      "primary_keys": [
+        "member"
+      ]
+    },
+    {
+      "table_name": "iam_service_accounts",
+      "columns": [
+        "credname",
+        "name",
+        "project_id",
+        "unique_id",
+        "email",
+        "display_name",
+        "etag",
+        "description",
+        "oauth2_client_id",
+        "disabled",
+        "type",
+        "iam_policy"
+      ],
+      "primary_keys": [
+        "email",
+        "project_id",
+        "unique_id",
+        "type"
+      ]
+    },
+    {
+      "table_name": "iam_sa_keys",
+      "columns": [
+        "name",
+        "private_key_type",
+        "key_algorithm",
+        "private_key_data",
+        "public_key_data",
+        "valid_after_time",
+        "valid_before_time",
+        "key_origin",
+        "key_type",
+        "disabled"
+      ],
+      "primary_keys": [
+        "name"
+      ]
+    },
+    {
+      "table_name": "iam_roles",
+      "columns": [
+        "name",
+        "title",
+        "description",
+        "included_permissions",
+        "stage",
+        "etag",
+        "deleted",
+        "scope_of_custom_role"
+      ],
+      "primary_keys": [
+        "name"
+      ]
+    },
+    {
+      "table_name": "workload_identity_pools",
+      "columns": [
+        "project_id",
+        "project_number",
+        "location",
+        "pool_id",
+        "name",
+        "display_name",
+        "description",
+        "state",
+        "disabled",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workload_identity_providers",
+      "columns": [
+        "project_id",
+        "project_number",
+        "location",
+        "pool_name",
+        "pool_id",
+        "provider_id",
+        "name",
+        "display_name",
+        "description",
+        "state",
+        "disabled",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "secretsmanager_secrets",
+      "columns": [
+        "project_id",
+        "project_name",
+        "name",
+        "replication",
+        "create_time",
+        "labels",
+        "topics",
+        "expire_time",
+        "ttl",
+        "etag",
+        "rotation",
+        "version_aliases",
+        "annotations",
+        "version_destroy_ttl",
+        "customer_managed_encryption",
+        "iam_policy",
+        "version"
+      ],
+      "primary_keys": [
+        "name"
+      ]
+    },
+    {
+      "table_name": "secretsmanager_secretversions",
+      "columns": [
+        "project_id",
+        "project_name",
+        "version_num",
+        "name",
+        "create_time",
+        "destroy_time",
+        "state",
+        "replication_status",
+        "etag",
+        "client_specified_payload_checksum",
+        "scheduled_destroy_time",
+        "customer_managed_encryption",
+        "secret_value"
+      ],
+      "primary_keys": [
+        "name"
+      ]
+    },
+    {
+      "table_name": "storagetransfer_transferjobs",
+      "columns": [
+        "name",
+        "description",
+        "project_id",
+        "transfer_spec",
+        "notification_config",
+        "logging_config",
+        "schedule",
+        "event_stream",
+        "status",
+        "creation_time",
+        "last_modification_time",
+        "deletion_time",
+        "latest_operation_name"
+      ],
+      "primary_keys": [
+        "name",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "storagetransfer_agentpools",
+      "columns": [
+        "name",
+        "display_name",
+        "state",
+        "bandwidth_limit"
+      ],
+      "primary_keys": [
+        "name"
+      ]
+    },
+    {
+      "table_name": "memorystore-redis",
+      "columns": [
+        "project_id",
+        "name",
+        "display_name",
+        "labels",
+        "location_id",
+        "alternative_location_id",
+        "redis_version",
+        "reserved_ip_range",
+        "secondary_ip_range",
+        "host",
+        "port",
+        "current_location_id",
+        "create_time",
+        "state",
+        "status_message",
+        "memory_size_gb",
+        "authorized_network",
+        "persistence_iam_identity",
+        "connect_mode",
+        "auth_enabled",
+        "transit_encryption_mode",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "iam_group_memberships",
+      "columns": [
+        "group",
+        "member",
+        "source",
+        "notes"
+      ],
+      "primary_keys": [
+        "group",
+        "member"
+      ]
+    },
+    {
+      "table_name": "clouddns_managed_zones",
+      "columns": [
+        "project_id",
+        "name",
+        "dns_name",
+        "description",
+        "visibility",
+        "labels",
+        "name_servers",
+        "creation_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "clouddns_record_sets",
+      "columns": [
+        "project_id",
+        "zone_name",
+        "name",
+        "type",
+        "ttl",
+        "rrdatas",
+        "routing_policy",
+        "signature_rrdatas",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "zone_name",
+        "name",
+        "type"
+      ]
+    },
+    {
+      "table_name": "servicedirectory_namespaces",
+      "columns": [
+        "project_id",
+        "location_id",
+        "name",
+        "namespace_id",
+        "labels",
+        "uid",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "servicedirectory_services",
+      "columns": [
+        "project_id",
+        "location_id",
+        "namespace_name",
+        "name",
+        "service_id",
+        "labels",
+        "uid",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "servicedirectory_endpoints",
+      "columns": [
+        "project_id",
+        "location_id",
+        "service_name",
+        "name",
+        "endpoint_id",
+        "address",
+        "port",
+        "network",
+        "uid",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workspace_groups",
+      "columns": [
+        "customer_id",
+        "name",
+        "email",
+        "display_name",
+        "description",
+        "labels",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workspace_users",
+      "columns": [
+        "customer_id",
+        "email",
+        "user_id",
+        "display_name",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "email"
+      ]
+    },
+    {
+      "table_name": "workspace_group_memberships",
+      "columns": [
+        "customer_id",
+        "group_name",
+        "group_email",
+        "group_member",
+        "member_email",
+        "member",
+        "member_type",
+        "roles",
+        "transitive",
+        "source",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "group_name",
+        "member_email",
+        "transitive"
+      ]
+    },
+    {
+      "table_name": "workspace_admin_roles",
+      "columns": [
+        "customer_id",
+        "role_id",
+        "role_name",
+        "role_description",
+        "is_super_admin_role",
+        "is_system_role",
+        "role_privileges",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "role_id"
+      ]
+    },
+    {
+      "table_name": "workspace_role_assignments",
+      "columns": [
+        "customer_id",
+        "role_assignment_id",
+        "role_id",
+        "assigned_to",
+        "scope_type",
+        "org_unit_id",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "role_assignment_id"
+      ]
+    },
+    {
+      "table_name": "workspace_org_units",
+      "columns": [
+        "customer_id",
+        "org_unit_id",
+        "org_unit_path",
+        "name",
+        "parent_org_unit_path",
+        "parent_org_unit_id",
+        "description",
+        "block_inheritance",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "org_unit_id"
+      ]
+    },
+    {
+      "table_name": "workspace_domains",
+      "columns": [
+        "customer_id",
+        "domain_name",
+        "is_primary",
+        "verified",
+        "creation_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "domain_name"
+      ]
+    },
+    {
+      "table_name": "workspace_mobile_devices",
+      "columns": [
+        "customer_id",
+        "resource_id",
+        "device_id",
+        "email",
+        "model",
+        "os",
+        "type",
+        "status",
+        "serial_number",
+        "imei",
+        "last_sync",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "resource_id"
+      ]
+    },
+    {
+      "table_name": "workspace_oauth_tokens",
+      "columns": [
+        "customer_id",
+        "user_email",
+        "client_id",
+        "display_text",
+        "scopes",
+        "anonymous",
+        "native_app",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "user_email",
+        "client_id"
+      ]
+    },
+    {
+      "table_name": "workspace_delegations",
+      "columns": [
+        "sa_email",
+        "customer_id",
+        "admin_subject",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "sa_email",
+        "customer_id"
+      ]
+    },
+    {
+      "table_name": "workspace_group_settings",
+      "columns": [
+        "customer_id",
+        "group_email",
+        "name",
+        "who_can_join",
+        "who_can_post_message",
+        "who_can_view_membership",
+        "who_can_view_group",
+        "allow_external_members",
+        "is_archived",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "group_email"
+      ]
+    },
+    {
+      "table_name": "workspace_drive_files",
+      "columns": [
+        "caller_email",
+        "file_id",
+        "name",
+        "mime_type",
+        "owner_email",
+        "size",
+        "modified_time",
+        "exposure",
+        "shared_with",
+        "web_view_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "caller_email",
+        "file_id"
+      ]
+    },
+    {
+      "table_name": "workspace_drive_permissions",
+      "columns": [
+        "caller_email",
+        "file_id",
+        "permission_id",
+        "type",
+        "role",
+        "email_address",
+        "domain",
+        "allow_file_discovery",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "file_id",
+        "permission_id"
+      ]
+    },
+    {
+      "table_name": "workspace_data_transfers",
+      "columns": [
+        "customer_id",
+        "transfer_id",
+        "old_owner_user_id",
+        "new_owner_user_id",
+        "overall_status",
+        "request_time",
+        "applications",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "customer_id",
+        "transfer_id"
+      ]
+    },
+    {
+      "table_name": "cloudsql_instances",
+      "columns": [
+        "project_id",
+        "name",
+        "database_version",
+        "region",
+        "gce_zone",
+        "state",
+        "backend_type",
+        "connection_name",
+        "ip_addresses",
+        "settings_tier",
+        "settings_activation_policy",
+        "settings_ip_configuration_authorized_networks",
+        "settings_ip_configuration_ipv4_enabled",
+        "settings_ip_configuration_require_ssl",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudsql_databases",
+      "columns": [
+        "project_id",
+        "instance",
+        "name",
+        "charset",
+        "collation",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "instance",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudsql_users",
+      "columns": [
+        "project_id",
+        "instance",
+        "name",
+        "host",
+        "type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "instance",
+        "name",
+        "host"
+      ]
+    },
+    {
+      "table_name": "cloudrun_services",
+      "columns": [
+        "project_id",
+        "location",
+        "service_id",
+        "name",
+        "url",
+        "ingress",
+        "latest_ready_revision",
+        "create_time",
+        "update_time",
+        "labels",
+        "annotations",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudrun_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "job_id",
+        "name",
+        "create_time",
+        "update_time",
+        "labels",
+        "annotations",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "kms_keyrings",
+      "columns": [
+        "project_id",
+        "location",
+        "keyring_id",
+        "name",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "kms_keys",
+      "columns": [
+        "project_id",
+        "location",
+        "keyring_name",
+        "key_id",
+        "name",
+        "purpose",
+        "primary_state",
+        "next_rotation_time",
+        "rotation_period",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "kms_key_versions",
+      "columns": [
+        "project_id",
+        "location",
+        "key_name",
+        "version_id",
+        "name",
+        "state",
+        "create_time",
+        "destroy_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "artifactregistry_repositories",
+      "columns": [
+        "project_id",
+        "location",
+        "repository_id",
+        "name",
+        "format",
+        "description",
+        "create_time",
+        "update_time",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "artifactregistry_packages",
+      "columns": [
+        "project_id",
+        "location",
+        "repository",
+        "package_id",
+        "name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "artifactregistry_versions",
+      "columns": [
+        "project_id",
+        "location",
+        "package",
+        "version_id",
+        "name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "gke_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "status",
+        "endpoint",
+        "master_version",
+        "node_count",
+        "private_cluster",
+        "network",
+        "subnetwork",
+        "create_time",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "gke_node_pools",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_name",
+        "node_pool_id",
+        "name",
+        "status",
+        "version",
+        "initial_node_count",
+        "config_machine_type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudbuild_triggers",
+      "columns": [
+        "project_id",
+        "location",
+        "trigger_id",
+        "name",
+        "description",
+        "disabled",
+        "create_time",
+        "service_account",
+        "substitutions",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "trigger_id"
+      ]
+    },
+    {
+      "table_name": "cloudbuild_builds",
+      "columns": [
+        "project_id",
+        "location",
+        "build_id",
+        "status",
+        "create_time",
+        "finish_time",
+        "log_url",
+        "service_account",
+        "images",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "build_id"
+      ]
+    },
+    {
+      "table_name": "cloudbuild_connections",
+      "columns": [
+        "project_id",
+        "location",
+        "connection_id",
+        "name",
+        "disabled",
+        "create_time",
+        "update_time",
+        "reconciling",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudtasks_queues",
+      "columns": [
+        "project_id",
+        "location",
+        "queue_id",
+        "name",
+        "state",
+        "rate_limits",
+        "retry_config",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudtasks_tasks",
+      "columns": [
+        "project_id",
+        "location",
+        "queue_id",
+        "task_id",
+        "name",
+        "dispatch_type",
+        "schedule_time",
+        "create_time",
+        "dispatch_deadline",
+        "http_method",
+        "url",
+        "auth_required",
+        "http_request",
+        "app_engine_http_request",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "apikeys_keys",
+      "columns": [
+        "project_id",
+        "location",
+        "key_id",
+        "name",
+        "uid",
+        "display_name",
+        "state",
+        "restrictions",
+        "etag",
+        "key_string",
+        "create_time",
+        "update_time",
+        "delete_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "unauth_apikey_permissions",
+      "columns": [
+        "key_fingerprint",
+        "key_preview",
+        "api",
+        "method",
+        "status",
+        "cost_reference",
+        "detail",
+        "project_number",
+        "last_tested"
+      ],
+      "primary_keys": [
+        "key_fingerprint",
+        "api"
+      ]
+    },
+    {
+      "table_name": "unauth_apikey_gemini_models",
+      "columns": [
+        "key_fingerprint",
+        "key_preview",
+        "model",
+        "source",
+        "detail",
+        "last_seen"
+      ],
+      "primary_keys": [
+        "key_fingerprint",
+        "model"
+      ]
+    },
+    {
+      "table_name": "unauth_apikey_vertex_models",
+      "columns": [
+        "key_fingerprint",
+        "key_preview",
+        "model",
+        "source",
+        "detail",
+        "last_seen"
+      ],
+      "primary_keys": [
+        "key_fingerprint",
+        "model"
+      ]
+    },
+    {
+      "table_name": "pubsub_schemas",
+      "columns": [
+        "project_id",
+        "name",
+        "schema_id",
+        "type",
+        "definition",
+        "iam_policy"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "pubsub_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "snapshot_id",
+        "topic",
+        "expire_time",
+        "labels",
+        "iam_policy"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_disks",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "zone",
+        "size_gb",
+        "type",
+        "status",
+        "source_image",
+        "source_snapshot",
+        "users",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "status",
+        "disk_size_gb",
+        "storage_bytes",
+        "creation_timestamp",
+        "source_disk",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_images",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "family",
+        "status",
+        "creation_timestamp",
+        "source_disk",
+        "source_snapshot",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_instance_templates",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "creation_timestamp",
+        "properties",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_instance_groups",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "zone",
+        "region",
+        "network",
+        "subnetwork",
+        "size",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_instance_group_managers",
+      "columns": [
+        "project_id",
+        "name",
+        "id",
+        "zone",
+        "region",
+        "base_instance_name",
+        "target_size",
+        "instance_template",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_backend_buckets",
+      "columns": [
+        "project_id",
+        "name",
+        "bucket_name",
+        "enable_cdn",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_backend_services",
+      "columns": [
+        "project_id",
+        "name",
+        "protocol",
+        "load_balancing_scheme",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_firewall_policies",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_instant_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "region",
+        "status",
+        "source_disk",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_interconnect_attachment_groups",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_interconnect_groups",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_licenses",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_machine_images",
+      "columns": [
+        "project_id",
+        "name",
+        "creation_timestamp",
+        "source_instance",
+        "status",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_network_attachments",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_network_firewall_policies",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_node_groups",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "region",
+        "status",
+        "node_template",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_node_templates",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "node_type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_backend_buckets",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "bucket_name",
+        "enable_cdn",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_backend_services",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "protocol",
+        "load_balancing_scheme",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_disks",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "size_gb",
+        "type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_instant_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "source_disk",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_network_firewall_policies",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "description",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_region_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "source_disk",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_reservations",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "region",
+        "specific_reservation_required",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_reservation_blocks",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "reservation",
+        "count",
+        "in_use_count",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "reservation",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_reservation_sub_blocks",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "reservation",
+        "reservation_block",
+        "count",
+        "in_use_count",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "reservation",
+        "reservation_block",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_resource_policies",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_service_attachments",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "target_service",
+        "connection_preference",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_storage_pools",
+      "columns": [
+        "project_id",
+        "name",
+        "zone",
+        "region",
+        "status",
+        "storage_pool_type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "zone"
+      ]
+    },
+    {
+      "table_name": "cloudcompute_subnetworks",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "network",
+        "ip_cidr_range",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "bigtable_instances",
+      "columns": [
+        "project_id",
+        "name",
+        "instance_id",
+        "display_name",
+        "state",
+        "type",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigtable_clusters",
+      "columns": [
+        "project_id",
+        "instance_name",
+        "name",
+        "cluster_id",
+        "location_id",
+        "state",
+        "serve_nodes",
+        "default_storage_type",
+        "encryption_config",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigtable_tables",
+      "columns": [
+        "project_id",
+        "instance_name",
+        "name",
+        "table_id",
+        "granularity",
+        "deletion_protection",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigtable_backups",
+      "columns": [
+        "project_id",
+        "instance_name",
+        "name",
+        "backup_id",
+        "source_table",
+        "state",
+        "expire_time",
+        "start_time",
+        "end_time",
+        "size_bytes",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigtable_authorized_views",
+      "columns": [
+        "project_id",
+        "table_name",
+        "name",
+        "authorized_view_id",
+        "deletion_protection",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "firestore_databases",
+      "columns": [
+        "project_id",
+        "name",
+        "database_id",
+        "location_id",
+        "type",
+        "concurrency_mode",
+        "app_engine_integration_mode",
+        "point_in_time_recovery_enablement",
+        "delete_protection_state",
+        "etag",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "firestore_rules",
+      "columns": [
+        "project_id",
+        "database_id",
+        "release_name",
+        "ruleset_name",
+        "attachment_point",
+        "services",
+        "create_time",
+        "source_files",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "release_name",
+        "ruleset_name"
+      ]
+    },
+    {
+      "table_name": "firestore_collections",
+      "columns": [
+        "project_id",
+        "database_id",
+        "collection_id",
+        "collection_path",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "database_id",
+        "collection_path"
+      ]
+    },
+    {
+      "table_name": "firebase_android_apps",
+      "columns": [
+        "project_id",
+        "name",
+        "app_id",
+        "display_name",
+        "package_name",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "app_id"
+      ]
+    },
+    {
+      "table_name": "firebase_ios_apps",
+      "columns": [
+        "project_id",
+        "name",
+        "app_id",
+        "display_name",
+        "bundle_id",
+        "app_store_id",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "app_id"
+      ]
+    },
+    {
+      "table_name": "firebase_auth_users",
+      "columns": [
+        "project_id",
+        "uid",
+        "email",
+        "display_name",
+        "phone_number",
+        "disabled",
+        "email_verified",
+        "tenant_id",
+        "provider_ids",
+        "custom_claims",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "uid"
+      ]
+    },
+    {
+      "table_name": "cloudcomposer_environments",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "environment_id",
+        "state",
+        "config_gke_cluster",
+        "config_airflow_uri",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_endpoints",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "endpoint_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_models",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "model_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "appengine_apps",
+      "columns": [
+        "project_id",
+        "name",
+        "location_id",
+        "serving_status",
+        "auth_domain",
+        "code_bucket",
+        "default_bucket",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "appengine_services",
+      "columns": [
+        "project_id",
+        "name",
+        "service_id",
+        "split",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "appengine_versions",
+      "columns": [
+        "project_id",
+        "service_name",
+        "name",
+        "version_id",
+        "runtime",
+        "env",
+        "serving_status",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "appengine_instances",
+      "columns": [
+        "project_id",
+        "version_name",
+        "name",
+        "instance_id",
+        "vm_id",
+        "availability",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_networks",
+      "columns": [
+        "project_id",
+        "name",
+        "auto_create_subnetworks",
+        "routing_mode",
+        "peerings",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_subnetworks",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "network",
+        "ip_cidr_range",
+        "private_ip_google_access",
+        "purpose",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_firewalls",
+      "columns": [
+        "project_id",
+        "name",
+        "network",
+        "direction",
+        "priority",
+        "disabled",
+        "source_ranges",
+        "target_tags",
+        "allowed",
+        "denied",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_routes",
+      "columns": [
+        "project_id",
+        "name",
+        "network",
+        "dest_range",
+        "next_hop_gateway",
+        "next_hop_ip",
+        "next_hop_instance",
+        "next_hop_vpn_tunnel",
+        "priority",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_routers",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "network",
+        "bgp",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "vpc_router_nats",
+      "columns": [
+        "project_id",
+        "router_name",
+        "region",
+        "name",
+        "nat_ip_allocate_option",
+        "source_subnetwork_ip_ranges_to_nat",
+        "nat_ips",
+        "log_config",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "router_name",
+        "region",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vpc_vpn_gateways",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "network",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "vpc_target_vpn_gateways",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "network",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "vpc_vpn_tunnels",
+      "columns": [
+        "project_id",
+        "name",
+        "region",
+        "status",
+        "target_vpn_gateway",
+        "vpn_gateway",
+        "router",
+        "peer_ip",
+        "ike_version",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name",
+        "region"
+      ]
+    },
+    {
+      "table_name": "lb_forwarding_rules",
+      "columns": [
+        "project_id",
+        "scope",
+        "name",
+        "ip_address",
+        "ip_protocol",
+        "port_range",
+        "load_balancing_scheme",
+        "target",
+        "network_tier",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "scope",
+        "name"
+      ]
+    },
+    {
+      "table_name": "lb_backend_services",
+      "columns": [
+        "project_id",
+        "scope",
+        "name",
+        "protocol",
+        "load_balancing_scheme",
+        "backends",
+        "health_checks",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "scope",
+        "name"
+      ]
+    },
+    {
+      "table_name": "lb_url_maps",
+      "columns": [
+        "project_id",
+        "name",
+        "default_service",
+        "host_rules",
+        "path_matchers",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "lb_target_proxies",
+      "columns": [
+        "project_id",
+        "proxy_type",
+        "name",
+        "service",
+        "url_map",
+        "self_link",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "proxy_type",
+        "name"
+      ]
+    },
+    {
+      "table_name": "batch_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "job_id",
+        "uid",
+        "create_time",
+        "status_state",
+        "logs_policy",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "opengraph_nodes",
+      "columns": [
+        "node_id",
+        "node_type",
+        "name",
+        "display_name",
+        "properties_json"
+      ],
+      "primary_keys": [
+        "node_id"
+      ]
+    },
+    {
+      "table_name": "opengraph_edges",
+      "columns": [
+        "source_id",
+        "destination_id",
+        "edge_type",
+        "source_type",
+        "destination_type",
+        "properties_json",
+        "evidence_source"
+      ],
+      "primary_keys": [
+        "source_id",
+        "destination_id",
+        "edge_type"
+      ]
+    },
+    {
+      "table_name": "opengraph_ui_config",
+      "columns": [
+        "custom_nodes_token_id",
+        "custom_nodes_token_key",
+        "custom_nodes_url",
+        "auth_mode"
+      ],
+      "primary_keys": [
+        "custom_nodes_token_id"
+      ]
+    },
+    {
+      "table_name": "enum_all_task_ledger",
+      "columns": [
+        "run_id",
+        "project_id",
+        "service",
+        "status",
+        "started_at",
+        "finished_at",
+        "error",
+        "rows_written"
+      ],
+      "primary_keys": [
+        "run_id",
+        "project_id",
+        "service"
+      ]
+    },
+    {
+      "table_name": "workspace_enum_ledger",
+      "columns": [
+        "run_id",
+        "unit",
+        "status",
+        "error"
+      ],
+      "primary_keys": [
+        "run_id",
+        "unit"
+      ]
+    },
+    {
+      "table_name": "policy_bindings_ledger",
+      "columns": [
+        "run_id",
+        "unit",
+        "status",
+        "error"
+      ],
+      "primary_keys": [
+        "run_id",
+        "unit"
+      ]
+    },
+    {
+      "table_name": "agentplatform_entity_types",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "entity_type_id",
+        "featurestore_name",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_feature_views",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "feature_view_id",
+        "feature_online_store_name",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudscheduler_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "job_id",
+        "name",
+        "state",
+        "schedule",
+        "time_zone",
+        "target_type",
+        "target_uri",
+        "target_sa_email",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudworkflows_workflows",
+      "columns": [
+        "project_id",
+        "location",
+        "workflow_id",
+        "name",
+        "state",
+        "revision_id",
+        "service_account",
+        "call_log_level",
+        "crypto_key_name",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "spanner_instances",
+      "columns": [
+        "project_id",
+        "instance_id",
+        "name",
+        "display_name",
+        "state",
+        "config",
+        "node_count",
+        "processing_units",
+        "edition",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "spanner_databases",
+      "columns": [
+        "project_id",
+        "instance_id",
+        "database_id",
+        "name",
+        "state",
+        "database_dialect",
+        "default_leader",
+        "enable_drop_protection",
+        "version_retention_period",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "alloydb_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "state",
+        "cluster_type",
+        "database_version",
+        "network",
+        "kms_key_name",
+        "initial_user",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "alloydb_instances",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "instance_id",
+        "name",
+        "state",
+        "instance_type",
+        "availability_type",
+        "gce_zone",
+        "ip_address",
+        "public_ip_address",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "orgpolicy_policies",
+      "columns": [
+        "project_id",
+        "constraint",
+        "name",
+        "rule_summary",
+        "inherit_from_parent",
+        "reset",
+        "etag",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "eventarc_triggers",
+      "columns": [
+        "project_id",
+        "location",
+        "trigger_id",
+        "name",
+        "service_account",
+        "destination_type",
+        "destination_target",
+        "channel",
+        "event_filters",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workstations_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "network",
+        "control_plane_ip",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workstations_configs",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "config_id",
+        "name",
+        "service_account",
+        "machine_type",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "workstations_workstations",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "config_id",
+        "workstation_id",
+        "name",
+        "state",
+        "host",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "billing_accounts",
+      "columns": [
+        "project_id",
+        "name",
+        "account_id",
+        "display_name",
+        "is_open",
+        "master_billing_account",
+        "iam_members",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "project_billing_info",
+      "columns": [
+        "project_id",
+        "name",
+        "billing_account_name",
+        "billing_enabled",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudshell_environments",
+      "columns": [
+        "project_id",
+        "name",
+        "env_id",
+        "state",
+        "docker_image",
+        "ssh_username",
+        "ssh_host",
+        "ssh_port",
+        "web_host",
+        "public_keys",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "logging_sinks",
+      "columns": [
+        "project_id",
+        "name",
+        "sink_id",
+        "destination",
+        "filter",
+        "writer_identity",
+        "disabled",
+        "include_children",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "logging_buckets",
+      "columns": [
+        "project_id",
+        "name",
+        "bucket_id",
+        "retention_days",
+        "locked",
+        "lifecycle_state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "logging_logs",
+      "columns": [
+        "project_id",
+        "log_name",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "log_name"
+      ]
+    },
+    {
+      "table_name": "logging_metrics",
+      "columns": [
+        "project_id",
+        "name",
+        "metric_id",
+        "filter",
+        "disabled",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "memorystore_redis_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "state",
+        "node_type",
+        "shard_count",
+        "replica_count",
+        "size_gb",
+        "authorization_mode",
+        "transit_encryption_mode",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataproc_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_name",
+        "name",
+        "state",
+        "service_account",
+        "cluster_uuid",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataproc_batches",
+      "columns": [
+        "project_id",
+        "location",
+        "batch_id",
+        "name",
+        "state",
+        "creator",
+        "service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataflow_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "job_id",
+        "name",
+        "display_name",
+        "job_type",
+        "current_state",
+        "service_account_email",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "notebooks_instances",
+      "columns": [
+        "project_id",
+        "location",
+        "instance_id",
+        "name",
+        "state",
+        "proxy_uri",
+        "creator",
+        "service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "clouddeploy_delivery_pipelines",
+      "columns": [
+        "project_id",
+        "location",
+        "pipeline_id",
+        "name",
+        "uid",
+        "suspended",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "clouddeploy_targets",
+      "columns": [
+        "project_id",
+        "location",
+        "target_id",
+        "name",
+        "deploy_target_type",
+        "service_account",
+        "require_approval",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigquerydatatransfer_configs",
+      "columns": [
+        "project_id",
+        "location",
+        "config_id",
+        "name",
+        "display_name",
+        "data_source_id",
+        "destination_dataset_id",
+        "schedule",
+        "state",
+        "disabled",
+        "owner_email",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "serviceusage_services",
+      "columns": [
+        "project_id",
+        "name",
+        "service_name",
+        "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
       ]
     }
   ]

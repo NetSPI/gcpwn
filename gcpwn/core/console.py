@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from gcpwn.core.output_paths import resolve_named_save_path
+from gcpwn.core.utils.module_helpers import extract_path_tail
 
 
 class UtilityTools:
@@ -211,14 +212,6 @@ class UtilityTools:
         return lowered.endswith("path") or "path" in lowered
 
     @staticmethod
-    def _shorten_resource_ref(value: str) -> str:
-        token = str(value or "").strip()
-        if not token or "/" not in token:
-            return token
-        parts = [part for part in token.split("/") if part]
-        return parts[-1] if parts else token
-
-    @staticmethod
     def _normalize_cell(
         value: Any,
         *,
@@ -244,7 +237,7 @@ class UtilityTools:
             )
         )
         if should_shorten and "\n" not in rendered:
-            rendered = UtilityTools._shorten_resource_ref(rendered)
+            rendered = extract_path_tail(rendered)
         if truncate and len(rendered) > truncate and not preserve_paths:
             return rendered[: truncate - 11] + "[TRUNCATED]"
         return rendered
@@ -515,7 +508,7 @@ class UtilityTools:
                 for field_name in normalized_fields
                 if field_name != "name"
             ):
-                candidates: dict[str, tuple[int, int]] = {}
+                parent_field_candidates: dict[str, tuple[int, int]] = {}
                 for obj in objects_list or []:
                     if not isinstance(obj, dict):
                         continue
@@ -527,14 +520,14 @@ class UtilityTools:
                         if not _is_parent_reference_field(field_name) or "/" not in rendered:
                             continue
                         path_depth = rendered.count("/")
-                        seen_count, max_depth = candidates.get(field_name, (0, 0))
-                        candidates[field_name] = (seen_count + 1, max(max_depth, path_depth))
-                if candidates:
+                        seen_count, max_depth = parent_field_candidates.get(field_name, (0, 0))
+                        parent_field_candidates[field_name] = (seen_count + 1, max(max_depth, path_depth))
+                if parent_field_candidates:
                     parent_field = min(
-                        candidates,
+                        parent_field_candidates,
                         key=lambda field_name: (
-                            -candidates[field_name][1],
-                            -candidates[field_name][0],
+                            -parent_field_candidates[field_name][1],
+                            -parent_field_candidates[field_name][0],
                             field_name,
                         ),
                     )
@@ -552,8 +545,8 @@ class UtilityTools:
                     for prop in fields
                 }
                 if secondary_title_name:
-                    rendered = [str(item) for item in secondary_values or []]
-                    row[secondary_title_name] = "* " + "\n* ".join(rendered) if rendered else "[EMPTY]"
+                    rendered_items = [str(item) for item in secondary_values or []]
+                    row[secondary_title_name] = "* " + "\n* ".join(rendered_items) if rendered_items else "[EMPTY]"
                 rows.append(row)
         else:
             for obj in objects_list or []:
@@ -603,7 +596,7 @@ class UtilityTools:
                     derived_location = _derive_location(resource_name)
                     if derived_location:
                         normalized_row["location"] = derived_location
-                        normalized_row["name"] = UtilityTools._shorten_resource_ref(resource_name)
+                        normalized_row["name"] = extract_path_tail(resource_name)
                     output_rows.append(normalized_row)
                 rows = output_rows
 

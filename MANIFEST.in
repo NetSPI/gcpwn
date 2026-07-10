@@ -1,0 +1,13 @@
+# Runtime data files gcpwn loads via importlib.resources / module-relative paths.
+# These MUST ship in the wheel or the tool fails at runtime (missing IAM/escalation
+# mappings, service-location lists, and per-module wordlists/zips).
+recursive-include gcpwn/mappings *.json *.txt
+recursive-include gcpwn/modules *.txt *.zip
+
+# Keep test fixtures and build artifacts out of the sdist.
+prune tests
+prune scripts
+prune databases
+prune gcpwn_output
+global-exclude *.pyc
+global-exclude __pycache__

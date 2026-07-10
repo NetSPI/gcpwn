@@ -1,2 +1,0 @@
-"""Everything module shared utilities."""
-

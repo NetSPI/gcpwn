@@ -1,3 +1,14 @@
+"""Canonical column model for the per-credential permission/provenance store.
+
+Permissions in gcpwn are recorded as EVIDENCE with provenance, not booleans: each
+discovered permission is tagged ``direct_api`` (proven by a successful read API
+call) or ``test_iam_permissions`` (reported by testIamPermissions). The action
+table has one column per scope tier (org/folder/project/workspace) and one per
+service; this module is the single source of truth mapping those columns to their
+resource types (and back), so db.py, iam_simplifier, and the process pipeline all
+agree on column names and what each represents. Pure constants -- no logic.
+"""
+
 from __future__ import annotations
 
 ACTION_EVIDENCE_DIRECT_API = "direct_api"
@@ -43,6 +54,7 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "bigquery_actions_allowed": "bigquery",
     "bigtable_actions_allowed": "bigtable",
     "cloudbuild_actions_allowed": "cloudbuild",
+    "cloudcomposer_actions_allowed": "composer",
     "cloudsql_actions_allowed": "cloudsql",
     "clouddns_actions_allowed": "clouddns",
     "firestore_actions_allowed": "firestore",
@@ -50,6 +62,7 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "cloudrun_actions_allowed": "cloudrun",
     "cloudtasks_actions_allowed": "cloudtasks",
     "kms_actions_allowed": "kms",
+    "memorystore_actions_allowed": "redis",
     "loadbalancing_actions_allowed": "loadbalancing",
     "pubsub_actions_allowed": "pubsub",
     "servicedirectory_actions_allowed": "servicedirectory",

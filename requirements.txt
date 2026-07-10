@@ -1,57 +1,61 @@
 # Core utilities
-boto3>=1.43.33,<2
+boto3>=1.43.45,<2
 pandas==3.0.3
 requests==2.34.2
 
 # Google API / auth libraries
 google-api-core==2.31.0
-google-api-python-client==2.197.0
+google-api-python-client==2.198.0
 google-auth-httplib2==0.4.0
-google-auth-oauthlib==1.4.0
 
 # Google Cloud Python libraries
-google-cloud-access-approval==1.20.0
-google-cloud-aiplatform==1.158.0
+google-cloud-aiplatform==1.160.0
+google-cloud-alloydb==0.11.0
 google-cloud-api-gateway==1.16.0
 google-cloud-api-keys==0.9.0
 google-cloud-appengine-admin==1.18.0
 google-cloud-artifact-registry==1.22.0
+google-cloud-asset==4.4.0
 google-cloud-batch==0.22.0
-google-cloud-bigquery==3.42.0
-google-cloud-bigtable==2.38.0
+google-cloud-bigquery==3.42.2
+google-cloud-bigquery-datatransfer==3.23.0
+google-cloud-bigtable==2.40.0
 google-cloud-billing==1.20.0
-google-cloud-build==3.37.0
-google-cloud-compute==1.48.0
+google-cloud-build==3.38.0
+google-cloud-compute==1.49.0
 google-cloud-container==2.65.0
+google-cloud-dataflow-client==0.14.0
+google-cloud-dataproc==5.30.0
+google-cloud-deploy==2.11.0
 google-cloud-dns==0.37.0
-google-cloud-firestore==2.27.0
-google-cloud-functions==1.23.0
-google-cloud-iam==2.23.0
-google-cloud-kms==3.13.0
-google-cloud-language==2.20.0
-google-cloud-logging==3.16.0
-google-cloud-monitoring==2.31.0
-google-cloud-netapp==0.10.0
-google-cloud-orchestration-airflow==1.21.0
+google-cloud-eventarc==1.21.0
+google-cloud-firestore==2.28.0
+google-cloud-functions==1.24.0
+google-cloud-iam==2.24.0
+google-cloud-kms==3.15.0
+google-cloud-logging==3.16.1
+google-cloud-notebooks==1.17.0
+google-cloud-orchestration-airflow==1.22.0
+google-cloud-org-policy==1.18.0
 google-cloud-pubsub==2.39.0
-google-cloud-redis==2.21.0
-google-cloud-resource-manager==1.17.0
-google-cloud-run==0.16.0
-google-cloud-runtimeconfig==0.37.0
+google-cloud-redis==2.22.0
+google-cloud-redis-cluster==0.5.1
+google-cloud-resource-manager==1.18.0
+google-cloud-run==0.16.1
 google-cloud-scheduler==2.20.0
 google-cloud-secret-manager==2.29.0
 google-cloud-service-directory==1.18.0
-google-cloud-speech==2.40.0
-google-cloud-storage==3.12.0
+google-cloud-service-usage==1.17.0
+google-cloud-shell==1.16.0
+google-cloud-spanner==3.69.0
+google-cloud-storage==3.12.1
 google-cloud-storage-transfer==1.21.0
-google-cloud-storageinsights==0.5.0
-google-cloud-tasks==2.22.0
-google-cloud-translate==3.26.0
-google-cloud-videointelligence==2.19.0
-google-cloud-vision==3.14.0
+google-cloud-tasks==2.23.0
+google-cloud-workflows==1.23.0
+google-cloud-workstations==0.8.1
 
 # VertexAI
-google-genai==2.8.0
+google-genai==2.11.0
 
 # Notes
 # Google Groups / Docs APIs:
@@ -60,13 +64,10 @@ google-genai==2.8.0
 # IAM Python client libraries:
 # https://cloud.google.com/iam/docs/reference/libraries#iam-client-libraries-install-python
 #
-# Dependency reference for some Google client libs:
-# https://developers.google.com/google-ads/api/docs/client-libs/python/dependencies
-#
 # Optional CLI table rendering:
 # pip install gcpwn[table]
 # Or (from git clone):
-# pip install prettytable==3.17.0
+# pip install prettytable==3.18.0
 #
 # Optional Excel export support:
 # pip install gcpwn[excel]

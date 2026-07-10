@@ -9,24 +9,23 @@ Merged module containing:
 - top-level orchestrator for the OpenGraph pipeline
 """
 
-from collections import deque
 import hashlib
 import sys
 from typing import Any, Iterable
 
+from gcpwn.core.utils.hierarchy import descendants
 from gcpwn.core.utils.iam_simplifier import split_member_credname_key
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_event_helpers import (
     collect_rule_events as _collect_rule_events_shared,
 )
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
-    gcp_resource_node_type,
+    canonical_target_node_ref,
     principal_member_properties,
     principal_type,
     principal_node_id,
     role_agent_metadata,
     resource_display_label,
     resource_location_token,
-    resource_node_id,
 )
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import (
     BindingPlusScopeEntry,
@@ -158,21 +157,13 @@ def build_inferred_entries(context) -> tuple[list[BindingPlusScopeEntry], dict[s
         cached = descendant_project_cache.get(root)
         if cached is not None:
             return list(cached)
-        seen = {root}
-        queue: deque[str] = deque(children_by_parent.get(root, []) or [])
-        projects: list[str] = []
-        while queue:
-            current = str(queue.popleft() or "").strip()
-            if not current or current in seen:
-                continue
-            seen.add(current)
-            current_type = canonical_scope_type_for_bindings(
-                str(scope_type_by_name.get(current) or "").strip(),
-                current,
-            )
-            if current_type == "project":
-                projects.append(current)
-            queue.extend(children_by_parent.get(current, []) or [])
+        projects = [
+            name
+            for name in descendants(children_by_parent, root)
+            if canonical_scope_type_for_bindings(
+                str(scope_type_by_name.get(name) or "").strip(), name
+            ) == "project"
+        ]
         descendant_project_cache[root] = sorted(set(projects))
         return list(descendant_project_cache[root])
 
@@ -869,7 +860,9 @@ def emit_inferred_permission_edges(
                 project_id=target_project_id,
             )
             target_region = resource_location_token(target_name)
-            target_id = resource_node_id(target_name)
+            # SA targets collapse onto the serviceAccount:<email> principal node (one SA
+            # node, actor + object) -- consistent with the binding-target stages.
+            target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
             existing_key = (principal_entry.principal_id, original_edge_type, target_id)
             if existing_key in existing_binding_targets:
                 if str(attached_scope_type or "").strip() not in {"org", "folder"}:
@@ -884,7 +877,7 @@ def emit_inferred_permission_edges(
 
             context.builder.add_node(
                 target_id,
-                gcp_resource_node_type(target_type),
+                target_node_kind,
                 name=target_label,
                 display_name=target_label,
                 resource_name=target_name,

@@ -76,12 +76,20 @@
     "pattern": "service-PROJECT_NUMBER@gcp-sa-agentgateway.iam.gserviceaccount.com"
   },
   {
+    "service_name": "Agent Registry Service Account",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-agentregistry.iam.gserviceaccount.com"
+  },
+  {
     "service_name": "AlloyDB Service Account",
     "pattern": "service-PROJECT_NUMBER@gcp-sa-alloydb.iam.gserviceaccount.com"
   },
   {
     "service_name": "AlloyDB Service Agent",
     "pattern": "c-PROJECT_NUMBER-IDENTIFIER@gcp-sa-alloydb.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Analytics Hub Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-analyticshub.iam.gserviceaccount.com"
   },
   {
     "service_name": "Anthos Audit Service Account",
@@ -290,6 +298,14 @@
   {
     "service_name": "Bundles Service Agent",
     "pattern": "bPROJECT_NUMBER-IDENTIFIER@gcp-sa-bundles.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Business AI Code Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-businessaicode.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Chronicle Organization Service Account",
+    "pattern": "service-org-ORGANIZATION_NUMBER@gcp-sa-chronicle-org.iam.gserviceaccount.com"
   },
   {
     "service_name": "Chronicle Service Account",
@@ -868,6 +884,10 @@
     "pattern": "service-PROJECT_NUMBER@gcp-sa-netapp.iam.gserviceaccount.com"
   },
   {
+    "service_name": "Google Cloud Run AI Bundle Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-run-ai.iam.gserviceaccount.com"
+  },
+  {
     "service_name": "Google Cloud Run Service Agent",
     "pattern": "service-PROJECT_NUMBER@serverless-robot-prod.iam.gserviceaccount.com"
   },
@@ -1130,6 +1150,10 @@
   {
     "service_name": "Service Networking Service Agent",
     "pattern": "service-PROJECT_NUMBER@service-networking.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Skill Registry Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-vertex-skills.iam.gserviceaccount.com"
   },
   {
     "service_name": "Spectrum SAS Service Account",

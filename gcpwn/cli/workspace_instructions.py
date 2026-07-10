@@ -25,15 +25,19 @@ from gcpwn.core.action_schema import (
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.db import DataController
 from gcpwn.core.output_paths import build_output_path, make_workspace_slug
+from gcpwn.core.utils.hierarchy import render_tree_lines
 from gcpwn.core.utils.module_helpers import (
     dedupe_strs,
     extract_location_from_resource_name,
     extract_path_segment,
+    extract_path_tail,
     export_hierarchy_tree_image,
     export_sqlite_dbs_to_csv_blob,
     export_sqlite_dbs_to_excel_blob,
     export_sqlite_dbs_to_json_blob,
+    iter_module_rows,
     load_mapping_data,
+    load_service_locations,
 )
 from gcpwn.core.session import SessionUtility
 
@@ -53,6 +57,7 @@ CONFIG_COMPLETION_KEYS = [
     "zones",
     "regions",
     "workspace_customer_id",
+    "workspace_admin_subject",
 ]
 CONFIG_SET_VALUE_CHOICES = {
     "std_output_format": ["table", "text"],
@@ -92,7 +97,8 @@ def credential_mutation_argument_specs(*, credname_optional: bool) -> List[Argum
         (("credname",), credname_spec),
         (("--type",), {"choices": CREDENTIAL_TYPES, "required": True, "help": "Specify credential type (adc|oauth2|service)"}),
         (("--service-file",), {"help": "Service credential file", "required": False}),
-        (("--token",), {"help": "OAuth2 token", "required": False}),
+        (("--token",), {"help": "OAuth2 access token (bare token; expires ~1h, no refresh)", "required": False}),
+        (("--token-file",), {"dest": "token_file", "help": "OAuth2 authorized-user token.json (carries a refresh token; auto-renews)", "required": False}),
         (("--filepath-to-adc",), {"dest": "filepath_to_adc", "help": "ADC credential file path", "required": False}),
         (("--assume",), {"action": "store_true", "help": "Assume credentials after adding", "required": False}),
         (("--tokeninfo",), {"action": "store_true", "help": "Display token information", "required": False}),
@@ -114,11 +120,6 @@ def resolve_stored_credname(answer: str, available_creds: List[tuple[Any, ...]])
 # Workspace display helpers
 # -----------------------------
 
-def hierarchy_rows(session) -> List[Dict[str, Any]]:
-    rows = session.get_data("abstract_tree_hierarchy") or []
-    return [dict(row) for row in rows if isinstance(row, dict)]
-
-
 def format_resource_label(row: Dict[str, Any], *, highlight_project: str | None = None) -> str:
     resource_name = str(row.get("name") or "").strip()
     display_name = str(row.get("display_name") or "").strip()
@@ -126,11 +127,7 @@ def format_resource_label(row: Dict[str, Any], *, highlight_project: str | None 
     resource_type = str(row.get("type") or "").strip().lower()
 
     def _resource_leaf(value: str) -> str:
-        token = str(value or "").strip()
-        if "/" not in token:
-            return token
-        parts = [part for part in token.split("/") if part]
-        return parts[-1] if parts else token
+        return extract_path_tail(value)
 
     if resource_type == "project":
         identifier = project_id or resource_name
@@ -225,7 +222,6 @@ def print_gcp_hierarchy(
     roots = [name for name, row in nodes.items() if row.get("parent") is None or row.get("type") == "org"]
     roots.sort(key=lambda item: str(nodes.get(item, {}).get("display_name") or item).lower())
 
-    tee, elbow, pipe, space = "├─ ", "└─ ", "│  ", "   "
     normalized_focus_types = {str(t or "").strip().lower() for t in (focus_types or set()) if str(t or "").strip()}
     candidate_names = {
         name
@@ -260,14 +256,6 @@ def print_gcp_hierarchy(
         key=lambda item: str(nodes.get(item, {}).get("display_name") or item).lower(),
     )
 
-    def render(node_name: str, prefix: str = "", is_last: bool = True) -> None:
-        branch = elbow if is_last else tee
-        print(prefix + branch + format_resource_label(nodes[node_name], highlight_project=current_project_id))
-        visible_children = filtered_children.get(node_name, [])
-        for index, child in enumerate(visible_children):
-            child_prefix = prefix + (space if is_last else pipe)
-            render(child, child_prefix, index == len(visible_children) - 1)
-
     if current_project_id:
         current_rows = [row for row in rows if str(row.get("project_id") or "") == str(current_project_id)]
         project_row = next((row for row in current_rows if str(row.get("type") or "").lower() == "project"), None)
@@ -295,11 +283,11 @@ def print_gcp_hierarchy(
         fallback_roots.extend(remaining)
         filtered_roots = fallback_roots
 
-    for root in filtered_roots:
-        print(format_resource_label(nodes[root], highlight_project=current_project_id))
-        visible_children = filtered_children.get(root, [])
-        for child_index, child in enumerate(visible_children):
-            render(child, "", child_index == len(visible_children) - 1)
+    def _label(name: str) -> str:
+        return format_resource_label(nodes[name], highlight_project=current_project_id)
+
+    for line in render_tree_lines(filtered_roots, filtered_children, _label):
+        print(line)
     return True
 
 
@@ -367,6 +355,7 @@ def help_banner():
         creds set [<credname>] [--email <email>] [--project-id <project_id>]
         creds add <credname> --type adc [--filepath-to-adc <adc_json_path>] [--tokeninfo] [--assume]
         creds add <credname> --type oauth2 --token <access_token> [--tokeninfo] [--assume]
+        creds add <credname> --type oauth2 --token-file <token_json_path> [--tokeninfo] [--assume]
         creds add <credname> --type service --service-file <service_account_json_path> [--assume]
         creds update [<credname>] --type <adc|oauth2|service> [credential flags...] [--assume]
 
@@ -394,7 +383,8 @@ def help_banner():
               projects                                 (comma list; project-id-1,project-id-2,...)
               zones                                    (comma list; zone1,zone2,zone3,...)
               regions                                  (comma list; region1,region2,region3,...)
-              workspace_customer_id                    (string)
+              workspace_customer_id                    (Google Workspace directoryCustomerId, e.g. C0xxxxxxx)
+              workspace_admin_subject                  (admin@domain to impersonate for SA domain-wide delegation)
 
         data
             export <csv|json|excel|treeimage> [--out-dir ...] [--out-file ...]
@@ -416,6 +406,11 @@ def help_banner():
         exit/quit                           Exit GCPwn
 
     Other command info:
+        Google Workspace enumeration        Tenant-scoped (Google Workspace / Cloud Identity) -- separate from GCP project enum.
+                                                modules run enum_google_workspace     (groups, users, admin roles, OUs, domains, devices, OAuth grants)
+                                                Needs Workspace admin creds OR a service account with domain-wide delegation:
+                                                configs set workspace_admin_subject admin@domain   (or per-run --impersonate admin@domain)
+
         gcloud/bq/gsutil <command>            Run GCP CLI tool. It is recommended if you want to add a set of creds while in GCPwn
                                                 to run the following command to set them at the command line
                                                 
@@ -619,46 +614,25 @@ class CommandProcessor:
 
     @staticmethod
     def _load_module_rows() -> List[Dict[str, Any]]:
-        payload = load_mapping_data("module-mappings.json", kind="json") or {}
-        flat_rows = payload.get("modules")
-        if isinstance(flat_rows, list):
-            return [dict(row) for row in flat_rows if isinstance(row, dict)]
-
-        service_rows = payload.get("services")
-        if not isinstance(service_rows, list):
-            return []
-
-        rows: List[Dict[str, Any]] = []
-        for service_entry in service_rows:
-            if not isinstance(service_entry, dict):
-                continue
-            service_name = str(service_entry.get("service") or "").strip() or "Unknown"
-            categories = service_entry.get("categories") or {}
-            if not isinstance(categories, dict):
-                continue
-            for category, modules in categories.items():
-                category_name = str(category or "").strip() or "Uncategorized"
-                if not isinstance(modules, list):
-                    continue
-                for module in modules:
-                    if not isinstance(module, dict):
-                        continue
-                    row = dict(module)
-                    row.setdefault("service", service_name)
-                    row.setdefault("module_category", category_name)
-                    if "attribution" in row:
-                        attribution = row.get("attribution")
-                        if isinstance(attribution, str):
-                            normalized = [attribution.strip()] if attribution.strip() else []
-                        elif isinstance(attribution, list):
-                            normalized = [str(item).strip() for item in attribution if str(item).strip()]
-                        else:
-                            normalized = [str(attribution).strip()] if str(attribution or "").strip() else []
-                        if normalized:
-                            row["attribution"] = normalized
-                        else:
-                            row.pop("attribution", None)
-                    rows.append(row)
+        payload = load_mapping_data("module_mappings.json", kind="json") or {}
+        # Shared parser owns the module-registry schema walk; the REPL layers on its own
+        # display defaults ("Unknown"/"Uncategorized") and attribution normalization.
+        rows = iter_module_rows(payload)
+        for row in rows:
+            row["service"] = row.get("service") or "Unknown"
+            row["module_category"] = row.get("module_category") or "Uncategorized"
+            if "attribution" in row:
+                attribution = row.get("attribution")
+                if isinstance(attribution, str):
+                    normalized = [attribution.strip()] if attribution.strip() else []
+                elif isinstance(attribution, list):
+                    normalized = [str(item).strip() for item in attribution if str(item).strip()]
+                else:
+                    normalized = [str(attribution).strip()] if str(attribution or "").strip() else []
+                if normalized:
+                    row["attribution"] = normalized
+                else:
+                    row.pop("attribution", None)
         return rows
 
     @staticmethod
@@ -751,9 +725,13 @@ class CommandProcessor:
     @staticmethod
     def _validate_credential_source_args(args) -> bool:
         token = getattr(args, "token", None)
+        token_file = getattr(args, "token_file", None)
         adc_filepath = getattr(args, "filepath_to_adc", None)
-        if args.type == "oauth2" and not token:
-            print("[X] Cannot proceed with adding Oauth2 credentials. Must supply token via --token")
+        if args.type == "oauth2" and not token and not token_file:
+            print("[X] Cannot proceed with adding Oauth2 credentials. Supply a bare access token via --token, or a token.json via --token-file.")
+            return False
+        if token_file and not os.path.exists(token_file):
+            print(f"[X] File {token_file} does not exist...")
             return False
         if adc_filepath and not os.path.exists(adc_filepath):
             print(f"[X] File {adc_filepath} does not exist...")
@@ -767,6 +745,7 @@ class CommandProcessor:
             credname,
             project_id=self.session.project_id,
             token=getattr(args, "token", None),
+            token_file=getattr(args, "token_file", None),
             tokeninfo=args.tokeninfo,
             scopes=scopes,
             email=email,
@@ -974,7 +953,8 @@ class CommandProcessor:
     # -----------------------------
 
     def _hierarchy_rows(self) -> List[Dict[str, Any]]:
-        return hierarchy_rows(self.session)
+        rows = self.session.get_data("abstract_tree_hierarchy") or []
+        return [dict(row) for row in rows if isinstance(row, dict)]
 
     def print_gcp_hierarchy(self, *, focus_types: set[str] | None = None) -> None:
         print_gcp_hierarchy(
@@ -1662,8 +1642,8 @@ class CommandProcessor:
             )
         except Exception as exc:
             try:
-                if self.session.data_master.service_conn is not None:
-                    self.session.data_master.service_conn.rollback()
+                if self.session.data_master.conn is not None:
+                    self.session.data_master.conn.rollback()
             except Exception:
                 pass
             print(
@@ -1689,7 +1669,7 @@ class CommandProcessor:
             out.mkdir(parents=True, exist_ok=True)
             return out
 
-        db_paths = [str(self.session.data_master.service_database)]
+        db_paths = [str(self.session.data_master.database_path)]
         exporters = {
             "csv": {
                 "subdir": "sqlite_csv",
@@ -1757,29 +1737,22 @@ class CommandProcessor:
     # -----------------------------
 
     def _discover_known_regions(self) -> List[str]:
-        modules_root = Path(__file__).resolve().parents[1] / "modules"
-        if not modules_root.exists():
-            return []
-
         regions: set[str] = set()
         region_pattern = re.compile(r"^[a-z]+(?:-[a-z0-9]+)*\d+$")
         zone_pattern = re.compile(r"^[a-z]+(?:-[a-z0-9]+)*\d+-[a-z]$")
 
-        for text_file in modules_root.rglob("*.txt"):
-            filename = text_file.name.lower()
-            if not any(token in filename for token in ("region", "zone", "location")):
-                continue
-            try:
-                for raw_line in text_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    line = raw_line.strip().lower()
-                    if not line or line.startswith("#"):
-                        continue
-                    if zone_pattern.match(line):
-                        regions.add(line.rsplit("-", 1)[0])
-                    elif region_pattern.match(line):
-                        regions.add(line)
-            except OSError:
-                continue
+        # Source the static region/zone inventory from the consolidated
+        # mappings/service_locations.txt (all services) rather than scanning per-module
+        # data files, which have been consolidated into that single file.
+        for locations in load_service_locations().values():
+            for raw_line in locations:
+                line = str(raw_line).strip().lower()
+                if not line or line.startswith("#"):
+                    continue
+                if zone_pattern.match(line):
+                    regions.add(line.rsplit("-", 1)[0])
+                elif region_pattern.match(line):
+                    regions.add(line)
 
         preferred = getattr(self.session.workspace_config, "preferred_regions", None) or []
         for region in preferred:
@@ -1830,8 +1803,9 @@ class CommandProcessor:
             "zones": "preferred_zones",
             "regions": "preferred_regions",
             "workspace_customer_id": "workspace_customer_id",
+            "workspace_admin_subject": "workspace_admin_subject",
         }
-        known_config_keys = ["projects", "regions", "std_output_format", "workspace_customer_id", "zones"]
+        known_config_keys = ["projects", "regions", "std_output_format", "workspace_admin_subject", "workspace_customer_id", "zones"]
         if key not in {"std_output_format", *alias_to_attr.keys()}:
             print(
                 f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Unknown configs key: {args.type_of_entity}{UtilityTools.RESET}. "

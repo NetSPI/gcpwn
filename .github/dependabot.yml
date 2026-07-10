@@ -1,12 +1,38 @@
 version: 2
 updates:
+  # Python dependencies (requirements.txt + the optional [dev]/[table]/[excel]/[login]
+  # extras). Routine minor/patch bumps are BATCHED into grouped PRs to cut review churn;
+  # MAJOR bumps intentionally fall out of the groups into their own PRs so a potentially
+  # breaking change (e.g. a new google-cloud or pandas major) gets individual scrutiny.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 10
+    groups:
+      google-cloud:
+        patterns:
+          - "google-*"
+        update-types:
+          - "minor"
+          - "patch"
+      python-deps:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "google-*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Pinned GitHub Actions (Dependabot bumps the commit SHA + updates the version comment).
+  # Action updates are low-risk, so batch them all into one PR.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 20
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

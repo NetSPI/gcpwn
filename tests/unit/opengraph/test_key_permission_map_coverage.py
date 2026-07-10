@@ -11,35 +11,7 @@ from gcpwn.modules.opengraph.utilities.stage_2_policy_bindings import (
     build_iam_bindings_multi_permission_graph,
 )
 
-
-def _binding_entry(*, role_name: str, permissions: set[str]) -> BindingPlusScopeEntry:
-    return BindingPlusScopeEntry(
-        principal_id="user:alice@example.com",
-        expanded_from_convenience_member="",
-        binding_composite_id=f"iambinding:{role_name}@project:demo-project",
-        role_name=role_name,
-        permissions=frozenset(permissions),
-        attached_scope_name="projects/demo-project",
-        attached_scope_type="project",
-        attached_scope_display="demo-project",
-        source_scope_name="projects/demo-project",
-        source_scope_type="project",
-        source_scope_display="demo-project",
-        effective_scope_name="projects/demo-project",
-        effective_scope_type="project",
-        effective_scope_display="demo-project",
-        project_id="demo-project",
-        inherited=False,
-        source="unit_test",
-        condition_expr_raw="",
-        condition_hash="",
-        condition_option_id="",
-        condition_option_summary="",
-        condition_services=frozenset(),
-        condition_resource_types=frozenset(),
-        condition_name_prefixes=frozenset(),
-        condition_name_equals=frozenset(),
-    )
+from conftest import make_binding_entry
 
 
 class _BuilderContext:
@@ -130,7 +102,7 @@ def test_key_multi_binding_builder_skips_unsupported_rule_names() -> None:
         "iam.serviceAccounts.actAs",
     }
     entries = [
-        _binding_entry(
+        make_binding_entry(
             role_name="roles/editor",
             permissions=matching_permissions,
         )

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import ast
 import json
 import os
@@ -26,6 +26,27 @@ from gcpwn.core.output_paths import (
 
 
 class SessionUtility:
+    """Central per-workspace session object passed to every module's run_module.
+
+    Holds the active credentials (project context, email, scopes, access token)
+    and exposes the data API that modules use to read/write the SQLite-backed
+    model: get_data/get_session_data (read), insert_data (write rows),
+    insert_actions (record discovered permissions as evidence), plus identity/
+    ancestry helpers and interactive choice prompts.
+
+    Key invariants this object enforces/relies on:
+      - All service-table reads/writes are workspace-scoped. get_data/insert_data
+        inject self.workspace_id automatically; never query service tables
+        without it.
+      - SQLite is single-threaded. self.data_master (DataController) is opened in
+        the constructing (main) thread with check_same_thread=True. Modules may
+        fan out with parallel_map/ThreadPoolExecutor, but workers must only do
+        network/CPU work and RETURN results; calling get_data/insert_data/
+        insert_actions from a worker thread raises sqlite3.ProgrammingError.
+        Collect worker results on the main thread, then call insert_*.
+      - Permissions are recorded as evidence with provenance (direct_api vs
+        test_iam_permissions), not booleans. See insert_actions / action_schema.
+    """
 
     def __init__(
         self,
@@ -38,7 +59,18 @@ class SessionUtility:
         resume=None,
         adc_filepath=None,
         tokeninfo=False,
+        quiet=False,
     ):
+        """Build a workspace session and optionally load/assume credentials.
+
+        Creates the workspace's SQLite databases (idempotent), restores workspace
+        config and the cached project list, then dispatches on auth_type to add &
+        assume creds: "adc"/"adc-file" (gcloud Application Default Credentials),
+        "oauth2" (raw token), or "service" (SA key file). If resume=True instead,
+        re-loads previously stored creds matching credname for this workspace.
+        With no creds/auth_type/resume the session is created credential-less
+        (used for workspace setup before any creds are added).
+        """
         self.data_master = DataController()
         self.data_master.create_service_databases()
         self.workspace_id = workspace_id
@@ -70,13 +102,21 @@ class SessionUtility:
         elif auth_type == "service":
             self.add_service_account(filepath, credname, assume=True)
         elif resume:
-            current_workspace_crednames = self.data_master.list_creds(workspace_id)
-            if any(credname in name for name in current_workspace_crednames):
+            current_workspace_creds = self.data_master.list_creds(workspace_id) or []
+            if any(credname == row["credname"] for row in current_workspace_creds):
                 self.load_stored_creds(credname)
-            else:
+            elif not quiet:
                 print("[X] Could not resume credentials as they do not appear to exist for this workspace")
 
-    def _workspace_select_rows(self, table_name, *, db="service", columns="*", conditions=None, where=None):
+    def _workspace_select_rows(self, table_name, *, db="service", columns="*", conditions=None, params=None, where=None):
+        """Run a SELECT with this workspace's workspace_id forced into the WHERE.
+
+        The single chokepoint that enforces workspace scoping for every read path
+        (get_data, get_session_data, sync_users). Always merges
+        workspace_id into `where` so callers can never accidentally read another
+        workspace's rows. Prefer the `where=` bound-parameter form over building
+        raw `conditions=` strings (injection-safe).
+        """
         scoped_where = dict(where or {})
         scoped_where["workspace_id"] = self.workspace_id
         return self.data_master.select_rows(
@@ -84,8 +124,19 @@ class SessionUtility:
             db=db,
             columns=columns,
             conditions=conditions,
+            params=params,
             where=scoped_where,
         )
+
+    def delete_data(self, table_name, where):
+        """Delete this workspace's rows from a service table matching ``where``.
+
+        Forces workspace_id into the WHERE (same scoping guarantee as get_data), so
+        callers can never delete another workspace's rows. Returns rows deleted.
+        """
+        scoped_where = dict(where or {})
+        scoped_where["workspace_id"] = self.workspace_id
+        return self.data_master.delete_service_rows(table_name, where=scoped_where)
 
     @staticmethod
     def _print_adc_setup_instructions():
@@ -102,7 +153,30 @@ class SessionUtility:
         print("   d) Launch the tool again via 'python3 main.py'")
         print("   e) At the screen to add creds, try 'adc <credname>' again and it should work")
 
-    def _load_new_oauth_credentials(self, *, token=None, adc_filepath=None):
+    def _load_new_oauth_credentials(self, *, token=None, token_file=None, authorized_info=None, adc_filepath=None):
+        """Build google-auth Credentials from a raw token, ADC file, or ambient ADC.
+
+        Precedence: `authorized_info` (dict from an OAuth login flow) >
+        `token_file` (a token.json authorized-user file, incl. refresh token) >
+        `token` (a bare access token string) > `adc_filepath` (adc-file) > the
+        ambient gcloud Application Default Credentials (adc). On a missing-ADC
+        DefaultCredentialsError, prints setup instructions and returns
+        (None, None, None) rather than raising.
+
+        The `authorized_info`/`token_file` paths carry a refresh token, so the
+        stored credential auto-renews (see refresh_credentials_if_needed); a bare
+        `token` cannot be refreshed and expires in ~1 hour. All three are stored
+        as the same "oauth2" credtype (the load path uses from_authorized_user_info).
+
+        Returns:
+            (credentials, type_of_cred, detected_project_id) tuple; type_of_cred
+            is one of "oauth2"/"adc-file"/"adc". project_id is only discovered for
+            the file/ambient paths.
+        """
+        if authorized_info:
+            return Credentials.from_authorized_user_info(authorized_info), "oauth2", None
+        if token_file:
+            return Credentials.from_authorized_user_file(token_file), "oauth2", None
         if token:
             return Credentials(token=token), "oauth2", None
         if adc_filepath:
@@ -116,6 +190,12 @@ class SessionUtility:
             return None, None, None
 
     def get_actions(self, credname = None, include_provenance = False):
+        """Return the recorded permission/action evidence tree for a credential.
+
+        Reads the per-credential action tree (defaults to the active credname).
+        With include_provenance=True the result is tagged with how each permission
+        was learned (direct_api vs test_iam_permissions) rather than collapsed.
+        """
         return self.data_master.get_actions(self.workspace_id, credname = credname, include_provenance = include_provenance)
 
     @property
@@ -135,16 +215,20 @@ class SessionUtility:
         subdirs: list[str] | None = None,
         mkdir: bool = True,
     ) -> Path:
-        if not self.workspace_directory_name:
-            self.workspace_directory_name = make_workspace_slug(self.workspace_id, self.workspace_name)
-        scope = project_id or self.project_id or "global"
-        return build_output_path(
-            self.workspace_directory_name,
-            bucket="downloads",
-            filename=filename,
+        """Compute the on-disk path for a file downloaded from a GCP service.
+
+        Builds a workspace-scoped path under the "downloads" bucket, partitioned
+        by service and scope (project_id, falling back to the session project or
+        "global"). Creates parent dirs by default (mkdir=True).
+        """
+        # Identical to resolve_output_path(target="download") -- delegate to avoid two
+        # copies of the downloads-bucket path assembly.
+        return self.resolve_output_path(
             service_name=service_name,
-            scope=scope if service_name else None,
+            filename=filename,
+            project_id=project_id,
             subdirs=subdirs,
+            target="download",
             mkdir=mkdir,
         )
 
@@ -159,6 +243,14 @@ class SessionUtility:
         target: str = "export",
         mkdir: bool = True,
     ) -> Path:
+        """Resolve where a module should write output, honoring an explicit override.
+
+        If the caller passed requested_path, that wins verbatim (expanded; parent
+        created). Otherwise builds a workspace-scoped path under "exports" (or
+        "downloads" when target=="download"), partitioned by service/scope like
+        get_download_save_path. Centralizes the user-path-vs-default-layout choice
+        so modules don't each reinvent it.
+        """
         if requested_path:
             output_path = Path(requested_path).expanduser()
             if mkdir:
@@ -184,6 +276,18 @@ class SessionUtility:
 
     ### Main Core Authentication Functions 
     def attempt_cred_refresh(self, auth_json):
+        """Refresh the active OAuth/ADC credentials if expired/invalid; persist on success.
+
+        No-op (returns 1) when the current credentials are still valid. Otherwise
+        uses the stored refresh token to mint a fresh access token and writes the
+        re-serialized creds back via update_oauth2_account. Distinguishes the
+        common failure modes (reauth-needed, network error) with actionable
+        messages.
+
+        Returns:
+            1 on success/already-valid; None on failure or when there are no
+            credentials loaded.
+        """
         credentials = self.credentials
         if not credentials:
             return None
@@ -195,7 +299,7 @@ class SessionUtility:
         expiry_timestamp = auth_json.get("expiry")
         if credentials.expired and expiry_timestamp:
             expiry_datetime = datetime.fromisoformat(expiry_timestamp.rstrip('Z'))
-            if expiry_datetime < datetime.utcnow() and credentials.token:
+            if expiry_datetime < datetime.now(timezone.utc).replace(tzinfo=None) and credentials.token:
                 print(
                     f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Expired Credentials. "
                     f"Timestamp expiration for the access_token was {expiry_datetime}. "
@@ -235,6 +339,19 @@ class SessionUtility:
         return None
 
     def load_stored_creds(self, credname, tokeninfo_check = False):
+        """Load a stored credential into the live session and make it the active one.
+
+        Hydrates self.credentials/credname/email/scopes/project_id/access_token
+        from the workspace's creds table. For adc/adc-file it refreshes the token
+        (and, if tokeninfo_check, re-derives scopes/email from the tokeninfo
+        endpoint); for service accounts it pulls project/email/scopes off the key.
+        A "service" cred has no access_token (the client library signs JWTs
+        itself). Side effect: mutates session state in place.
+
+        Returns:
+            1 on success, -1 if credentials failed to materialize, None if no such
+            credential exists (or on unexpected exception, which is printed).
+        """
         try:
             cred = self.data_master.get_credential(self.workspace_id, credname)
             if not cred:
@@ -256,22 +373,26 @@ class SessionUtility:
             self.email = cred["email"]
             
             if cred["credtype"] in ["adc","adc-file","oauth2"]:
-                auth_json = json.loads(cred["session_creds"])           
-                if cred["credtype"] in ["adc", "adc-file"]:
-                    print("[*] Loading in ADC credentials...")
+                auth_json = json.loads(cred["session_creds"])
+                # An "oauth2" cred carries a refresh_token when it came from `--token-file`
+                # (an authorized-user credential, same shape as ADC) -- reload it the same
+                # full way so it auto-renews. A bare `--token` oauth2 cred has no refresh
+                # material, so it keeps the simple bare-token path.
+                if cred["credtype"] in ["adc", "adc-file"] or auth_json.get("refresh_token"):
+                    print("[*] Loading in ADC/OAuth2 user credentials...")
                     self.credentials = Credentials.from_authorized_user_info(auth_json)
                     status = self.attempt_cred_refresh(auth_json)
                     if status:
                         self.access_token = self.credentials.token
                         if tokeninfo_check:
                             scopes, email = self.get_and_save_tokeninfo(credname)
-                            if scopes: 
+                            if scopes:
                                 self.scopes = scopes
-                            if email: 
+                            if email:
                                 self.email = email
-                        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Proceeding with up-to-date ADC credentials for {credname}...{UtilityTools.RESET}")
+                        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Proceeding with up-to-date credentials for {credname}...{UtilityTools.RESET}")
                     else:
-                        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Proceeding with erroneous ADC credentials for {credname}...{UtilityTools.RESET}")
+                        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Proceeding with erroneous credentials for {credname}...{UtilityTools.RESET}")
                 elif cred["credtype"] == "oauth2":
                     print("Loading in OAuth2 token. Note it might be expired based on how long its existed...")
                     token = auth_json["token"]
@@ -301,10 +422,53 @@ class SessionUtility:
         except Exception:
             print(f"[X] Credentials {credname} could not be assumed.")
             print(traceback.format_exc())
-   
 
-    def add_oauth2_account(self, credname, token=None, project_id=None,adc_filepath = None, tokeninfo = False, scopes = None, email = None, assume = False, refresh_attempt = False):
-        
+    def build_stored_credentials(self, credname):
+        """Build a google credential object from a stored cred WITHOUT activating it.
+
+        Unlike ``load_stored_creds`` (which mutates the active session), this just
+        materializes and returns the credential for a *different* identity -- e.g. a
+        Drive downloader you pass via ``--downloader-cred``. Authorized-user creds
+        (ADC / ``--token-file``, carrying a refresh_token) come back self-refreshing;
+        a bare ``--token`` oauth2 cred returns a static token; a service account returns
+        its signing credential. Returns ``(credentials, email)`` or ``(None, "")`` when
+        the credential is missing or cannot be built.
+        """
+        cred = self.data_master.get_credential(self.workspace_id, credname)
+        if not cred:
+            return None, ""
+        credtype = str(cred.get("credtype") or "")
+        email = str(cred.get("email") or "")
+        try:
+            blob = cred.get("session_creds")
+            if credtype in ("adc", "adc-file", "oauth2"):
+                auth_json = json.loads(blob)
+                if credtype in ("adc", "adc-file") or auth_json.get("refresh_token"):
+                    # Full authorized-user credential -> auto-refreshes on use.
+                    return Credentials.from_authorized_user_info(auth_json), email
+                return Credentials(token=auth_json["token"]), email
+            if credtype == "service":
+                return service_account.Credentials.from_service_account_info(json.loads(blob)), email
+        except Exception:
+            print(f"{UtilityTools.RED}[X] Could not build credential '{credname}'.{UtilityTools.RESET}")
+            return None, ""
+        return None, ""
+
+    def add_oauth2_account(self, credname, token=None, token_file=None, authorized_info=None, project_id=None,adc_filepath = None, tokeninfo = False, scopes = None, email = None, assume = False, refresh_attempt = False):
+        """Register a new OAuth2/ADC credential under credname and store it in the DB.
+
+        Builds credentials from a raw token, an ADC file, or ambient gcloud ADC
+        (see _load_new_oauth_credentials), optionally enriches scopes/email via the
+        tokeninfo endpoint, inserts the cred row, and seeds an
+        abstract_tree_hierarchy entry + global project cache when a project id is
+        known. refresh_attempt=True bypasses the duplicate-name guard (used when
+        re-storing rotated creds). assume=True immediately loads it as the active
+        credential.
+
+        Returns:
+            None on duplicate credname; -1 if no credentials could be built;
+            otherwise no explicit value (creds added, possibly assumed).
+        """
         if not refresh_attempt and self.data_master.get_credential(self.workspace_id, credname):
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] {credname} already exists. Try again with a new credname.{UtilityTools.RESET}")
             return None
@@ -316,6 +480,8 @@ class SessionUtility:
         try:
             credentials, type_of_cred, detected_project_id = self._load_new_oauth_credentials(
                 token=token,
+                token_file=token_file,
+                authorized_info=authorized_info,
                 adc_filepath=adc_filepath,
             )
             if credentials is None:
@@ -328,7 +494,7 @@ class SessionUtility:
             json_creds = json.loads(serialized_creds)
             
             if tokeninfo:
-                if type_of_cred == "oauth2":
+                if type_of_cred == "oauth2" and json_creds.get("token"):
                     scopes, email = self.call_tokeninfo(json_creds["token"])
                 else:
                     tokeninfo_check = True
@@ -360,7 +526,17 @@ class SessionUtility:
     # https://google-auth.readthedocs.io/en/master/reference/google.oauth2.service_account.html
     # Add service account. If successfull add to database
     def add_service_account(self, filename, credname, email = None, sa_info = None, assume = False, refresh_attempt = False):
+        """Register a service-account key under credname and store it in the DB.
 
+        Loads the SA key from `filename` (or inline JSON `sa_info`), extracts
+        project_id/client_email/scopes, inserts the cred row as type "service", and
+        optionally assumes it. refresh_attempt=True bypasses the duplicate-name
+        guard. Unlike OAuth creds, SA creds carry no access_token; the Google
+        client library signs requests from the key directly.
+
+        Returns:
+            None on duplicate credname; otherwise no explicit value.
+        """
         if not refresh_attempt and self.data_master.get_credential(self.workspace_id, credname):
             print(f"[X] Apologies, {credname} already exists. Try again with a new credname.")
             return None
@@ -378,10 +554,10 @@ class SessionUtility:
         
         scopes = serialized_creds.get("scopes")
 
-        if self.project_id == "Unknown":
+        if project_id == "Unknown":
             self.data_master.save_service_row(
                 "abstract_tree_hierarchy",
-                {"type":"project","parent":"None","project_id":self.project_id,"name":"NA"},
+                {"type":"project","parent":"None","project_id":project_id,"name":"NA"},
             )
                 
         self.data_master.insert_creds(self.workspace_id, credname, "service", project_id, json.dumps(serialized_creds), email = email, scopes = scopes) 
@@ -393,15 +569,29 @@ class SessionUtility:
             self.load_stored_creds(credname)
 
 
-    def get_session_data(self, table_name, columns="*", conditions=None):
+    def get_session_data(self, table_name, columns="*", conditions=None, *, where=None, params=None):
+        """Read workspace-scoped rows from the SESSION database (vs the service DB).
+
+        Same contract as get_data but targets the session DB. Main-thread only
+        (DataController is single-threaded); do not call from a worker thread.
+        """
         return self._workspace_select_rows(
             table_name,
             db="session",
             columns=columns,
             conditions=conditions,
+            where=where,
+            params=params,
         )
 
     def update_oauth2_account(self, credname, credtype=None, email=None, default_project=None,scopes=None, session_creds=None):
+        """Update fields of a stored credential, defaulting unset fields to session values.
+
+        For email/scopes/default_project, a None argument means "keep the current
+        session value" (and these are written back), not "leave the DB column
+        alone" -- so the row stays consistent with the live session. Used by the
+        refresh path to persist rotated session_creds.
+        """
         try:
             updates = {}
 
@@ -436,12 +626,17 @@ class SessionUtility:
             print("Exception when trying to update oauth creds")
 
     def get_credinfo(self, credname = None, self_credname = False):
-        if self_credname:
-            return self.data_master.get_credential(self.workspace_id, self.credname)
-        else:
-            return self.data_master.get_credential(self.workspace_id, credname)
+        return self.data_master.get_credential(self.workspace_id, self.credname if self_credname else credname)
 
     def get_and_save_tokeninfo(self, credname):
+        """Query Google's tokeninfo endpoint for an OAuth cred and persist scopes/email.
+
+        Only valid for non-service creds (SA tokens aren't introspectable here).
+        Side effect: writes discovered scopes/email back to the cred row.
+
+        Returns:
+            (scopes, email) tuple, or (None, None) for service creds / failures.
+        """
         cred = self.data_master.get_credential(self.workspace_id, credname)
         if cred["credtype"] != "service":
             access_token = json.loads(cred["session_creds"])["token"]
@@ -454,7 +649,11 @@ class SessionUtility:
             return None, None
 
     def call_tokeninfo(self, token: str):
-        
+        """Introspect a raw access token via the public tokeninfo endpoint.
+
+        Returns (scopes_list, email) parsed from the response, or (None, None) on a
+        non-200. Does not persist anything (see get_and_save_tokeninfo for that).
+        """
         print("[*] Checking credentials against https://oauth2.googleapis.com/tokeninfo endpoint...")
         token_url = f"https://oauth2.googleapis.com/tokeninfo?access_token={token}"
 
@@ -478,6 +677,12 @@ class SessionUtility:
     ### Project Utility FUnctions
 
     def sync_projects(self):
+        """Promote newly enumerated projects from the asset tree into the workspace list.
+
+        Scans abstract_tree_hierarchy for project rows not yet in the cached
+        global_project_list, appends them, and persists the updated set to the
+        workspace's projects table. Main-thread only.
+        """
         new_projects = [
             row["project_id"]
             for row in self.get_data("abstract_tree_hierarchy", columns=["project_id"], conditions='type="project"')
@@ -493,6 +698,23 @@ class SessionUtility:
     # only_if_new ONLY adds entryif columns don't match what is passed in 
     # update_columns will update columns (as opposed to rewriting everyting)
     def insert_data(self, table_name, save_data, only_if_new_columns = None, update_only = False, dont_change = None, if_column_matches  = None):
+        """Upsert one row into a workspace-scoped service table (the primary write API).
+
+        Always injects workspace_id, so callers never write cross-workspace rows.
+        Values are stringified before storage (SQLite columns are text). The
+        mutually-exclusive modifiers control merge semantics:
+          - only_if_new_columns: insert only if no existing row matches these
+            columns (won't overwrite).
+          - dont_change: preserve these columns on an existing row.
+          - if_column_matches: replace the row only when these columns match.
+          - update_only: targeted UPDATE keyed by save_data["primary_keys_to_match"]
+            (workspace_id is added to the key set); save_data is the update payload.
+
+        INVARIANT: main-thread only. DataController is single-threaded; calling
+        this from a parallel_map/ThreadPoolExecutor worker raises
+        sqlite3.ProgrammingError. Workers must return results; insert here on the
+        main thread.
+        """
         if only_if_new_columns:
             save_kwargs = {"only_if_missing": only_if_new_columns}
         elif dont_change:
@@ -520,6 +742,23 @@ class SessionUtility:
         evidence_type = ACTION_EVIDENCE_DIRECT_API,
         credname_override = None,
     ):
+        """Record discovered permissions as EVIDENCE against one or more credentials.
+
+        Merges `actions` (permission identifiers) into the per-credential action
+        tree, tagged with provenance via evidence_type: direct_api (a real API call
+        succeeded, implying the permission) vs test_iam_permissions (a
+        testIamPermissions probe reported it). Permissions are stored as evidence,
+        NOT booleans -- use the correct evidence_type so analysis can tell proven
+        access from probed access.
+
+        credname_override targets credentials other than the active one (accepts a
+        str or list; blanks are dropped). project_id is accepted for caller symmetry
+        but intentionally unused (the action tree is credential-, not project-,
+        keyed). column_name optionally scopes the merge to a specific action column.
+
+        INVARIANT: main-thread only (DataController is single-threaded); calling
+        from a worker thread raises sqlite3.ProgrammingError.
+        """
         _ = project_id
         target_crednames = credname_override or self.credname
         if isinstance(target_crednames, str):
@@ -535,25 +774,55 @@ class SessionUtility:
             )
 
     def find_ancestors(self, asset_name):
+        """Return the org/folder/project ancestry chain for a resource from the asset tree.
+
+        Walks the persisted abstract_tree_hierarchy upward from asset_name within
+        this workspace. Used for IAM inheritance analysis (a binding on an ancestor
+        applies to descendants). Requires the tree to have been populated by a
+        prior enumeration run.
+        """
         workspace_id = self.workspace_id
         tree = self.data_master.find_ancestors(asset_name, workspace_id)
        
         return tree
 
-    def get_data(self, table_name, columns="*", conditions=None):
-        return self._workspace_select_rows(table_name, columns=columns, conditions=conditions)
+    def get_data(self, table_name, columns="*", conditions=None, *, where=None, params=None):
+        """Read workspace-scoped rows from a SERVICE table (the primary read API).
 
-    def execute_sql(self, query: str, *, db: str = "service", fetch_limit: int = 200) -> dict[str, Any]:
-        return self.data_master.execute_sql(query, db=db, fetch_limit=fetch_limit)
+        workspace_id is injected automatically, so results are always confined to
+        this workspace. Prefer `where={col: value}` (bound parameters) over raw
+        `conditions=` strings, which are an injection surface if they interpolate
+        caller-supplied values.
 
-    def get_bindings(self, *, asset_name: str | None = None, type_of_asset: str | None = None):
-        _ = (asset_name, type_of_asset)
+        Returns:
+            list[dict] of rows (possibly empty); callers commonly `or []` it.
+
+        INVARIANT: main-thread only; do not call from a worker thread.
+        """
         return self._workspace_select_rows(
-            "iam_allow_policies",
-            columns=["project_id", "resource_type", "resource_name", "policy"],
+            table_name,
+            columns=columns,
+            conditions=conditions,
+            where=where,
+            params=params,
         )
 
+    def execute_sql(self, query: str, *, db: str = "service", fetch_limit: int = 200) -> dict[str, Any]:
+        """Run a raw read-only SQL query against one of the DBs (interactive `data` cmd).
+
+        NOT workspace-scoped automatically -- the query is passed through as-is, so
+        the caller is responsible for any workspace_id filter. Results are capped at
+        fetch_limit rows. Main-thread only.
+        """
+        return self.data_master.execute_sql(query, db=db, fetch_limit=fetch_limit)
+
     def add_unauthenticated_permissions(self, unauthenticated_info, project_id = None):
+        """Record a permission reachable WITHOUT credentials (member fixed to allUsers).
+
+        Stores a row in iam_unauth_permissions scoped to this workspace and the
+        given/session project, hard-coding member="users:allUsers" -- the finding
+        that the resource is accessible to anonymous callers. Main-thread only.
+        """
         table_name = "iam_unauth_permissions"
         unauthenticated_info["workspace_id"] = self.workspace_id
         if project_id:
@@ -567,7 +836,20 @@ class SessionUtility:
     ### Utility Prompt Functions
 
     def choice_prompt(self, prompt:str, regex = None):
-        
+        """Prompt for a free-text answer, optionally re-prompting until it matches regex.
+
+        Returns the entered string, or None if the user hits Ctrl+C (used as a
+        cancel signal throughout the interactive flows). In non-interactive
+        (drive-through) mode it never blocks on stdin: it returns None (the same
+        cancel signal callers already handle) so a module that needs interactive
+        input fails/skips cleanly instead of hanging.
+        """
+        if getattr(self, "_non_interactive", False):
+            print(
+                f"{UtilityTools.YELLOW}[!] Interactive prompt reached in non-interactive mode; treating as "
+                f"cancelled. Run this module in the REPL, or supply the needed values as flags.{UtilityTools.RESET}"
+            )
+            return None
         try:
             while True:
                 user_input = input("> " + prompt).strip()
@@ -585,8 +867,32 @@ class SessionUtility:
             print("Try again")
 
     def choice_selector(self, rows_returned=None, custom_message="", fields=None, chunk_mappings=None, footer_title=None, footer_list=None, header=None):
-        
-        
+        """Render a numbered menu and return the selected item (or None on exit/cancel).
+
+        Two modes: a flat list (rows_returned, displaying `fields` of each dict) or
+        grouped sections (chunk_mappings, each {"title","data_values"}); empty
+        chunks are skipped. An auto-appended "Exit" choice and Ctrl+C both return
+        None. The continuous 1-based numbering across chunks is mapped back to the
+        originating item via per-chunk offsets.
+
+        Returns:
+            The chosen element of rows_returned / a chunk's data_values, or None.
+        """
+        if getattr(self, "_non_interactive", False):
+            # Drive-through: auto-pick when there is exactly one candidate; otherwise
+            # skip (return None) rather than block on stdin. Callers already handle None.
+            candidates = list(rows_returned or [])
+            if not candidates and chunk_mappings:
+                for chunk in chunk_mappings:
+                    candidates.extend(chunk.get("data_values", []) or [])
+            if len(candidates) == 1:
+                return candidates[0]
+            print(
+                f"{UtilityTools.YELLOW}[!] Interactive selection ({len(candidates)} options) reached in "
+                f"non-interactive mode; skipping. Run this module in the REPL to select.{UtilityTools.RESET}"
+            )
+            return None
+
         def print_entries(entries, start_index, fields):
             for index, entry in enumerate(entries):
                 line = f">> [{start_index + index + 1}]"
@@ -663,16 +969,33 @@ class SessionUtility:
    
 
     def get_project_name(self, project_id):
+        """Look up the human-readable display name for a project id from the asset tree.
+
+        Filters out placeholder "Unknown"/"Uknown" names (note the deliberate match
+        of the historical misspelling). Returns the matching abstract_tree_hierarchy
+        rows (empty if only a placeholder name is known).
+        """
         return self.get_data(
             "abstract_tree_hierarchy",
             columns=["name"],
-            conditions=f'project_id="{project_id}" AND name != "Unknown" AND name != "Uknown"',
+            conditions='name != "Unknown" AND name != "Uknown"',
+            where={"project_id": project_id},
         )
    
     def choose_member(self, type_of_member = None, full_name = False):
-      
+        """Interactively resolve an IAM member principal for exploit/grant modules.
 
-      
+        Resolution order: (1) offer the session's own email (disambiguating if
+        self.email is a list); (2) otherwise let the user pick an already-enumerated
+        SA/user (from iam_service_accounts + workspace_users + sync_users()) or type
+        a new member. type_of_member="service_accounts" restricts to SAs only.
+
+        Returns:
+            A member string in GCP form: "serviceAccount:<email>", "user:<email>",
+            or (for service accounts when full_name=True) the full
+            projects/-/serviceAccounts/<email> resource name. None if cancelled or
+            nothing is available.
+        """
         session_email = self.email
         if isinstance(session_email, list):
             normalized_emails = [
@@ -695,7 +1018,7 @@ class SessionUtility:
 
             choice = self.choice_prompt(f"Do you want to use {session_email} set on the session? [y/n]")
 
-            if choice.lower() == "y":
+            if choice and choice.lower() == "y":
                 return session_email
         
         # If email is not supplied and not set in config, list serivce accoutns ]
@@ -785,7 +1108,15 @@ class SessionUtility:
         return None
 
     def choose_role(self, suggested_roles, chosen_role = None, default_role = None):
-        
+        """Interactively resolve an IAM role, short-circuiting if one is already chosen.
+
+        If chosen_role is provided it's returned as-is (non-interactive path).
+        Otherwise presents suggested_roles plus a "Different Role" free-text escape
+        hatch. A label containing "(Default)" is stripped to its bare role id.
+
+        Returns:
+            A "roles/<name>" string, default_role, or None if cancelled.
+        """
         if chosen_role:
             return chosen_role
 
@@ -799,18 +1130,9 @@ class SessionUtility:
         if role_choice == "Different Role":
             return self.choice_prompt("Provide the role name to attach in the format roles/role_name: ")
 
-        if role_choice:
-            
-            if "(Default)" in role_choice:
-            
-                return role_choice.split()[0] 
-                
-            else:
-                return role_choice
-        
-        else:
-
-            return default_role
+        if "(Default)" in role_choice:
+            return role_choice.split()[0]
+        return role_choice
 
     def sync_users(self):
         """
@@ -907,6 +1229,12 @@ class SessionUtility:
         return sorted(known_user_emails.union(discovered_user_emails))
 
     def get_configs(self):
+        """Load this workspace's persisted config into self.workspace_config.
+
+        Side effect: also applies the saved std_output_format to the global
+        UtilityTools.TABLE_OUTPUT_FORMAT so table rendering matches the workspace
+        preference. Tolerates a missing/blank config (warns, keeps defaults).
+        """
         potential_config = self.data_master.get_workspace(self.workspace_id, columns="workspace_config")
         if potential_config:
             self.workspace_config.from_json(potential_config)
@@ -918,6 +1246,12 @@ class SessionUtility:
             print("[X] Proceeding but no workspace configuration was loaded")
 
     def set_configs(self):
+        """Persist the in-memory workspace_config back to the DB and re-apply output format.
+
+        Inverse of get_configs: serializes self.workspace_config to the workspace
+        row and refreshes the global table output format. Call after mutating
+        config so changes survive across sessions.
+        """
         new_config_settings = self.workspace_config.to_json_string()
         self.data_master.update_workspace(self.workspace_id, {"workspace_config": new_config_settings})
         try:

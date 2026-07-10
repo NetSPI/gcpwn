@@ -13,7 +13,7 @@
 - Keep module behavior backwards compatible unless the change is explicitly a bug fix.
 - Prefer shared helpers in `gcpwn/core/` over duplicating logic in individual modules.
 - Add or update at least one focused test for new helpers, exports, or module wiring changes.
-- If you add a new module, update `gcpwn/mappings/module-mappings.json` and `gcpwn/mappings/database_info.yaml` when needed.
+- If you add a new module, update `gcpwn/mappings/module_mappings.json` and `gcpwn/mappings/database_info.json` when needed.
 
 ## OpenGraph Allowlists
 

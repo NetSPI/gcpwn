@@ -1,3 +1,15 @@
+"""Module dispatch policy and execution: auth gating, project-scope planning, per-project loop.
+
+interact_with_module() is the single chokepoint that the REPL (and passthrough mode) use to
+run any module. It decides, via get_module_action()/MODULE_POLICY_REGISTRY, whether a module
+needs credentials, runs once vs once-per-project, and accepts project selector flags; resolves
+the target project list; then imports the module and calls its run_module(args, session)
+contract for each project, temporarily swapping session.project_id per run.
+
+Module return-value contract observed here: run_module returns truthy/0 == success, -1 ==
+failure. enum_all additionally uses return code 2 to signal "newly discovered projects should
+be appended to the run queue" (cross-project resumable enumeration).
+"""
 from __future__ import annotations
 
 import argparse
@@ -8,12 +20,21 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from gcpwn.core.console import UtilityTools
+from gcpwn.core.utils.hierarchy import render_tree_lines
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.service_runtime import parse_id_input_values
+from gcpwn.core.utils.service_runtime import flatten_arg_groups, parse_id_input_values
 
 
 @dataclass(frozen=True)
 class ModuleAction:
+    """Resolved execution policy for one module.
+
+    requires_auth: needs loaded credentials before running.
+    run_once: run a single time instead of once per target project.
+    use_context_project: when run_once, still resolve and set a single context project_id.
+    accepts_project_flags: whether --project-id/--current-project/--all-projects apply.
+    """
+
     requires_auth: bool
     run_once: bool
     use_context_project: bool
@@ -22,20 +43,28 @@ class ModuleAction:
 
 @dataclass(frozen=True)
 class RunnerArgs:
+    """Parsed project-targeting selectors plus the remaining (passthrough) module args.
+
+    project_ids/current_project/all_projects are mutually exclusive selectors;
+    passthrough holds every arg interact_with_module hands straight to run_module.
+    """
+
     project_ids: list[str]
     current_project: bool
     all_projects: bool
     passthrough: list[str] = field(default_factory=list)
 
+# (run_once, use_context_project, accepts_project_flags) tuple consumed by get_module_action.
 DEFAULT_MODULE_POLICY = (False, False, True)
 MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "enum_resources": (True, True, True),
-    "enum_policy_bindings": (True, True, True),
-    "process_iam_bindings": (True, True, True),
-    "analyze_vulns": (True, True, True),
+    "enum_gcp_policy_bindings": (True, True, True),
+    "process_gcp_iam_bindings": (True, True, True),
     "process_og_gcpwn_data": (True, False, False),
     "process_og_node_color_images": (True, False, False),
     "enum_cloud_identity": (True, True, False),
+    # Google Workspace modules are tenant/user-scoped, not per-GCP-project -> run once.
+    "enum_drive": (True, True, False),
 }
 
 UNAUTH_ALLOWED_MODULE_KEYS: set[str] = {
@@ -50,6 +79,7 @@ def _is_unknown_project_token(value: Any) -> bool:
 
 
 def _normalize_project_ids(values: Sequence[str]) -> list[str]:
+    """Trim, drop placeholder/unknown tokens, and de-duplicate project ids preserving order."""
     out: list[str] = []
     seen: set[str] = set()
     for value in values or []:
@@ -62,6 +92,13 @@ def _normalize_project_ids(values: Sequence[str]) -> list[str]:
 
 
 def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
+    """Split module argv into project selectors (consumed here) and passthrough args (for run_module).
+
+    Recognizes --project-id(s) (inline space/comma lists), --project-id-file(s) (one id per
+    line), --current-project, and --all-projects; everything unrecognized stays in `passthrough`
+    untouched so modules define their own flags. parse_known_args is used so module flags never
+    error here.
+    """
     p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     p.add_argument(
         "--project-id",
@@ -85,8 +122,8 @@ def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
     p.add_argument("--all-projects", action="store_true", help="Target ALL already-known projects (no prompts).")
 
     known, rest = p.parse_known_args(list(argv or []))
-    flattened_project_tokens = [token for group in (known.project_ids or []) for token in (group or [])]
-    file_project_tokens = [token for group in (known.project_id_files or []) for token in (group or [])]
+    flattened_project_tokens = flatten_arg_groups(known.project_ids)
+    file_project_tokens = flatten_arg_groups(known.project_id_files)
     parsed_project_ids_inline = parse_id_input_values(
         flattened_project_tokens,
         value_label="project id",
@@ -108,6 +145,11 @@ def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
 
 @contextmanager
 def _temporary_attr(obj: Any, attr: str, value: Any):
+    """Context manager that sets obj.attr to value, then restores the prior value/absence.
+
+    Used to scope session.project_id (and _module_run_context) to a single module run so
+    the per-project loop never leaks state between projects. Restoration is best-effort.
+    """
     old = getattr(obj, attr, None)
     had = hasattr(obj, attr)
     try:
@@ -123,12 +165,34 @@ def _temporary_attr(obj: Any, attr: str, value: Any):
             pass
 
 
+def _parallel_services_count(passthrough_args: Sequence[str]) -> int:
+    """Peek at --parallel-services N in the passthrough args (clamped >=1); 1 on any error.
+
+    Used to detect enum_all's opt-in cross-project parallel orchestrator mode without
+    consuming the flag (it is still forwarded to run_parallel).
+    """
+    p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    p.add_argument("--parallel-services", dest="parallel_services", type=int, default=1)
+    try:
+        known, _ = p.parse_known_args(list(passthrough_args or []))
+        return max(1, int(known.parallel_services or 1))
+    except (SystemExit, ValueError):
+        return 1
+
+
 def _is_unauth_module(module_import_path: str) -> bool:
     lowered = str(module_import_path or "").lower()
     return ".unauthenticated." in lowered or lowered.split(".")[-1].startswith("unauth_")
 
 
 def get_module_action(module_import_path: str) -> ModuleAction:
+    """Resolve a module's execution policy (auth/run-once/project-scope) from its import path.
+
+    Unauth modules (by name prefix or '.unauthenticated.' segment) always run once, no auth,
+    no project flags. Otherwise the trailing module name is looked up in MODULE_POLICY_REGISTRY
+    (DEFAULT_MODULE_POLICY = per-project, accepts flags). requires_auth is True unless the name
+    is in UNAUTH_ALLOWED_MODULE_KEYS (local-processing modules that need no live GCP API).
+    """
     if _is_unauth_module(module_import_path):
         return ModuleAction(
             requires_auth=False,
@@ -149,6 +213,11 @@ def get_module_action(module_import_path: str) -> ModuleAction:
 
 
 def _should_prompt_all_projects(module_import_path: str) -> bool:
+    """Whether to offer the all-vs-current project prompt for this module.
+
+    Suppressed for exploit/process/unauthenticated modules, where blasting every known
+    project by accident is undesirable; those default to the current project only.
+    """
     lowered = str(module_import_path or "").lower()
     no_prompt_tokens = (
         ".exploit.",
@@ -172,32 +241,46 @@ def _short_hierarchy_token(row: dict[str, Any]) -> str:
 
 
 def _render_current_project_hierarchy(session) -> str:
+    """Build an 'org > folder > project' breadcrumb for the current project (current node in red).
+
+    Loads abstract_tree_hierarchy once and walks parent links in-memory (avoids a query per
+    ancestor on every per-project run). Returns "" if no current project or it isn't cached.
+    """
     current_project_id = str(getattr(session, "project_id", "") or "").strip()
     if not current_project_id or _is_unknown_project_token(current_project_id):
         return ""
 
-    rows = session.get_data(
+    # Load the hierarchy once and walk parents in-memory (avoids one query per
+    # ancestor on every per-project module run).
+    all_rows = session.get_data(
         "abstract_tree_hierarchy",
         columns=["name", "display_name", "type", "parent", "project_id"],
-        conditions=f'type="project" AND project_id="{current_project_id}"',
     ) or []
-    if not rows:
+    rows_by_name = {
+        str(row.get("name") or "").strip(): row
+        for row in all_rows
+        if str(row.get("name") or "").strip()
+    }
+    current_row = next(
+        (
+            row
+            for row in all_rows
+            if str(row.get("type") or "").strip().lower() == "project"
+            and str(row.get("project_id") or "").strip() == current_project_id
+        ),
+        None,
+    )
+    if not current_row:
         return ""
 
-    current_row = rows[0]
     chain: list[dict[str, Any]] = [current_row]
     seen = {str(current_row.get("name") or "").strip()}
     parent_name = str(current_row.get("parent") or "").strip()
 
     while parent_name and parent_name.upper() != "N/A":
-        parent_rows = session.get_data(
-            "abstract_tree_hierarchy",
-            columns=["name", "display_name", "type", "parent", "project_id"],
-            conditions=f'name="{parent_name}"',
-        ) or []
-        if not parent_rows:
+        parent_row = rows_by_name.get(parent_name)
+        if not parent_row:
             break
-        parent_row = parent_rows[0]
         parent_resource_name = str(parent_row.get("name") or "").strip()
         if not parent_resource_name or parent_resource_name in seen:
             break
@@ -233,6 +316,13 @@ def _project_tree_label(row: dict[str, Any], *, current_project_id: str) -> str:
 
 
 def _render_known_project_tree(session) -> list[str]:
+    """Render an ASCII org/folder/project tree limited to the workspace's known projects.
+
+    Includes each known project and all of its ancestors from abstract_tree_hierarchy;
+    synthesizes a standalone project node when a known project has no cached hierarchy row.
+    Children are sorted org->folder->project then by label; current project shown in red,
+    orgs in cyan. Returns the rendered lines (empty list if there are no known projects).
+    """
     current_project_id = str(getattr(session, "project_id", "") or "").strip()
     known_projects = {
         str(project_id).strip()
@@ -305,26 +395,18 @@ def _render_known_project_tree(session) -> list[str]:
     for child_names in children.values():
         child_names.sort(key=_sort_key)
 
-    lines: list[str] = []
+    def _label(name: str) -> str:
+        return _project_tree_label(nodes.get(name, {}), current_project_id=current_project_id)
 
-    def _walk(parent: str | None, prefix: str = "") -> None:
-        siblings = children.get(parent, [])
-        for index, name in enumerate(siblings):
-            is_last = index == len(siblings) - 1
-            row = nodes.get(name, {})
-            if parent is None:
-                lines.append(f"{prefix}{_project_tree_label(row, current_project_id=current_project_id)}")
-                _walk(name, prefix)
-                continue
-            branch = "└─ " if is_last else "├─ "
-            lines.append(f"{prefix}{branch}{_project_tree_label(row, current_project_id=current_project_id)}")
-            _walk(name, prefix + ("   " if is_last else "│  "))
-
-    _walk(None)
-    return lines
+    return render_tree_lines(children.get(None, []), children, _label)
 
 
 def _prompt_for_project_scope(session) -> str | None:
+    """Interactively ask whether to target all known projects or just the current one.
+
+    Prints the known-project tree (or current breadcrumb) for context. Returns
+    "All Projects", "Current/Single", or None (exit/cancel/Ctrl-C).
+    """
     tree_lines = _render_known_project_tree(session)
     if tree_lines:
         print("[*] Known project tree:")
@@ -361,6 +443,13 @@ def _prompt_for_project_scope(session) -> str | None:
 
 
 def _resolve_targets_for_per_project(session, runner: RunnerArgs, module_import_path: str) -> list[str] | None:
+    """Decide the project id list a per-project module runs against.
+
+    Precedence: explicit --project-id(s) > --current-project > --all-projects > workspace
+    configured preferred_project_ids > interactive prompt / current project.
+    Returns: a non-empty list to run, [] when the user explicitly cancelled selection, or
+    None when there is no usable project context at all (caller surfaces guidance).
+    """
     current_project_id = str(getattr(session, "project_id", "") or "").strip()
     if _is_unknown_project_token(current_project_id):
         current_project_id = ""
@@ -395,6 +484,11 @@ def _resolve_targets_for_per_project(session, runner: RunnerArgs, module_import_
     if len(known_projects) <= 1:
         return project_list
 
+    # Non-interactive (drive-through) runs must never block on the all-vs-current
+    # prompt: default to the current project. Pass --all-projects/--project-id to override.
+    if getattr(session, "_non_interactive", False):
+        return project_list
+
     choice = _prompt_for_project_scope(session)
     if choice == "All Projects":
         return known_projects
@@ -404,6 +498,11 @@ def _resolve_targets_for_per_project(session, runner: RunnerArgs, module_import_
 
 
 def _resolve_context_project_id(session, runner: RunnerArgs) -> str | None:
+    """Pick a single context project_id for run-once modules that still need one.
+
+    Tries, in order: session.project_id, first --project-id, first preferred config project,
+    first known project. Returns the first non-placeholder value, else None.
+    """
     for candidate in (
         getattr(session, "project_id", None),
         runner.project_ids[0] if runner.project_ids else None,
@@ -422,6 +521,13 @@ def _plan_execution(
     runner: RunnerArgs,
     module_import_path: str,
 ) -> tuple[tuple[bool, str | None, list[str]] | None, str | None]:
+    """Compute the execution plan for a module, or an error message to show the user.
+
+    Returns (plan, None) on success where plan = (run_once, context_project_id, target_ids):
+      - run-once modules -> (True, optional context project, []).
+      - per-project modules -> (False, None, [project_ids...]).
+    Returns (None, error_message) when no projects are available or selection was cancelled.
+    """
     if action.run_once:
         ctx = _resolve_context_project_id(session, runner) if action.use_context_project else None
         return ((True, ctx, []), None)
@@ -451,6 +557,13 @@ def _execute_module_for_project(
     run_index: int = 0,
     run_total: int = 1,
 ) -> tuple[Any, bool]:
+    """Run run_module once for a single project, scoping session state and catching failures.
+
+    Temporarily sets session.project_id (when given) and session._module_run_context
+    (index/total) for the duration of the call, and logs START/END markers. Returns
+    (module_return_value, ok) where ok is False if the module raised (traceback printed);
+    an exception is treated as failure, not propagated, so the per-project loop continues.
+    """
     label = project_id or "N/A"
     suffix = "" if project_id is None else f" for {label}"
     start_msg = f"[START_MODULE] Entering {mod_short} module{suffix}..."
@@ -471,6 +584,20 @@ def _execute_module_for_project(
 
 
 def interact_with_module(session, module_path: str, module_args: Sequence[str]) -> int:
+    """Validate, gate, plan, and execute a module; return 0 on success, -1 on failure.
+
+    The single entrypoint used by both the REPL (`modules run`) and passthrough mode.
+    Steps: parse project selectors -> reject conflicting selectors / warn-and-ignore on
+    modules that don't accept them -> auth gate (refuse if requires_auth and no creds) ->
+    import the module and grab its run_module -> forward -h/--help straight to the module ->
+    special-case enum_all --parallel-services>1 (delegates to run_parallel) -> plan execution
+    -> run once or loop per target project, swapping session.project_id per run.
+
+    enum_all per-project loop: a return code of 2 means the module discovered new projects;
+    their ids are merged into the pending queue so enumeration fans out resumably. Any
+    per-project failure is collected and causes an overall -1 return. session.project_id is
+    always restored after the loop. KeyboardInterrupt returns 0 (clean abort).
+    """
     try:
         runner = _parse_runner_args(module_args)
         passthrough_args = list(runner.passthrough)
@@ -539,6 +666,25 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
             run_module(list(passthrough_args), session)
             return 0
 
+        # enum_all cross-project parallel mode: drive all projects through one
+        # orchestrator (RM-once -> services pool -> bindings-once) instead of the
+        # per-project sequential loop. Opt-in via --parallel-services N (N>1).
+        if mod_short in ("enum_all", "enum_gcp") and _parallel_services_count(passthrough_args) > 1:
+            run_parallel = getattr(module, "run_parallel", None)
+            if callable(run_parallel):
+                if runner.project_ids:
+                    explicit_targets = list(runner.project_ids)
+                elif runner.current_project:
+                    explicit_targets = [t for t in [str(getattr(session, "project_id", "") or "").strip()] if t]
+                else:
+                    explicit_targets = None  # discover all projects after RM phase
+                try:
+                    result = run_parallel(session, list(passthrough_args), explicit_targets)
+                    return 0 if result in (0, 1, 2) else -1
+                except KeyboardInterrupt:
+                    print(f"{UtilityTools.YELLOW}[!] Interrupted. Re-run to resume from the task ledger.{UtilityTools.RESET}")
+                    return -1
+
         plan, err = _plan_execution(session, action, runner, module_import_path)
         if not plan:
             print(err or f"{UtilityTools.RED}[X] Failed to plan module execution.{UtilityTools.RESET}")
@@ -586,7 +732,7 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
                     continue
                 if (
                     callback == 2
-                    and mod_short == "enum_all"
+                    and mod_short in ("enum_all", "enum_gcp")
                     and not runner.project_ids
                     and not runner.current_project
                 ):
@@ -594,6 +740,22 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
                         [*pending_project_ids, *(getattr(session, "global_project_list", []) or [])]
                     )
                 index += 1
+
+            # enum_all (top orchestrator): after the GCP per-project loop, run the
+            # tenant-scoped Google Workspace phase ONCE. enum_gcp does not (GCP only);
+            # the --parallel-services path runs Workspace inside run_parallel instead.
+            if mod_short == "enum_all":
+                try:
+                    from gcpwn.modules.everything.enumeration.enum_google_workspace import (
+                        run_module as run_workspace_all,
+                    )
+                    print(f"{UtilityTools.BOLD}[*] enum_all | Google Workspace phase (tenant-scoped, once){UtilityTools.RESET}")
+                    ws_args = ["-v"] if ("-v" in passthrough_args or "--debug" in passthrough_args) else []
+                    if "--download-google-drive" in passthrough_args:
+                        ws_args.append("--download-google-drive")
+                    run_workspace_all(ws_args, session)
+                except Exception:
+                    print(traceback.format_exc())
 
             if failures:
                 print(

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
+from gcpwn.core.utils.iam_principals import canonical_iam_member
 from gcpwn.core.utils.module_helpers import extract_path_tail, load_mapping_data, parse_json_value, split_path_tokens
 from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
     RESOURCE_TOKEN_TO_NODE_TYPE,
@@ -34,58 +35,33 @@ class OpenGraphEdge:
 
 def principal_node_id(member: str) -> str:
     """
-    Normalize principal/member identifiers into one canonical token format.
+    Normalize an IAM member string into the canonical token used as a principal's
+    OpenGraph node id.
+
+    This is the single source of truth for principal node identity across the whole
+    OpenGraph pipeline: the returned string is used verbatim as the BloodHound node
+    `id` for that principal, so any two members that should collapse to one node MUST
+    normalize to the same token here. The prefix alias map is shared with the
+    process-bindings path via core `canonical_iam_member`; the only graph-specific
+    rule is that `deleted:` principals are dropped (return "") so they never become
+    nodes.
 
     Example:
     - input:  "users:alice@example.com"
     - output: "user:alice@example.com"
+
+    Returns the canonical token, or "" for empty/deleted members (which callers treat
+    as "do not emit").
     """
-    # Canonical principal/member ID normalizer used throughout OpenGraph.
-    #
-    # Examples:
-    # - "users:alice@example.com"            -> "user:alice@example.com"
-    # - "service_account:sa@p.iam.gserviceaccount.com" -> "serviceAccount:sa@p.iam.gserviceaccount.com"
-    # - "project_editor:my-proj"             -> "projectEditor:my-proj"
-    # - "all_users"                          -> "allUsers"
-    # - "all_authenticated_users"            -> "allAuthenticatedUsers"
+    # Canonical principal/member ID normalizer used throughout OpenGraph. The prefix
+    # alias map is shared with the process-bindings path via core canonical_iam_member;
+    # the only graph-specific rule is dropping deleted: principals from the graph.
     token = str(member or "").strip()
     if not token:
         return ""
-
-    lowered = token.lower()
-    if lowered.startswith("deleted:"):
+    if token.lower().startswith("deleted:"):
         return ""
-    if lowered in {"all_users", "allusers"}:
-        return "allUsers"
-    if lowered in {"all_authenticated_users", "allauthenticatedusers"}:
-        return "allAuthenticatedUsers"
-    if ":" not in token:
-        return token
-
-    prefix, rest = token.split(":", 1)
-    mapped = {
-        "service_account": "serviceAccount",
-        "serviceaccount": "serviceAccount",
-        "service-account": "serviceAccount",
-        "user": "user",
-        "users": "user",
-        "group": "group",
-        "groups": "group",
-        "domain": "domain",
-        "domains": "domain",
-        "project_owner": "projectOwner",
-        "projectowner": "projectOwner",
-        "project-owner": "projectOwner",
-        "project_editor": "projectEditor",
-        "projecteditor": "projectEditor",
-        "project-editor": "projectEditor",
-        "project_viewer": "projectViewer",
-        "projectviewer": "projectViewer",
-        "project-viewer": "projectViewer",
-    }.get(prefix.strip().lower())
-    if not mapped:
-        return token
-    return f"{mapped}:{rest.strip()}"
+    return canonical_iam_member(token)
 
 
 def principal_display_name(member: str) -> str:
@@ -105,7 +81,15 @@ def principal_display_name(member: str) -> str:
 
 
 def principal_type(member: str) -> str:
-    """Map a canonical principal token to the OpenGraph node type."""
+    """
+    Map a canonical principal token to its primary OpenGraph node type (kind).
+
+    The returned string is the principal's primary BloodHound `kind` (e.g. GoogleUser,
+    GCPServiceAccount, GoogleGroup). It is part of the external OpenGraph contract:
+    these exact kind tokens are consumed by the BloodHound import. `GCPPrincipal` is the
+    generic fallback and is later upgraded to a more specific kind by
+    OpenGraphBuilder._prefer_node_type when the member prefix becomes known.
+    """
     value = principal_node_id(member)
 
     if value.startswith("principalSet://"):
@@ -128,7 +112,15 @@ def principal_type(member: str) -> str:
 
 
 def resource_node_id(name: str) -> str:
-    """Build canonical resource node ID from resource name/path."""
+    """
+    Build the canonical OpenGraph node id for a GCP resource: `resource:<name>`.
+
+    Every resource node in the graph is keyed by this exact id, and binding/combo
+    edge emitters compute target ids with this function. The `resource:` prefix is
+    load-bearing: node-section classification and resource-node export hygiene
+    (node_to_opengraph) both test for it, so it MUST stay stable. The full resource
+    path is embedded so resource identity is unambiguous across projects.
+    """
     return f"resource:{name}"
 
 
@@ -138,6 +130,33 @@ def resource_leaf_name(resource_name: str) -> str:
     if not token:
         return ""
     return extract_path_tail(token, default=token)
+
+
+def canonical_target_node_ref(resource_name: str, resource_type: str | None) -> tuple[str, str]:
+    """Return (node_id, node_kind) for a binding / dangerous-edge TARGET resource.
+
+    A service-account target COLLAPSES onto its principal node -- id
+    ``serviceAccount:<email>`` (via principal_node_id, so it matches the principal path
+    exactly), kind ``GCPServiceAccount``. This makes a service account a SINGLE graph
+    node that is both an actor (its own outgoing access) and an object (incoming edges
+    that target it, e.g. CAN_IMPERSONATE_SA / CAN_MODIFY_SA_IAM / actAs). Without it the
+    SA also gets a separate ``resource:projects/.../serviceAccounts/<email>``
+    (GCPServiceAccountResource) node, and the two -- same real SA, one as actor and one
+    as object -- stay disconnected, severing attack-path traversal through the SA.
+
+    Only collapses when the SA resource leaf is an email (the principal node's key); a SA
+    named by numeric unique id can't be matched to the email-keyed principal, so it stays
+    a resource node. Every non-SA resource keeps the normal ``resource:<name>`` id.
+    """
+    name = str(resource_name or "").strip()
+    node_kind = gcp_resource_node_type(resource_type)
+    if node_kind == "GCPServiceAccountResource":
+        leaf = resource_leaf_name(name)
+        if "@" in leaf:
+            principal_id = principal_node_id(f"serviceAccount:{leaf}")
+            if principal_id:
+                return principal_id, "GCPServiceAccount"
+    return resource_node_id(name), node_kind
 
 
 def resource_location_token(resource_name: str) -> str:
@@ -275,8 +294,6 @@ def principal_member_properties(member: str) -> dict[str, Any]:
         "name": friendly_name or token,
         "display_name": friendly_name or token,
     }
-    if token.startswith("deleted:"):
-        props["deleted"] = True
     if token.startswith("serviceAccount:"):
         email = token.split(":", 1)[1].strip().lower()
         if email:
@@ -299,7 +316,17 @@ def gcp_resource_node_type(resource_type: str | None) -> str:
 
 
 class OpenGraphBuilder:
-    """Small in-memory graph builder with node merge and edge de-duplication."""
+    """
+    In-memory accumulator for the OpenGraph being assembled across all pipeline stages.
+
+    Holds the canonical node/edge maps that every stage mutates by calling add_node /
+    add_edge. Identity rules that the whole pipeline relies on:
+    - nodes are keyed by node_id (the canonical principal/resource id); repeated
+      add_node calls MERGE into the existing node rather than overwriting it.
+    - edges are keyed by (source_id, edge_type, destination_id); the first edge for a
+      key wins and later duplicates are ignored (see add_edge).
+    Not thread-safe; the OpenGraph stages run on the main thread.
+    """
 
     def __init__(self) -> None:
         """Initialize empty node/edge maps keyed for fast de-duplication."""
@@ -342,7 +369,16 @@ class OpenGraphBuilder:
         return merged
 
     def add_node(self, node_id: str, node_type: str, **properties: Any) -> None:
-        """Insert or merge a node; preserves existing values unless missing."""
+        """
+        Insert a node, or merge into an existing one with the same node_id.
+
+        Merge semantics matter because a node is frequently re-asserted by several
+        stages with partial knowledge: existing property values are NEVER overwritten
+        (only missing keys and empty values are filled, nested dicts merged key-wise),
+        and the node_type is upgraded toward the more specific kind via
+        _prefer_node_type. This is why a principal first seen as GCPPrincipal can later
+        become GoogleUser without losing properties.
+        """
         if node_id in self.node_map:
             existing = self.node_map[node_id]
             merged = dict(existing.properties)
@@ -365,7 +401,15 @@ class OpenGraphBuilder:
         self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=node_type, properties=properties)
 
     def add_edge(self, source_id: str, destination_id: str, edge_type: str, **properties: Any) -> None:
-        """Insert edge if unseen; duplicate (src, kind, dst) edges are ignored."""
+        """
+        Insert an edge keyed by (source_id, edge_type, destination_id); first write wins.
+
+        De-duplication is by that triple only, so the FIRST add_edge for a key keeps its
+        properties and all later ones are silently dropped. Callers that need to merge
+        properties onto an already-present edge (e.g. collapsed dangerous-role edges in
+        the binding emitters) must read builder.edge_map and rewrite the entry directly
+        rather than relying on add_edge.
+        """
         key = (source_id, edge_type, destination_id)
         if key in self.edge_map:
             return
@@ -386,6 +430,8 @@ PRINCIPAL_KINDS = {
     "GCPDomainPrincipal",
     "GCPConvenienceMember",
     "GCPPrincipal",
+    # Synthetic "any authenticated user in this Workspace org" (self-join-open groups).
+    "PrincipalsInOrg",
 }
 
 IAM_BINDING_KINDS = {
@@ -627,7 +673,16 @@ def _order_export_properties(props: dict[str, Any]) -> dict[str, Any]:
 
 
 def _node_kinds(node_type: str | None) -> list[str]:
-    """Map internal node_type to exported kinds list with generic fallback kind."""
+    """
+    Expand an internal node_type into the BloodHound `kinds` list for export.
+
+    The OpenGraph contract requires each node to carry an ordered list of kinds with the
+    most specific first and a generic base kind appended so BloodHound can render/select
+    by family: principals get [<specific>, "GCPPrincipal"], resources get
+    [<specific>, "GCPResource"], and an unknown/empty type degrades to ["GCPUnknown"].
+    The list is capped at 3 entries. These exact tokens are an external contract -- do
+    not rename them.
+    """
     token = str(node_type or "").strip()
     if not token:
         return ["GCPUnknown"]
@@ -739,9 +794,16 @@ def _truncate_resource_derived_export_fields(props: dict[str, Any]) -> dict[str,
 
 def node_to_opengraph(node: OpenGraphNode) -> dict[str, Any]:
     """
-    Convert in-memory node to final OpenGraph JSON shape.
+    Convert an in-memory OpenGraphNode into the final BloodHound OpenGraph node JSON.
 
-    Includes export hygiene (flattening, dedupe, attribution normalization).
+    Output shape is a HARD external contract: {"id", "kinds", "properties"}, where `id`
+    is the node id verbatim, `kinds` comes from _node_kinds, and `properties` is the
+    cleaned property bag (or None). Beyond shape, this applies export hygiene that the
+    in-memory build deliberately defers: resource nodes get their nested `resourcedata`
+    flattened to dotted `resourcedata.*` keys and long values truncated; principal/
+    binding nodes drop redundant member/name fields; `objectid` is stripped; permission
+    attribution is normalized; booleans are pushed to the end for readability. Changing
+    the id/kinds/property keys here changes what BloodHound ingests.
     """
     raw_props = dict(node.properties or {})
     is_resource_node = str(node.node_id or "").startswith("resource:")
@@ -810,7 +872,16 @@ def _sanitize_edge_kind(kind: str | None) -> str:
 
 
 def edge_to_opengraph(edge: OpenGraphEdge) -> dict[str, Any]:
-    """Convert in-memory edge to final OpenGraph JSON shape with normalized properties."""
+    """
+    Convert an in-memory OpenGraphEdge into the final BloodHound OpenGraph edge JSON.
+
+    Output shape is a HARD external contract:
+    {"start": {match_by:"id", value:<src>}, "end": {match_by:"id", value:<dst>},
+     "kind": <sanitized edge type>, "properties": <bag or None>}.
+    `kind` is run through _sanitize_edge_kind so it is a Graph-safe token (alnum/_,
+    falling back to RELATED_TO). Endpoints reference nodes by id, matching the ids
+    emitted by node_to_opengraph.
+    """
     raw_props = dict(edge.properties or {})
     if isinstance(raw_props.get("edge_inner_properties"), dict):
         merged = {"edge_category": raw_props.get("edge_category")}
@@ -834,24 +905,33 @@ def edge_to_opengraph(edge: OpenGraphEdge) -> dict[str, Any]:
 
 def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraphEdge], *, clear_existing: bool = False) -> None:
     """
-    Persist generated OpenGraph nodes/edges into SQLite backing tables.
+    Persist generated OpenGraph nodes/edges into the workspace's SQLite backing tables.
+
+    Writes opengraph_nodes / opengraph_edges via session.insert_data (workspace-scoped;
+    upsert keyed on node_id for nodes and on (source_id, destination_id, edge_type) for
+    edges). MUST run on the main thread -- DataController is single-threaded, so this is
+    never called from a parallel_map/ThreadPoolExecutor worker.
 
     Typical use:
     - default run: append/update per node/edge key
-    - with `clear_existing=True` (module `--reset`): replace prior graph snapshot
+    - with `clear_existing=True` (module `--reset`): delete this workspace's prior graph
+      rows first, then re-insert -- replacing the snapshot.
+
+    Note: this stores the in-memory build-time properties (not the export-hygiene JSON);
+    re-export from the DB goes back through node_to_opengraph/edge_to_opengraph.
     """
     node_type_by_id = {node.node_id: node.node_type for node in nodes}
 
     if clear_existing:
-        session.data_master.service_cursor.execute(
+        session.data_master.cursor.execute(
             'DELETE FROM "opengraph_nodes" WHERE workspace_id = ?',
             (session.workspace_id,),
         )
-        session.data_master.service_cursor.execute(
+        session.data_master.cursor.execute(
             'DELETE FROM "opengraph_edges" WHERE workspace_id = ?',
             (session.workspace_id,),
         )
-        session.data_master.service_conn.commit()
+        session.data_master.conn.commit()
 
     for node in nodes:
         node_props = dict(node.properties or {})

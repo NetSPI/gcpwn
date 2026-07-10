@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from gcpwn.core.utils.hierarchy import descendants as _descendants
 from gcpwn.core.utils.module_helpers import load_mapping_data, parse_string_list
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import principal_node_id
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_conditionals import ConditionOption, StatementConditionalsEngine
@@ -225,25 +226,6 @@ def _binding_composite_id(
 
 # Return all descendant scopes of a root scope using a breadth-first traversal.
 # Used for org/folder inheritance fan-out.
-def _descendants(children_by_parent: dict[str, list[str]], root: str) -> list[str]:
-    root_name = str(root or "").strip()
-    if not root_name:
-        return []
-    output: list[str] = []
-    seen = {root_name}
-    queue: deque[str] = deque(children_by_parent.get(root_name, []))
-    while queue:
-        current = queue.popleft()
-        if current in seen:
-            continue
-        seen.add(current)
-        output.append(current)
-        for child in children_by_parent.get(current, []):
-            if child not in seen:
-                queue.append(child)
-    return output
-
-
 # Invert permission->roles mapping into role->permissions for quick role lookup
 # during binding expansion.
 def _invert_permission_to_roles(permission_to_roles: dict[str, list[str]] | None) -> dict[str, set[str]]:

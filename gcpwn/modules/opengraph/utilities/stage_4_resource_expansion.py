@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, parse_json_value
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
+    canonical_target_node_ref,
     gcp_resource_node_type,
     normalize_resource_type_token,
     principal_member_properties,
@@ -477,7 +478,10 @@ def _add_project_resource_membership_edges(
             continue
         should_emit_membership_edge = bool(include_all or resource_type in _DEFAULT_PROJECT_EDGE_RESOURCE_TYPES)
 
-        resource_node = resource_node_id(resource_name)
+        # Service-account resources collapse onto their serviceAccount:<email> principal
+        # node so a SA is ONE graph node (actor + object), not a separate
+        # resource:projects/.../serviceAccounts/<email> duplicate.
+        resource_node, resource_node_kind = canonical_target_node_ref(resource_name, resource_type)
         resource_label = resource_leaf_name(resource_name) or str(resource.get("display_name") or "").strip() or resource_name
         resource_region = str(resource.get("region") or "").strip() or resource_location_token(resource_name)
         resource_status = str(resource.get("status") or resource.get("state") or "").strip().upper()
@@ -493,7 +497,7 @@ def _add_project_resource_membership_edges(
                 ).upper()
         context.builder.add_node(
             resource_node,
-            gcp_resource_node_type(resource_type),
+            resource_node_kind,
             name=resource_label,
             display_name=resource_label,
             resource_name=resource_name,

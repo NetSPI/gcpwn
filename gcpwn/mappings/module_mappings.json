@@ -1,0 +1,736 @@
+{
+  "schema_version": 2,
+  "services": [
+    {
+      "service": "API Gateway",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_apigateway",
+            "info_blurb": "Enumerate API Gateway gateways, APIs, and API configs, with optional direct targeting by ID and testIamPermissions.",
+            "location": "gcpwn.modules.gcp.apigateway.enumeration.enum_apigateway"
+          }
+        ]
+      }
+    },
+    {
+      "service": "API Keys",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_apikeys",
+            "info_blurb": "Enumerate API Keys for the selected project (global location).",
+            "location": "gcpwn.modules.gcp.apikeys.enumeration.enum_apikeys"
+          }
+        ],
+        "Unauthenticated": [
+          {
+            "module_name": "unauth_apikey_enum_all_scopes",
+            "info_blurb": "MIT-ported gmapsapiscanner-style module to enumerate unauthenticated Google Maps and related API scope for an exposed Google API key.",
+            "location": "gcpwn.modules.gcp.apikeys.unauthenticated.unauth_apikey_enum_all_scopes",
+            "attribution": [
+              "https://github.com/ozguralp/gmapsapiscanner"
+            ]
+          },
+          {
+            "module_name": "unauth_apikey_gemini_exploit",
+            "info_blurb": "Exploit an exposed Gemini API key by enumerating Gemini files and cached contents, then exercising the token-counting and embeddings REST endpoints.",
+            "location": "gcpwn.modules.gcp.apikeys.unauthenticated.unauth_apikey_gemini_exploit",
+            "attribution": [
+              "https://trufflesecurity.com/blog/google-api-keys-werent-secrets-but-then-gemini-changed-the-rules"
+            ]
+          },
+          {
+            "module_name": "unauth_apikey_vertex_exploit",
+            "info_blurb": "Exploit an exposed Vertex AI express-mode API key by discovering working publisher models and opening an interactive prompt shell.",
+            "location": "gcpwn.modules.gcp.apikeys.unauthenticated.unauth_apikey_vertex_exploit"
+          }
+        ]
+      }
+    },
+    {
+      "service": "App Engine",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_appengine",
+            "info_blurb": "Enumerate App Engine application, services, versions, and instances.",
+            "location": "gcpwn.modules.gcp.appengine.enumeration.enum_appengine"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Artifact Registry",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_artifactregistry",
+            "info_blurb": "Enumerate Artifact Registry repositories, packages, and versions; child layers use the cache automatically or accept explicit parent flags.",
+            "location": "gcpwn.modules.gcp.artifactregistry.enumeration.enum_artifactregistry"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Batch",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_batch",
+            "info_blurb": "Enumerate Batch jobs.",
+            "location": "gcpwn.modules.gcp.batch.enumeration.enum_batch"
+          }
+        ]
+      }
+    },
+    {
+      "service": "BigQuery",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_bigquery",
+            "info_blurb": "Enumerate BigQuery datasets and tables, with optional direct targeting by dataset or table ID.",
+            "location": "gcpwn.modules.gcp.bigquery.enumeration.enum_bigquery"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Bigtable",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_bigtable",
+            "info_blurb": "Enumerate Cloud Bigtable instances, clusters, and tables.",
+            "location": "gcpwn.modules.gcp.bigtable.enumeration.enum_bigtable"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Build",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudbuild",
+            "info_blurb": "Enumerate Cloud Build triggers, builds, and connections across regions for the selected project.",
+            "location": "gcpwn.modules.gcp.cloudbuild.enumeration.enum_cloudbuild"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Composer",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudcomposer",
+            "info_blurb": "Enumerate Cloud Composer environments across regions and optionally download software config overrides from retrieved metadata.",
+            "location": "gcpwn.modules.gcp.cloudcomposer.enumeration.enum_cloudcomposer"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud DNS",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_clouddns",
+            "info_blurb": "Enumerate Cloud DNS managed zones and record sets. Use --zones and/or --record-sets to control depth; record sets can be filtered by --record-type.",
+            "location": "gcpwn.modules.gcp.clouddns.enumeration.enum_clouddns"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Functions",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudfunctions",
+            "info_blurb": "Enumerate Cloud Functions with regional scoping, source download, external curl checks, and testIamPermissions.",
+            "location": "gcpwn.modules.gcp.cloudfunctions.enumeration.enum_cloudfunctions"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_functions_invoke",
+            "info_blurb": "Upload or modify function code. Subsequently invoke it to get the OAuth token for an attached service account. Can auto-assume the new identity if desired. Can also be used to standalone call a function.",
+            "location": "gcpwn.modules.gcp.cloudfunctions.exploit.exploit_functions_invoke"
+          }
+        ],
+        "Unauthenticated": [
+          {
+            "module_name": "unauth_functionbrute",
+            "info_blurb": "Based on Rhino Security Labs' GCPBucketBrute (https://github.com/RhinoSecurityLabs/GCPBucketBrute); same concept adapted to brute-force Cloud Functions by URL, unauthenticated.",
+            "location": "gcpwn.modules.gcp.cloudfunctions.unauthenticated.unauth_functionbrute"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud KMS",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_kms",
+            "info_blurb": "Enumerate Cloud KMS keyrings/keys/versions across locations (defaults to locations/-). Use --get to fetch per-key metadata.",
+            "location": "gcpwn.modules.gcp.kms.enumeration.enum_kms"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Run",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudrun",
+            "info_blurb": "Enumerate Cloud Run services and jobs across locations (defaults to locations/-). Use --get to enrich per-resource metadata.",
+            "location": "gcpwn.modules.gcp.cloudrun.enumeration.enum_cloudrun"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud SQL",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudsql",
+            "info_blurb": "Enumerate Cloud SQL instances, cached instance configs, databases, and users using the SQL Admin API.",
+            "location": "gcpwn.modules.gcp.cloudsql.enumeration.enum_cloudsql"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Storage",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudstorage",
+            "info_blurb": "Enumerate Cloud Storage buckets, blobs, and HMAC keys; use --buckets/--blobs/--hmac-keys to control which resource types are collected.",
+            "location": "gcpwn.modules.gcp.cloudstorage.enumeration.enum_cloudstorage"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_bucket_upload",
+            "info_blurb": "Authenticated upload of a local file or STDIN to a Cloud Storage Bucket. You can specify the arbitrary path you want to send the file contents/STDIN to. See wiki for more details.",
+            "location": "gcpwn.modules.gcp.cloudstorage.exploit.exploit_bucket_upload"
+          },
+          {
+            "module_name": "exploit_storage_hmac",
+            "info_blurb": "Create a new HMAC Key tied to a service account. Subsequently use this key to try to enumerate/download Cloud Bucket Data using the SigV4 XML API. The module can also activate/deactivate existing keys",
+            "location": "gcpwn.modules.gcp.cloudstorage.exploit.exploit_storage_hmac"
+          }
+        ],
+        "Unauthenticated": [
+          {
+            "module_name": "unauth_bucketbrute",
+            "info_blurb": "A copy of Rhino Security GCP Brute tool. Will brute force GCP buckets given a keyterm and can check for anonymous permissions. Should not leverage credentials to try authenticated permission checks, although that might be added in the future",
+            "location": "gcpwn.modules.gcp.cloudstorage.unauthenticated.unauth_bucketbrute",
+            "attribution": [
+              "https://github.com/RhinoSecurityLabs/GCPBucketBrute"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Tasks",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudtasks",
+            "info_blurb": "Enumerate Cloud Tasks queues and tasks across supported locations, with optional HTTP task request sample downloads.",
+            "location": "gcpwn.modules.gcp.cloudtasks.enumeration.enum_cloudtasks"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Compute",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudcompute_lb",
+            "info_blurb": "Enumerate Compute Engine load balancing resources including backend buckets/services, forwarding rules, URL maps, and target proxies.",
+            "location": "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_lb"
+          },
+          {
+            "module_name": "enum_cloudcompute_network",
+            "info_blurb": "Enumerate Compute Engine networking resources including VPCs, subnetworks, firewalls, routers/NAT, VPN, attachments, and interconnect surfaces.",
+            "location": "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_network"
+          },
+          {
+            "module_name": "enum_cloudcompute_resources",
+            "info_blurb": "Enumerate Compute Engine resource-plane objects including projects, instances, disks, images, snapshots, machine images, node resources, reservations, and instance groups.",
+            "location": "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_resources"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_instance_ssh_keys",
+            "info_blurb": "Upload the public portion of an SSH key either to a project or instance. This might allow for SSH access depending on if no other restrictions are in place. Project edits will impact all instances in the project. Ergo uploading SSH keys to a project grants SSH access to all instances",
+            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_instance_ssh_keys"
+          },
+          {
+            "module_name": "exploit_instance_startup_script",
+            "info_blurb": "Create an instance or edit an existing one (through a restart) and upload a startup script that will exfiltrate the compute metadata to a URL of the caller's choice. These need to be manually added via `creds add` in gcpwn. Note a service account needs to be attached to the compute instance requiring those permissions.",
+            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_instance_startup_script"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Everything",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_all",
+            "info_blurb": "Call all enumeration modules defined in gcpwn. Can add flags like --iam to do all IAM testIamPermissions checks and --all-permissions to do ~9000 permission checks at the project/folder/org level. Can also add the --download flag to try to do a mass download while enumerating. With --parallel-services it also runs the Google Workspace phase once at the end.",
+            "location": "gcpwn.modules.everything.enumeration.enum_all"
+          },
+          {
+            "module_name": "enum_gcp",
+            "info_blurb": "GCP-only enumeration: identical to enum_all but without the trailing Google Workspace phase. Same parallel orchestrator + flags.",
+            "location": "gcpwn.modules.everything.enumeration.enum_gcp"
+          },
+          {
+            "module_name": "enum_gcp_policy_bindings",
+            "info_blurb": "Enumerate IAM policy bindings across already-enumerated resources (org/folder/project plus service resources). Uses Cloud Asset Inventory when available and falls back to per-service APIs for key services (Storage/BigQuery/Compute/Functions/Secrets/KMS/Run/PubSub/Spanner/Service Directory/Cloud Tasks/Artifact Registry).",
+            "location": "gcpwn.modules.everything.enumeration.enum_gcp_policy_bindings"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_gcp_setiampolicy",
+            "info_blurb": "Unified SetIamPolicy helper. Prompts for the service/resource (or accepts flags) and adds a binding for a given member+role (defaults to session email + a service-appropriate admin role). Supports Resource Manager, Storage, Compute, Functions, Secrets, Cloud Run, Artifact Registry, KMS, Pub/Sub, Spanner, Service Directory, and Cloud Tasks.",
+            "location": "gcpwn.modules.everything.exploit.exploit_gcp_setiampolicy"
+          }
+        ],
+        "Processing": [
+          {
+            "module_name": "process_gcp_iam_bindings",
+            "info_blurb": "Review org-wide security issues that might arise mainly with roles/permissions. Export the data to a csv or txt with --csv or --txt respectively. Note this will handle both convenience and custom roles in addition to normal predefined GCP roles, but not constraints or anything more advanced.",
+            "location": "gcpwn.modules.everything.process.process_gcp_iam_bindings"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Firestore",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_firestore",
+            "info_blurb": "Enumerate Firestore databases via the Firestore Admin API.",
+            "location": "gcpwn.modules.gcp.firestore.enumeration.enum_firestore"
+          }
+        ]
+      }
+    },
+    {
+      "service": "GKE",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_gke",
+            "info_blurb": "Enumerate GKE clusters across locations (defaults to locations/-). Use --get to fetch per-cluster metadata.",
+            "location": "gcpwn.modules.gcp.gke.enumeration.enum_gke"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Google Workspace",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloud_identity",
+            "info_blurb": "Enumerate Google Workspace / Cloud Identity groups and memberships. Uses directory customer ID (directoryCustomerId) where available.",
+            "location": "gcpwn.modules.workspace.cloud_identity.enumeration.enum_cloud_identity"
+          },
+          {
+            "module_name": "enum_google_workspace",
+            "info_blurb": "Run all Google Workspace / Cloud Identity enumerators once (tenant-scoped). Needs Workspace admin creds or service-account domain-wide delegation (--impersonate / configs set workspace_admin_subject admin@domain).",
+            "location": "gcpwn.modules.everything.enumeration.enum_google_workspace"
+          },
+          {
+            "module_name": "enum_admin_roles",
+            "info_blurb": "Enumerate Google Workspace admin roles + role assignments (Admin SDK Directory API, read-only). Flags super-admin/system roles and maps who holds each privileged role (highest attack-path value). Customer-scoped; needs Workspace admin creds or SA domain-wide delegation (--impersonate / configs set workspace_admin_subject admin@domain).",
+            "location": "gcpwn.modules.workspace.directory.enumeration.enum_admin_roles"
+          },
+          {
+            "module_name": "enum_org_units",
+            "info_blurb": "Enumerate Google Workspace organizational units (Admin SDK Directory API orgunits.list). Customer-scoped; needs Workspace admin creds or SA domain-wide delegation (--impersonate / configs set workspace_admin_subject).",
+            "location": "gcpwn.modules.workspace.directory.enumeration.enum_org_units"
+          },
+          {
+            "module_name": "enum_domains",
+            "info_blurb": "Enumerate Google Workspace domains (Admin SDK Directory API domains.list). Customer-scoped; needs Workspace admin creds or SA domain-wide delegation (--impersonate / configs set workspace_admin_subject).",
+            "location": "gcpwn.modules.workspace.directory.enumeration.enum_domains"
+          },
+          {
+            "module_name": "enum_mobile_devices",
+            "info_blurb": "Enumerate Google Workspace mobile devices (Admin SDK Directory API mobiledevices.list). Customer-scoped; needs Workspace admin creds or SA domain-wide delegation (--impersonate / configs set workspace_admin_subject).",
+            "location": "gcpwn.modules.workspace.directory.enumeration.enum_mobile_devices"
+          },
+          {
+            "module_name": "enum_oauth_tokens",
+            "info_blurb": "Enumerate Google Workspace 3rd-party OAuth app grants per user (Admin SDK Directory API tokens.list). Surfaces over-privileged app authorizations. Scans cached workspace_users (run enum_cloud_identity --users first) or a single --user-key; needs Workspace admin creds or SA domain-wide delegation.",
+            "location": "gcpwn.modules.workspace.directory.enumeration.enum_oauth_tokens"
+          },
+          {
+            "module_name": "enum_group_settings",
+            "info_blurb": "Read each Google Workspace group's access/posting settings (Groups Settings API groups.get). Flags externally-open / anyone-can-post / anyone-can-join groups. Scans cached workspace_groups (run enum_cloud_identity --groups first) or a single --group-email; needs Workspace admin creds or SA domain-wide delegation (scope apps.groups.settings).",
+            "location": "gcpwn.modules.workspace.groups_settings.enumeration.enum_group_settings"
+          },
+          {
+            "module_name": "enum_data_transfers",
+            "info_blurb": "Enumerate Google Workspace data-ownership transfer requests (Admin SDK Data Transfer API transfers.list). Surfaces offboarding data movement (old owner -> new owner, per application, status). Customer-scoped; needs Workspace admin creds or SA domain-wide delegation (scope admin.datatransfer.readonly).",
+            "location": "gcpwn.modules.workspace.data_transfer.enumeration.enum_data_transfers"
+          },
+          {
+            "module_name": "enum_drive",
+            "info_blurb": "Enumerate a Google Drive's files and sharing (ACL) exposure, and optionally download file CONTENT (a modern, logged GD-Thief). Lists one user's Drive at a time (--caller-email = SA domain-wide-delegation subject), sweeps all cached users (--all-users), or reads the current user's own Drive; flags public / anyone-with-link / external / domain files into workspace_drive_files + workspace_drive_permissions. --download-public pulls only public files; --download pulls all candidates (tiers: --focused by name/type, --secret-regex scans CONTENT). Download AS a different stored credential with --downloader-cred, or try EVERY stored credential per file with --downloader-creds-all. Emits greppable [DOWNLOAD] logs; --throttle paces requests. Needs the drive.readonly scope + Drive API enabled.",
+            "location": "gcpwn.modules.workspace.apps.drive.enumeration.enum_drive"
+          }
+        ]
+      }
+    },
+    {
+      "service": "IAM",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_iam",
+            "info_blurb": "Enumerate IAM service accounts, custom roles, policy bindings, and Workload Identity pools/providers/service-account IAM policies.",
+            "location": "gcpwn.modules.gcp.iam.enumeration.enum_iam"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_generate_access_token",
+            "info_blurb": "Generate an access token for a service account and assume it within GCPwn (--assume) to pivot to a different user. Note this also handles implicit delegation with the --delegation flag relying on you to either supply the role chain or checking whats been enumerated thus far to help you build the delegation chain.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_generate_access_token"
+          },
+          {
+            "module_name": "exploit_service_account_keys",
+            "info_blurb": "Generate an account key for a service account and assume it within GCPwn (--assume) to pivot to a different user. Note unlike the access token which usually lasts for around 1 hour, a service key can last for much longer and is a much more permanent pivot.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_service_account_keys"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Memorystore",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_memorystore",
+            "info_blurb": "Enumerate Memorystore for Redis instances and clusters (distinct redis and redis_cluster APIs).",
+            "location": "gcpwn.modules.gcp.memorystore.enumeration.enum_memorystore"
+          }
+        ]
+      }
+    },
+    {
+      "service": "OpenGraph",
+      "categories": {
+        "Processing": [
+          {
+            "module_name": "process_og_gcpwn_data",
+            "info_blurb": "Build OpenGraph data from cached workspace tables and export BloodHound-compatible JSON output.",
+            "location": "gcpwn.modules.opengraph.processing.process_og_gcpwn_data"
+          },
+          {
+            "module_name": "process_og_node_color_images",
+            "info_blurb": "Sync OpenGraph custom node color/image metadata to a BloodHound custom-node endpoint.",
+            "location": "gcpwn.modules.opengraph.processing.process_og_node_color_images"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Pub/Sub",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_pubsub",
+            "info_blurb": "Enumerate Pub/Sub topics, subscriptions, schemas, and snapshots, with optional direct targeting by full resource name.",
+            "location": "gcpwn.modules.gcp.pubsub.enumeration.enum_pubsub"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Resource Manager",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_resources",
+            "info_blurb": "Enumerate projects/folders/organizations. Pass --iam to run testIamPermissions on each resource. Adding --all-permissions enumerates ~9000 individual permissions in batches and is the most comprehensive.",
+            "location": "gcpwn.modules.gcp.resourcemanager.enumeration.enum_resources"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Secrets",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_secretsmanager",
+            "info_blurb": "Enumerate Secret Manager secrets, versions, and secret values; use --secrets/--versions/--values to control depth.",
+            "location": "gcpwn.modules.gcp.secretsmanager.enumeration.enum_secretsmanager"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Service Directory",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_servicedirectory",
+            "info_blurb": "Enumerate Service Directory namespaces, services, and endpoints across regions (defaults to locations/-).",
+            "location": "gcpwn.modules.gcp.servicedirectory.enumeration.enum_servicedirectory"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Storage Transfer",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_storagetransfer",
+            "info_blurb": "Enumerate Storage Transfer Service transfer jobs.",
+            "location": "gcpwn.modules.gcp.storagetransfer.enumeration.enum_storagetransfer"
+          }
+        ]
+      }
+    },
+    {
+      "service": "AgentPlatform",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_agentplatform",
+            "info_blurb": "Enumerate AgentPlatform (aiplatform) datasets, endpoints, models, featurestores, entity types, feature groups, feature online stores, feature views, reasoning engines, and notebook runtime templates.",
+            "location": "gcpwn.modules.gcp.agentplatform.enumeration.enum_agentplatform"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Scheduler",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudscheduler",
+            "info_blurb": "Enumerate Cloud Scheduler jobs (schedule, target type/URI, and the service account a job impersonates) across supported locations.",
+            "location": "gcpwn.modules.gcp.cloudscheduler.enumeration.enum_cloudscheduler"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Workflows",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudworkflows",
+            "info_blurb": "Enumerate Cloud Workflows workflows (state, revision, and the service account each workflow runs as -- a priv-esc signal) across supported locations.",
+            "location": "gcpwn.modules.gcp.cloudworkflows.enumeration.enum_cloudworkflows"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Spanner",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_spanner",
+            "info_blurb": "Enumerate Cloud Spanner instances (project-scoped) and databases (nested per instance) via the spanner_admin_instance_v1 / spanner_admin_database_v1 GAPIC clients. Supports --get hydration and --iam (testIamPermissions on instances and databases). Captures instance config/placement and database drop-protection/default-leader for blast-radius context.",
+            "location": "gcpwn.modules.gcp.spanner.enumeration.enum_spanner"
+          }
+        ]
+      }
+    },
+    {
+      "service": "AlloyDB",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_alloydb",
+            "info_blurb": "Enumerate AlloyDB clusters (state, type, database version, VPC network, CMEK kms_key_name, initial user) and their per-cluster instances (type, availability, zone, private/public IP) across supported locations.",
+            "location": "gcpwn.modules.gcp.alloydb.enumeration.enum_alloydb"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Organization Policy",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_orgpolicy",
+            "info_blurb": "Enumerate Organization Policy constraints (org policies) set on a project via the orgpolicy_v2 GAPIC OrgPolicyClient. Surfaces which guardrails are active (e.g. iam.disableServiceAccountKeyCreation enforced) so an operator can see which attack paths are blocked; captures a compact enforced/allow/deny rule summary per constraint.",
+            "location": "gcpwn.modules.gcp.orgpolicy.enumeration.enum_orgpolicy"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Asset Inventory",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_asset_inventory",
+            "info_blurb": "Pull resources + IAM policies org/folder/project-wide via Cloud Asset Inventory and populate the shared workspace tables (force-multiplier + fallback). Opt-in in enum_all via --asset-inventory.",
+            "location": "gcpwn.modules.gcp.assetinventory.enumeration.enum_asset_inventory"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Eventarc",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_eventarc",
+            "info_blurb": "Enumerate Eventarc triggers (destination type/target, channel, event-filter summary, and the SA a trigger invokes its destination as) across supported locations.",
+            "location": "gcpwn.modules.gcp.eventarc.enumeration.enum_eventarc"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Workstations",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_workstations",
+            "info_blurb": "Enumerate Cloud Workstations clusters, configs (incl. the SA each workstation runs as) and workstations (state/host) across supported locations.",
+            "location": "gcpwn.modules.gcp.workstations.enumeration.enum_workstations"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Billing",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_billing",
+            "info_blurb": "Enumerate billing accounts (+ best-effort admin IAM members) and the current project's billing link/status.",
+            "location": "gcpwn.modules.gcp.billing.enumeration.enum_billing"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Shell",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_cloudshell",
+            "info_blurb": "Fetch the caller's Cloud Shell environment (authorized SSH public keys, custom docker image, ssh/web hosts).",
+            "location": "gcpwn.modules.gcp.cloudshell.enumeration.enum_cloudshell"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Logging",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_logging",
+            "info_blurb": "List Cloud Logging sinks (export destinations + writer SA), buckets, log names and metrics; --download fetches recent entries capped per log.",
+            "location": "gcpwn.modules.gcp.logging.enumeration.enum_logging"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Dataproc",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_dataproc",
+            "info_blurb": "Enumerate Dataproc clusters and Serverless batches across regions, including the service account each runs as (dataproc.jobs.create / batches.create code-exec-as-SA).",
+            "location": "gcpwn.modules.gcp.dataproc.enumeration.enum_dataproc"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Dataflow",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_dataflow",
+            "info_blurb": "Enumerate Dataflow jobs across regions, including the worker service account each runs as (Flex Template code-exec-as-SA / data exfil).",
+            "location": "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Vertex AI Workbench",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_notebooks",
+            "info_blurb": "Enumerate Vertex AI Workbench instances (notebooks_v2) across regions; extracts the gce_setup service-account run-as identity and proxy URI. Supports --get and testIamPermissions.",
+            "location": "gcpwn.modules.gcp.notebooks.enumeration.enum_notebooks"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Deploy",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_clouddeploy",
+            "info_blurb": "Enumerate Cloud Deploy delivery pipelines and targets across regions, including each target's deploy runtime type and the service account rollouts run as. Supports --get and testIamPermissions.",
+            "location": "gcpwn.modules.gcp.clouddeploy.enumeration.enum_clouddeploy"
+          }
+        ]
+      }
+    },
+    {
+      "service": "BigQuery Data Transfer",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_bigquerydatatransfer",
+            "info_blurb": "Enumerate BigQuery Data Transfer Service transfer configs (data_source_id, destination dataset, schedule, owner) across regions.",
+            "location": "gcpwn.modules.gcp.bigquerydatatransfer.enumeration.enum_bigquerydatatransfer"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Service Usage",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_serviceusage",
+            "info_blurb": "Enumerate the APIs (services) enabled on a project (serviceusage.services.list, state:ENABLED) -- the enabled-API attack surface and which other enum modules can return data.",
+            "location": "gcpwn.modules.gcp.serviceusage.enumeration.enum_serviceusage"
+          }
+        ]
+      }
+    }
+  ]
+}

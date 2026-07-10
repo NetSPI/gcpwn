@@ -1,5 +1,33 @@
 from __future__ import annotations
 
+"""
+Shared IAM-binding -> OpenGraph edge emitters and the dangerous-rule matcher.
+
+This module turns already-resolved IAM binding rows (BindingPlusScopeEntry) into the
+principal -> binding -> resource topology of the graph, and matches them against the
+privilege-escalation rule set to emit dangerous-path edges.
+
+Authorization-fidelity routing (the reason the graph is shaped this way):
+every grant is modeled as principal -[HAS_IAM_BINDING]-> binding-node -[edge]-> resource,
+NOT as a direct principal -> resource edge. The intermediate binding node carries
+role@scope, condition, and inheritance metadata so the exact authorization that proves a
+path is never lost when edges are de-duplicated or collapsed.
+
+Single vs combo pairing:
+- "single"/simple bindings: one BindingPlusScopeEntry already satisfies a rule. Emitted
+  via _emit_subject_binding (GCPIamSimpleBinding) + _emit_binding_target_edge.
+- "combo"/multi bindings: several distinct-role bindings TOGETHER satisfy a rule. A
+  GCPIamMultiBinding node is created (_emit_subject_combo_binding), each contributing
+  simple binding gets a CONTRIBUTES_TO_COMBO edge into it, and the combo target edges are
+  emitted from the combo node (_emit_combo_target_edge / capability hops). If all
+  contributors share one role the combo collapses back to the simple-binding path to
+  avoid redundant combo nodes.
+
+All node ids, kinds (GCPIamSimpleBinding/GCPIamMultiBinding/GCPIamCapability/...), and
+edge kinds (HAS_IAM_BINDING, HAS_COMBO_BINDING, CONTRIBUTES_TO_COMBO, ROLE_OWNER/EDITOR,
+and per-rule edge_types) are part of the BloodHound OpenGraph contract -- do not rename.
+"""
+
 import hashlib
 import json
 import sys
@@ -7,7 +35,6 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Iterable
 
-from gcpwn.core.utils.module_helpers import extract_path_tail
 from gcpwn.modules.opengraph.utilities.helpers.graph.constants import (
     load_privilege_escalation_rules,
 )
@@ -24,17 +51,16 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphEdge,
     OpenGraphBuilder,
     OpenGraphNode,
-    gcp_resource_node_type,
+    canonical_target_node_ref,
     principal_member_properties,
     principal_type,
     role_agent_metadata,
     resource_display_label,
+    resource_leaf_name,
     resource_location_token,
-    resource_node_id,
 )
 from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
     canonical_scope_type,
-    normalized_token_frozenset,
     normalized_token_list,
 )
 
@@ -202,7 +228,16 @@ for _role_name, _rule_data in dict(_collapsed_rules_raw or {}).items():
 
 @dataclass(frozen=True)
 class BindingPlusScopeEntry:
-    """Resolved IAM binding-composite row shared between the base and advanced passes."""
+    """
+    One fully-resolved (principal, role, scope, condition) IAM grant -- the emitter's unit.
+
+    This is the contract between the policy-resolution stage and the edge emitters: by the
+    time an entry exists, attached/effective/source scopes, inheritance fan-out, convenience-
+    member expansion, and condition narrowing are all already computed. binding_composite_id
+    is the stable id used for the GCPIamSimpleBinding node and as the de-dup key throughout
+    the matcher. Frozen so entries are hashable and safely shared across the base (single-
+    permission) and advanced (combo) passes without copying.
+    """
 
     principal_id: str
     expanded_from_convenience_member: str
@@ -249,10 +284,8 @@ def canonical_scope_type_for_bindings(scope_type: str | None, scope_name: str | 
     return canonical_scope_type(scope_type, scope_name)
 
 def _scope_leaf(scope_name: str) -> str:
-    token = str(scope_name or "").strip()
-    if not token:
-        return ""
-    return extract_path_tail(token, default=token)
+    # Identical to core_helpers.resource_leaf_name (both delegate to extract_path_tail).
+    return resource_leaf_name(scope_name)
 
 
 def _role_display_name(role_name: str) -> str:
@@ -769,6 +802,22 @@ def _match_rule_against_permissions(rule: dict[str, Any], permissions: set[str])
 
 
 def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry]) -> list[dict[str, Any]]:
+    """
+    Match one dangerous rule against a group of co-scoped binding entries.
+
+    Returns a list of match records (each with contributors, matched permissions, an
+    emission_mode of "binding" or "combo", and per-grant permission attribution). The
+    ordering is deliberate and load-bearing:
+    1) try whether a SINGLE binding grant already satisfies the rule -> emit via the
+       simple-binding path (emission_mode="binding"), including broad roles like
+       owner/editor;
+    2) only if no single grant works AND the rule allows combine_across_bindings, search
+       small unions of grants for a combo match -> emission_mode="combo" (or "binding"
+       when every contributor is still the same role).
+    Combo search is bounded (max_candidates/max_combos) and keeps only minimal grant sets
+    to avoid combinatorial blowup. IAM-condition narrowing is applied per grant before
+    matching so conditionally-scoped permissions don't over-grant.
+    """
     # Matching order matters for advanced multi-permission rules:
     # 1) first see whether one resolved binding-composite entry already satisfies the rule
     # 2) only if no single entry works, search across multiple entries for combos
@@ -1315,6 +1364,16 @@ def _emit_subject_binding(
     entry: BindingPlusScopeEntry,
     privilege_escalation: bool,
 ) -> None:
+    """
+    Emit the principal node, the GCPIamSimpleBinding node, and the HAS_IAM_BINDING edge.
+
+    This is the canonical single-grant shape: principal -[HAS_IAM_BINDING]-> binding-node.
+    The binding node id is entry.binding_composite_id and it carries the full role@scope
+    fidelity (role_name, attached/source scope, condition, inheritance, binding_family_id)
+    so downstream resource edges hang off it rather than off the principal. Resource
+    target edges are added separately by _emit_binding_target_edge using this same
+    binding node as their source.
+    """
     principal_props = principal_member_properties(entry.principal_id)
     builder.add_node(entry.principal_id, principal_type(entry.principal_id), **principal_props)
     attached_scope_ref = binding_scope_token(
@@ -1416,6 +1475,9 @@ def _combo_scope_info(contributors: Iterable[BindingPlusScopeEntry]) -> dict[str
         "effective_scope_type": effective_scope_type,
         "effective_scope_display": effective_scope_display,
         "effective_scope_token": effective_scope_token,
+        # Consumers (capability-hop emission) recompute the scope token and need the
+        # project id; without it a project-scoped combo loses its project in the token.
+        "effective_scope_project_id": effective_scope_project_id if len(scope_ids) == 1 else "",
         "effective_scope_ids": scope_ids,
         "effective_scope_types": scope_types,
         "effective_scope_displays": scope_displays,
@@ -1431,6 +1493,16 @@ def _combo_binding_id(
     condition_hashes: Iterable[str],
     source_scope_ids: Iterable[str],
 ) -> tuple[str, str]:
+    """
+    Compute the stable id (and short hash) for a combo (GCPIamMultiBinding) node.
+
+    Returns (node_id, combo_hash). The visible id is
+    `combo_iambinding:<rule>@<scope_token>#<hash>` for readability, but the hash is taken
+    over the full payload INCLUDING subject identity and the contributing binding ids, so
+    distinct subjects/evidence never collide onto one combo node even though the subject
+    string is not embedded in the visible id. Deterministic: same inputs -> same id, which
+    is what lets repeated emits de-duplicate via emitted_combo_bindings.
+    """
     payload = json.dumps(
         {
             "subject_id": str(subject_id or "").strip(),
@@ -1470,6 +1542,18 @@ def _emit_subject_combo_binding(
     source_scope_types: Iterable[str],
     inherited: bool,
 ) -> None:
+    """
+    Emit the GCPIamMultiBinding (combo) node and the subject's HAS_COMBO_BINDING edge.
+
+    Combo nodes represent a privilege-escalation path that only exists because SEVERAL
+    bindings (typically different roles) combine. This emits principal
+    -[HAS_COMBO_BINDING]-> combo-node carrying the union evidence: contributing binding
+    ids, contributing roles/permissions, the per-binding permission attribution map,
+    condition hashes, and effective-scope info (possibly MULTI_SCOPE). Each contributing
+    simple binding is separately wired in with CONTRIBUTES_TO_COMBO by the caller, and
+    target resource edges hang off this combo node via _emit_combo_target_edge -- again
+    preserving authorization fidelity instead of drawing a bare principal -> resource edge.
+    """
     principal_props = principal_member_properties(subject_entry.principal_id)
     builder.add_node(subject_entry.principal_id, principal_type(subject_entry.principal_id), **principal_props)
     normalized_contribution_map = _normalize_binding_permission_map(contributing_binding_permission_map)
@@ -1548,6 +1632,24 @@ def _emit_binding_target_edge(
     privilege_escalation: bool,
     contributing_binding_permission_map: dict[str, Iterable[str]] | None = None,
 ) -> tuple[bool, str, str, str]:
+    """
+    Emit (or merge) the binding-node -> resource edge for a single-grant dangerous path.
+
+    Source is the contributor's simple binding node (entry.binding_composite_id); the
+    resource node is created/merged here and the edge carries the rule + permission
+    attribution (_edge_properties_from_entry).
+
+    Dangerous-role collapsing: for broad roles (owner/editor) the rule edge_type is
+    collapsed to ROLE_OWNER/ROLE_EDITOR (unless the edge type is in the
+    _NO_COLLAPSE_MULTI_PERMISSION_EDGE_TYPES set), and the original rule name/edge type
+    are folded into dangerous_rule_names/dangerous_edge_types on the edge. Because
+    add_edge is first-write-wins, a collapse onto an already-present edge is applied by
+    rewriting builder.edge_map directly.
+
+    Returns (added_new_edge, actual_edge_type, target_node_id, target_resource_name);
+    added is False when the edge already existed (or a merge occurred) and ("","","")
+    when there is no target name.
+    """
     target_name = str(target.get("resource_name") or "").strip()
     target_type = str(target.get("resource_type") or "").strip()
     if not target_name:
@@ -1560,10 +1662,12 @@ def _emit_binding_target_edge(
         project_id=target_project_id,
     )
     target_region = resource_location_token(target_name)
-    target_id = resource_node_id(target_name)
+    # A service-account target collapses onto its serviceAccount:<email> principal node
+    # so the SA is one node (actor + object), not a disconnected resource duplicate.
+    target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
     builder.add_node(
         target_id,
-        gcp_resource_node_type(target_type),
+        target_node_kind,
         name=target_label,
         display_name=target_label,
         resource_name=target_name,
@@ -1646,6 +1750,20 @@ def _emit_combo_target_edge(
     binding_origin: str = "combo",
     match_mode: str = "combo",
 ) -> tuple[bool, str, str]:
+    """
+    Emit a combo/multi-permission edge from a given source node to a resource target.
+
+    Used for every hop of a combo path: combo-node -> capability -> ... -> resource, as
+    well as the final combo-node -> resource edge. `source_node_id` is whatever the
+    current hop source is (the combo binding node, a capability node, or a prior resource
+    node), which is why this is parameterized separately from the subject. The resource
+    node is created/merged and the edge records the union combo evidence (matched perms/
+    roles, contributing binding permission map, effective/source scope, conditions) plus
+    `match_mode` so the hop's role in the chain is recoverable.
+
+    Returns (added_new_edge, target_node_id, target_resource_name); added is False when
+    the edge already existed and ("","") when there is no target name.
+    """
     target_name = str(target.get("resource_name") or "").strip()
     target_type = str(target.get("resource_type") or "").strip()
     if not target_name:
@@ -1658,10 +1776,12 @@ def _emit_combo_target_edge(
         project_id=target_project_id,
     )
     target_region = resource_location_token(target_name)
-    target_id = resource_node_id(target_name)
+    # A service-account target collapses onto its serviceAccount:<email> principal node
+    # so the SA is one node (actor + object), not a disconnected resource duplicate.
+    target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
     builder.add_node(
         target_id,
-        gcp_resource_node_type(target_type),
+        target_node_kind,
         name=target_label,
         display_name=target_label,
         resource_name=target_name,
@@ -2387,7 +2507,7 @@ def _emit_iam_binding_edges_from_entries(
                         for source_node_id in sorted(current_source_node_ids):
                             for hop_target in hop_targets.values():
                                 hop_target_name = str(hop_target.get("resource_name") or "").strip()
-                                if source_node_id == resource_node_id(hop_target_name):
+                                if source_node_id == canonical_target_node_ref(hop_target_name, hop_target.get("resource_type"))[0]:
                                     continue
                                 added, hop_target_id, _ = _emit_combo_target_edge(
                                     builder,
@@ -2448,7 +2568,7 @@ def _emit_iam_binding_edges_from_entries(
                 for source_node_id in sorted(current_source_node_ids):
                     for target in combo_targets.values():
                         target_name_for_self_check = str(target.get("resource_name") or "").strip()
-                        if source_node_id == resource_node_id(target_name_for_self_check):
+                        if source_node_id == canonical_target_node_ref(target_name_for_self_check, target.get("resource_type"))[0]:
                             continue
                         added, target_id, target_name = _emit_combo_target_edge(
                             builder,
@@ -2629,7 +2749,7 @@ def _emit_iam_binding_edges_from_entries(
                         )
                         for source_node_id in sorted(intermediate_source_ids):
                             for target in grant_targets.values():
-                                if source_node_id == resource_node_id(str(target.get("resource_name") or "").strip()):
+                                if source_node_id == canonical_target_node_ref(str(target.get("resource_name") or "").strip(), target.get("resource_type"))[0]:
                                     continue
                                 added, target_id, target_name = _emit_combo_target_edge(
                                     builder,

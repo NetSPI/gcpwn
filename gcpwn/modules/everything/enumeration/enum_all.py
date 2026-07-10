@@ -1,15 +1,250 @@
+"""enum_all: orchestrate every per-service enumerator + IAM policy bindings.
+
+Two execution paths share the declarative _SERVICES ServiceSpec table:
+  * run_module (sequential): Resource Manager once, then each selected service
+    enumerator, then enum_gcp_policy_bindings last. Drives a shared progress counter
+    and supports a hidden --phase used by the parallel orchestrator.
+  * run_parallel (--parallel-services N): cross-project pool that pipelines IAM
+    policy-binding collection per hierarchy node. Each run prints a resume TOKEN;
+    a plain re-run starts fresh, while ``--resume <token>`` continues an interrupted
+    run by skipping the units that token already finished (token-scoped ledger).
+
+Adding a service is normally just one ServiceSpec row plus its --parallel-services
+entry; _build_service_args turns the spec + user flags into that module's argv.
+"""
+
 from __future__ import annotations
 
 import argparse
 import importlib
 import re
 import shutil
+import threading
+import traceback
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from time import perf_counter
 
 from gcpwn.core.console import UtilityTools
-from gcpwn.core.utils.service_runtime import add_standard_arguments, parse_id_input_values
+from gcpwn.core.utils.hierarchy import descendants
+from gcpwn.core.utils.module_helpers import extract_path_tail, normalize_str_set
+from gcpwn.core.utils.parallel_output import ParallelOutputManager
+from gcpwn.core.utils.resume import resolve_run_token
+from gcpwn.core.utils.scoped_session import ProjectScopedSession
+from gcpwn.core.utils.service_runtime import (
+    add_standard_arguments,
+    flatten_arg_groups,
+    parse_csv_arg,
+    parse_id_input_values,
+)
+
+# (service dest -> CLI flag) for the per-project enumerators the orchestrator
+# fans out. Mirrors the 26 run_services blocks in run_module (RM + bindings +
+# workspace-identity are once-per-run and handled outside the pool).
+_PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
+    ("cloud_compute_resources", "--cloud-compute-resources"),
+    ("cloud_compute_network", "--cloud-compute-network"),
+    ("cloud_compute_lb", "--cloud-compute-lb"),
+    ("cloud_functions", "--cloud-functions"),
+    ("cloud_storage", "--cloud-storage"),
+    ("cloud_bigquery", "--cloud-bigquery"),
+    ("cloud_bigtable", "--cloud-bigtable"),
+    ("cloud_pubsub", "--cloud-pubsub"),
+    ("cloud_firestore", "--cloud-firestore"),
+    ("cloud_dns", "--cloud-dns"),
+    ("service_directory", "--service-directory"),
+    ("app_engine", "--app-engine"),
+    ("cloud_secretsmanager", "--cloud-secretsmanager"),
+    ("storage_transfer", "--storage-transfer"),
+    ("cloud_redis", "--cloud-redis"),
+    ("cloud_iam", "--cloud-iam"),
+    ("cloud_run", "--cloud-run"),
+    ("cloud_sql", "--cloud-sql"),
+    ("cloud_kms", "--cloud-kms"),
+    ("artifact_registry", "--artifact-registry"),
+    ("gke", "--gke"),
+    ("cloud_build", "--cloud-build"),
+    ("cloud_composer", "--cloud-composer"),
+    ("cloud_tasks", "--cloud-tasks"),
+    ("api_keys", "--api-keys"),
+    ("cloud_batch", "--cloud-batch"),
+    ("cloud_scheduler", "--cloud-scheduler"),
+    ("cloud_workflows", "--cloud-workflows"),
+    ("spanner", "--spanner"),
+    ("alloydb", "--alloydb"),
+    ("orgpolicy", "--orgpolicy"),
+    ("asset_inventory", "--asset-inventory"),
+    ("eventarc", "--eventarc"),
+    ("workstations", "--workstations"),
+    ("cloud_billing", "--cloud-billing"),
+    ("cloud_shell", "--cloud-shell"),
+    ("cloud_logging", "--cloud-logging"),
+    ("dataproc", "--dataproc"),
+    ("dataflow", "--dataflow"),
+    ("notebooks", "--notebooks"),
+    ("cloud_deploy", "--cloud-deploy"),
+    ("bigquery_datatransfer", "--bigquery-datatransfer"),
+    ("service_usage", "--service-usage"),
+)
+@dataclass(frozen=True)
+class ServiceSpec:
+    """One per-project resource enumerator. Replaces ~10 lines of hand-written
+    arg-building per service with a single declaration + the shared builder below."""
+    gate_flags: tuple[str, ...]          # runs if any of these args attrs is set (or every_flag_missing)
+    module: str                          # dotted module path
+    threads: bool = False                # pass --threads
+    regions: bool = False                # pass --regions-list when set
+    zones: bool = False                  # pass --zones-list when set
+    iam: bool = False                    # pass --iam when args.iam
+    get: bool = True                     # pass --get when args.get
+    get_tokens: tuple[str, ...] = ()     # download tokens that ALSO imply --get
+    downloads: tuple = ()                # ((tokens...), (flags...)) rules -> flags appended when requested
+    download_output: bool = False        # append --output <dir> once when any download fired
+    extra_args: tuple[str, ...] = ()     # always-prepended args (e.g. iam's component flags)
+    opt_in: bool = False                 # NEVER runs under every_flag_missing; only when its gate flag is set
+
+
+# Order mirrors the original sequential run. Resource Manager, Workspace Cloud
+# Identity and policy-bindings are once-per-run and stay as explicit blocks.
+_SERVICES: tuple[ServiceSpec, ...] = (
+    ServiceSpec(("cloud_compute", "cloud_compute_resources"), "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_resources",
+                threads=True, regions=True, zones=True, iam=True, download_output=True,
+                downloads=((("compute_screenshot",), ("--take-screenshot",)),
+                           (("compute_serial",), ("--download-serial",)),
+                           (("compute_artifacts",), ("--download",)))),
+    ServiceSpec(("cloud_compute", "cloud_compute_network"), "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_network",
+                threads=True, regions=True, iam=True),
+    ServiceSpec(("cloud_compute", "cloud_compute_lb"), "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_lb",
+                threads=True, regions=True, iam=True),
+    ServiceSpec(("cloud_functions",), "gcpwn.modules.gcp.cloudfunctions.enumeration.enum_cloudfunctions",
+                threads=True, regions=True, iam=True, get_tokens=("function_env",), download_output=True,
+                downloads=((("function_source",), ("--download",)),)),
+    ServiceSpec(("cloud_storage",), "gcpwn.modules.gcp.cloudstorage.enumeration.enum_cloudstorage",
+                iam=True, download_output=True, downloads=((("buckets",), ("--download",)),)),
+    ServiceSpec(("cloud_bigquery",), "gcpwn.modules.gcp.bigquery.enumeration.enum_bigquery",
+                downloads=((("bigquery_tables",), ("--download", "table")),)),
+    ServiceSpec(("cloud_bigtable",), "gcpwn.modules.gcp.bigtable.enumeration.enum_bigtable"),
+    ServiceSpec(("cloud_pubsub",), "gcpwn.modules.gcp.pubsub.enumeration.enum_pubsub"),
+    ServiceSpec(("cloud_firestore",), "gcpwn.modules.gcp.firestore.enumeration.enum_firestore",
+                downloads=((("firestore_data",), ("--download",)),)),
+    ServiceSpec(("cloud_dns",), "gcpwn.modules.gcp.clouddns.enumeration.enum_clouddns",
+                downloads=((("clouddns_record_sets",), ("--download",)),)),
+    ServiceSpec(("service_directory",), "gcpwn.modules.gcp.servicedirectory.enumeration.enum_servicedirectory",
+                threads=True, regions=True),
+    ServiceSpec(("app_engine",), "gcpwn.modules.gcp.appengine.enumeration.enum_appengine"),
+    ServiceSpec(("cloud_secretsmanager",), "gcpwn.modules.gcp.secretsmanager.enumeration.enum_secretsmanager",
+                iam=True, downloads=((("secrets",), ("--download", "--values")),)),
+    ServiceSpec(("storage_transfer",), "gcpwn.modules.gcp.storagetransfer.enumeration.enum_storagetransfer"),
+    ServiceSpec(("cloud_redis",), "gcpwn.modules.gcp.memorystore.enumeration.enum_memorystore"),
+    ServiceSpec(("cloud_iam",), "gcpwn.modules.gcp.iam.enumeration.enum_iam", iam=True,
+                extra_args=("--service-accounts", "--custom-roles", "--pools", "--providers")),
+    ServiceSpec(("cloud_run",), "gcpwn.modules.gcp.cloudrun.enumeration.enum_cloudrun",
+                threads=True, regions=True, downloads=((("cloudrun_revision_env",), ("--download",)),)),
+    ServiceSpec(("cloud_sql",), "gcpwn.modules.gcp.cloudsql.enumeration.enum_cloudsql"),
+    ServiceSpec(("cloud_kms",), "gcpwn.modules.gcp.kms.enumeration.enum_kms", threads=True, regions=True),
+    ServiceSpec(("artifact_registry",), "gcpwn.modules.gcp.artifactregistry.enumeration.enum_artifactregistry",
+                threads=True, regions=True, downloads=((("artifactregistry_files",), ("--download",)),)),
+    ServiceSpec(("gke",), "gcpwn.modules.gcp.gke.enumeration.enum_gke", threads=True, regions=True),
+    ServiceSpec(("cloud_build",), "gcpwn.modules.gcp.cloudbuild.enumeration.enum_cloudbuild",
+                threads=True, regions=True, downloads=((("cloudbuild_builds",), ("--download",)),)),
+    ServiceSpec(("cloud_composer",), "gcpwn.modules.gcp.cloudcomposer.enumeration.enum_cloudcomposer",
+                threads=True, regions=True, downloads=((("composer_configs",), ("--download",)),)),
+    ServiceSpec(("cloud_tasks",), "gcpwn.modules.gcp.cloudtasks.enumeration.enum_cloudtasks",
+                threads=True, regions=True, iam=True, download_output=True,
+                downloads=((("cloudtasks_requests",), ("--download",)),)),
+    ServiceSpec(("api_keys",), "gcpwn.modules.gcp.apikeys.enumeration.enum_apikeys",
+                downloads=((("apikeys_content",), ("--download",)),)),
+    ServiceSpec(("cloud_batch",), "gcpwn.modules.gcp.batch.enumeration.enum_batch",
+                threads=True, regions=True, downloads=((("batch_scripts",), ("--download",)),)),
+    ServiceSpec(("cloud_scheduler",), "gcpwn.modules.gcp.cloudscheduler.enumeration.enum_cloudscheduler",
+                threads=True, regions=True),
+    ServiceSpec(("cloud_workflows",), "gcpwn.modules.gcp.cloudworkflows.enumeration.enum_cloudworkflows",
+                threads=True, regions=True),
+    ServiceSpec(("spanner",), "gcpwn.modules.gcp.spanner.enumeration.enum_spanner"),
+    ServiceSpec(("alloydb",), "gcpwn.modules.gcp.alloydb.enumeration.enum_alloydb",
+                threads=True, regions=True),
+    ServiceSpec(("orgpolicy",), "gcpwn.modules.gcp.orgpolicy.enumeration.enum_orgpolicy"),
+    # Opt-in: slow org-wide scan, skipped by default; runs only with --asset-inventory.
+    ServiceSpec(("asset_inventory",), "gcpwn.modules.gcp.assetinventory.enumeration.enum_asset_inventory",
+                opt_in=True),
+    ServiceSpec(("eventarc",), "gcpwn.modules.gcp.eventarc.enumeration.enum_eventarc",
+                threads=True, regions=True),
+    ServiceSpec(("workstations",), "gcpwn.modules.gcp.workstations.enumeration.enum_workstations",
+                threads=True, regions=True),
+    ServiceSpec(("cloud_billing",), "gcpwn.modules.gcp.billing.enumeration.enum_billing", get=False),
+    ServiceSpec(("cloud_shell",), "gcpwn.modules.gcp.cloudshell.enumeration.enum_cloudshell", get=False),
+    ServiceSpec(("cloud_logging",), "gcpwn.modules.gcp.logging.enumeration.enum_logging", get=False),
+    ServiceSpec(("dataproc",), "gcpwn.modules.gcp.dataproc.enumeration.enum_dataproc",
+                threads=True, regions=True),
+    ServiceSpec(("dataflow",), "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow",
+                threads=True, regions=True),
+    ServiceSpec(("notebooks",), "gcpwn.modules.gcp.notebooks.enumeration.enum_notebooks",
+                threads=True, regions=True, iam=True),
+    ServiceSpec(("cloud_deploy",), "gcpwn.modules.gcp.clouddeploy.enumeration.enum_clouddeploy",
+                threads=True, regions=True, iam=True),
+    ServiceSpec(("bigquery_datatransfer",), "gcpwn.modules.gcp.bigquerydatatransfer.enumeration.enum_bigquerydatatransfer",
+                threads=True, regions=True),
+    ServiceSpec(("service_usage",), "gcpwn.modules.gcp.serviceusage.enumeration.enum_serviceusage",
+                threads=True, get=False),
+)
+
+
+def _service_selected(spec: "ServiceSpec", args, every_flag_missing: bool) -> bool:
+    """True if this service should run: no service flags given (run all) or one of its gates is set.
+
+    Opt-in services (e.g. Cloud Asset Inventory) are EXCLUDED from the every_flag_missing
+    'run all' default and only run when their gate flag is explicitly passed; since their
+    flags are also excluded from the every_flag_missing computation, passing one is additive
+    (it does not suppress the other services)."""
+    gate_set = any(getattr(args, flag, False) for flag in spec.gate_flags)
+    if spec.opt_in:
+        return gate_set
+    return every_flag_missing or gate_set
+
+
+def _build_service_args(spec: "ServiceSpec", args, download_requested) -> list[str]:
+    """Translate a ServiceSpec + the user's enum_all args into that service module's argv.
+
+    Applies the spec's knobs against the parsed args: -v/extra_args, --threads,
+    --zones-list/--regions-list, --get (directly or implied by a requested
+    get_token download), --iam, each download rule whose tokens were requested,
+    and a single --output when any download fired. download_requested(*tokens) is
+    the closure from run_module that resolves whether a download token is in scope.
+    """
+    module_args = ["-v"] if args.debug else []
+    module_args.extend(spec.extra_args)
+    if spec.threads:
+        module_args.extend(["--threads", str(args.threads)])
+    if spec.zones and args.zones_list:
+        module_args.extend(["--zones-list", args.zones_list])
+    if spec.regions and args.regions_list:
+        module_args.extend(["--regions-list", args.regions_list])
+    if (spec.get and args.get) or any(download_requested(token) for token in spec.get_tokens):
+        module_args.append("--get")
+    if spec.iam and args.iam:
+        module_args.append("--iam")
+    any_download = False
+    for tokens, flags in spec.downloads:
+        if download_requested(*tokens):
+            module_args.extend(flags)
+            any_download = True
+    if spec.download_output and any_download and args.download_output:
+        module_args.extend(["--output", args.download_output])
+    return module_args
+
+
+_TASK_LEDGER_TABLE = "enum_all_task_ledger"
+# Pipelined IAM-policy-binding ledger units (collected per hierarchy node rather
+# than in one end-of-run barrier). Stored as pseudo (project, service) pairs so
+# they resume alongside the per-(project, service) enumeration units.
+_BINDINGS_SERVICE = "__bindings__"
+_HIERARCHY_LEDGER_KEY = "__hierarchy__"
 
 _ENUM_PROGRESS: dict[str, int | bool] = {"enabled": False, "index": 0, "total": 0}
+# Guards the _ENUM_PROGRESS counter when services fan out via --parallel-services.
+_ENUM_PROGRESS_LOCK = threading.Lock()
 
 _SERVICE_NAME_OVERRIDES = {
     "enum_resources": "Resource Manager",
@@ -40,7 +275,24 @@ _SERVICE_NAME_OVERRIDES = {
     "enum_cloudtasks": "Cloud Tasks",
     "enum_apikeys": "API Keys",
     "enum_batch": "Batch",
-    "enum_policy_bindings": "IAM Policy Bindings",
+    "enum_cloudscheduler": "Cloud Scheduler",
+    "enum_cloudworkflows": "Cloud Workflows",
+    "enum_spanner": "Cloud Spanner",
+    "enum_alloydb": "AlloyDB",
+    "enum_orgpolicy": "Organization Policy",
+    "enum_asset_inventory": "Cloud Asset Inventory",
+    "enum_eventarc": "Eventarc",
+    "enum_workstations": "Cloud Workstations",
+    "enum_billing": "Cloud Billing",
+    "enum_cloudshell": "Cloud Shell",
+    "enum_logging": "Cloud Logging",
+    "enum_dataproc": "Dataproc",
+    "enum_dataflow": "Dataflow",
+    "enum_notebooks": "Vertex AI Workbench",
+    "enum_clouddeploy": "Cloud Deploy",
+    "enum_bigquerydatatransfer": "BigQuery Data Transfer",
+    "enum_serviceusage": "Service Usage",
+    "enum_gcp_policy_bindings": "IAM Policy Bindings",
 }
 
 DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
@@ -66,95 +318,47 @@ DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
     },
 }
 
-DOWNLOAD_TOKEN_ALIASES = {
-    "all": "all",
-    "metadata": "metadata",
-    "content": "content",
-    "bucket": "buckets",
-    "buckets": "buckets",
-    "bucket_content": "buckets",
-    "bucket_contents": "buckets",
-    "bucket_objects": "buckets",
-    "cloudstorage": "buckets",
-    "cloudstorage_blobs": "buckets",
-    "function_source": "function_source",
-    "function_sources": "function_source",
-    "functions_source": "function_source",
-    "cloudfunctions_source": "function_source",
-    "function_env": "function_env",
-    "function_envs": "function_env",
-    "function_environment": "function_env",
-    "function_environments": "function_env",
-    "functions_env": "function_env",
-    "secrets": "secrets",
-    "secret": "secrets",
-    "secret_values": "secrets",
-    "secretsmanager_values": "secrets",
-    "firestore": "firestore_data",
-    "firestore_data": "firestore_data",
-    "firestore_content": "firestore_data",
-    "bigquery": "bigquery_tables",
-    "bigquery_tables": "bigquery_tables",
-    "bigquery_table": "bigquery_tables",
-    "bigquery_data": "bigquery_tables",
-    "compute_serial": "compute_serial",
-    "serial": "compute_serial",
-    "compute_screenshot": "compute_screenshot",
-    "compute_screenshots": "compute_screenshot",
-    "screenshot": "compute_screenshot",
-    "screenshots": "compute_screenshot",
-    "compute_artifacts": "compute_artifacts",
-    "compute_metadata": "compute_artifacts",
-    "compute_download": "compute_artifacts",
-    "cloudbuild": "cloudbuild_builds",
-    "cloudbuild_build": "cloudbuild_builds",
-    "cloudbuild_builds": "cloudbuild_builds",
-    "composer": "composer_configs",
-    "cloudcomposer": "composer_configs",
-    "composer_configs": "composer_configs",
-    "cloudtasks": "cloudtasks_requests",
-    "cloudtasks_requests": "cloudtasks_requests",
-    "cloudtasks_http_requests": "cloudtasks_requests",
-    "cloudrun_revision_env": "cloudrun_revision_env",
-    "dns": "clouddns_record_sets",
-    "clouddns": "clouddns_record_sets",
-    "dns_records": "clouddns_record_sets",
-    "record_sets": "clouddns_record_sets",
-    "clouddns_record_sets": "clouddns_record_sets",
-    "artifactregistry": "artifactregistry_files",
-    "artifact_registry": "artifactregistry_files",
-    "artifactregistry_files": "artifactregistry_files",
-    "batch": "batch_scripts",
-    "batch_scripts": "batch_scripts",
-    "apikeys": "apikeys_content",
-    "api_keys": "apikeys_content",
-    "apikeys_content": "apikeys_content",
-}
-
-ALL_DOWNLOAD_TOKENS = set(DOWNLOAD_CATEGORY_TOKENS["metadata"]) | set(DOWNLOAD_CATEGORY_TOKENS["content"])
+# Canonical download tokens -- one per download, NO aliases. Users pass EITHER a
+# category keyword OR one/more individual tokens (comma-separated) to --download /
+# --dont-download:
+#   all       -> every token in both groups (see the compute_artifacts note below)
+#   metadata  -> the whole "metadata" group
+#   content   -> the whole "content" group
+#   <token>   -> just that one download (e.g. buckets, secrets, function_source)
+ALL_DOWNLOAD_TOKENS = DOWNLOAD_CATEGORY_TOKENS["metadata"] | DOWNLOAD_CATEGORY_TOKENS["content"]
+DOWNLOAD_CATEGORY_KEYWORDS = ("all", "metadata", "content")
+# compute_artifacts is a heavy, full compute-instance artifact dump: requestable by
+# name, but deliberately kept OUT of `all`/`content` so a broad --download won't pull
+# it. Run it with an explicit `--download compute_artifacts`.
+EXPLICIT_ONLY_DOWNLOAD_TOKENS = {"compute_artifacts"}
+INDIVIDUAL_DOWNLOAD_TOKENS = ALL_DOWNLOAD_TOKENS | EXPLICIT_ONLY_DOWNLOAD_TOKENS
 
 
 def _parse_csv_tokens(raw: str | None) -> list[str]:
-    value = str(raw or "").strip()
-    if not value:
-        return []
-    return [token.strip().lower() for token in value.split(",") if token and token.strip()]
+    # Canonical CSV split (strip + drop-empty) via parse_csv_arg; download tokens
+    # are matched case-insensitively, so lower-case here.
+    return [token.lower() for token in parse_csv_arg(raw)]
 
 
 def _expand_download_tokens(raw: str | None) -> set[str]:
+    """Resolve comma-separated --download / --dont-download values into download tokens.
+
+    Each value is EITHER a category keyword (``all`` / ``metadata`` / ``content`` ->
+    that whole group) OR a single canonical token (e.g. ``buckets``, ``secrets``,
+    ``function_source``). There are no aliases; an unknown value raises ValueError
+    listing every accepted keyword and token.
+    """
     selected: set[str] = set()
     for token in _parse_csv_tokens(raw):
-        mapped = DOWNLOAD_TOKEN_ALIASES.get(token)
-        if mapped is None:
-            supported = ", ".join(sorted(DOWNLOAD_TOKEN_ALIASES.keys()))
-            raise ValueError(f"Invalid --download token: {token}. Supported values: {supported}")
-        if mapped == "all":
-            selected |= set(ALL_DOWNLOAD_TOKENS)
-            continue
-        if mapped in DOWNLOAD_CATEGORY_TOKENS:
-            selected |= set(DOWNLOAD_CATEGORY_TOKENS[mapped])
-            continue
-        selected.add(mapped)
+        if token == "all":
+            selected |= ALL_DOWNLOAD_TOKENS
+        elif token in DOWNLOAD_CATEGORY_TOKENS:
+            selected |= DOWNLOAD_CATEGORY_TOKENS[token]
+        elif token in INDIVIDUAL_DOWNLOAD_TOKENS:
+            selected.add(token)
+        else:
+            valid = ", ".join([*DOWNLOAD_CATEGORY_KEYWORDS, *sorted(INDIVIDUAL_DOWNLOAD_TOKENS)])
+            raise ValueError(f"Invalid --download token: {token}. Supported values: {valid}")
     return selected
 
 
@@ -173,12 +377,20 @@ def _service_divider() -> str:
 
 
 def _run_other_module(session, user_args, module_name):
+    """Import and run another enum module, printing the shared progress banner.
+
+    Imports module_name, calls its run_module(user_args, session), and returns the
+    result. When the global _ENUM_PROGRESS counter is enabled, advances the
+    Service i/N banner (under _ENUM_PROGRESS_LOCK so the parallel pool stays
+    consistent) and prints elapsed time.
+    """
     progress_enabled = bool(_ENUM_PROGRESS.get("enabled"))
     start = 0.0
     service_name = _pretty_service_name(module_name)
     if progress_enabled:
-        _ENUM_PROGRESS["index"] = int(_ENUM_PROGRESS.get("index", 0)) + 1
-        idx = int(_ENUM_PROGRESS.get("index", 0))
+        with _ENUM_PROGRESS_LOCK:
+            _ENUM_PROGRESS["index"] = int(_ENUM_PROGRESS.get("index", 0)) + 1
+            idx = int(_ENUM_PROGRESS.get("index", 0))
         total = int(_ENUM_PROGRESS.get("total", 0))
         print(f"{UtilityTools.BOLD}[*] {_service_divider()} [*]{UtilityTools.RESET}")
         if total > 0:
@@ -195,18 +407,6 @@ def _run_other_module(session, user_args, module_name):
     return result
 
 
-def _flatten_arg_groups(values: list[list[str]] | None) -> list[str]:
-    return [token for group in (values or []) for token in (group or [])]
-
-
-def _normalize_scope_values(values) -> set[str]:
-    return {str(value).strip() for value in (values or []) if str(value).strip()}
-
-
-def _resource_name_tail(resource_name: str) -> str:
-    return str(resource_name or "").strip().rsplit("/", 1)[-1].strip()
-
-
 def _load_hierarchy_rows(session) -> list[dict]:
     hierarchy_rows = session.get_data(
         "abstract_tree_hierarchy",
@@ -221,52 +421,55 @@ def _resolve_parent_descendants(
     parent_folder_ids: set[str],
     parent_org_ids: set[str],
 ) -> dict[str, set[str]]:
+    """BFS the cached hierarchy from the given parent folders/orgs to all descendants.
+
+    Returns {"projects", "folders", "organizations"} sets of the IDs reachable
+    under any parent root, used to expand a --parent-allowlist into the concrete
+    scope. Empty roots short-circuit to empty sets.
+    """
     roots = {f"folders/{folder_id}" for folder_id in parent_folder_ids} | {
         f"organizations/{org_id}" for org_id in parent_org_ids
     }
     if not roots:
         return {"projects": set(), "folders": set(), "organizations": set()}
 
-    by_name = {}
-    children_by_parent: dict[str, list[dict]] = {}
+    by_name: dict[str, dict] = {}
+    children_by_parent: dict[str, list[str]] = {}
     for row in hierarchy_rows:
         name = str(row.get("name") or "").strip()
         if not name:
             continue
         by_name[name] = row
         parent = str(row.get("parent") or "").strip()
-        children_by_parent.setdefault(parent, []).append(row)
+        children_by_parent.setdefault(parent, []).append(name)
+
+    # Every scope name reachable from a root that exists in the cached hierarchy,
+    # INCLUDING the roots themselves. The shared descendants() BFS excludes its
+    # root, so add each root back explicitly.
+    scope_names: set[str] = set()
+    for root in roots:
+        if root in by_name:
+            scope_names.add(root)
+            scope_names.update(descendants(children_by_parent, root))
 
     projects: set[str] = set()
     folders: set[str] = set()
     organizations: set[str] = set()
-
-    queue = [root for root in roots if root in by_name]
-    seen: set[str] = set()
-    while queue:
-        current = queue.pop(0)
-        if current in seen:
-            continue
-        seen.add(current)
-        row = by_name.get(current) or {}
+    for name in scope_names:
+        row = by_name.get(name) or {}
         row_type = str(row.get("type") or "").strip().lower()
         if row_type == "project":
             project_id = str(row.get("project_id") or "").strip()
             if project_id:
                 projects.add(project_id)
         elif row_type == "folder":
-            folder_id = _resource_name_tail(current)
+            folder_id = extract_path_tail(name)
             if folder_id.isdigit():
                 folders.add(folder_id)
         elif row_type == "org":
-            org_id = _resource_name_tail(current)
+            org_id = extract_path_tail(name)
             if org_id.isdigit():
                 organizations.add(org_id)
-
-        for child in children_by_parent.get(current, []):
-            child_name = str(child.get("name") or "").strip()
-            if child_name and child_name not in seen:
-                queue.append(child_name)
 
     return {"projects": projects, "folders": folders, "organizations": organizations}
 
@@ -280,11 +483,19 @@ def _resolve_effective_allowlist_scope(
     parent_folder_ids: list[str],
     parent_org_ids: list[str],
 ) -> dict[str, set[str] | bool]:
-    direct_projects = _normalize_scope_values(project_ids)
-    direct_folders = _normalize_scope_values(folder_ids)
-    direct_orgs = _normalize_scope_values(organization_ids)
-    parent_folders = _normalize_scope_values(parent_folder_ids)
-    parent_orgs = _normalize_scope_values(parent_org_ids)
+    """Resolve direct + parent allowlists into the effective scope to enumerate.
+
+    Direct allowlists (project/folder/org IDs) and parent allowlists (folder/org
+    whose descendants are included) combine by INTERSECTION when both are present
+    (direct narrows the parent-expanded set); otherwise whichever is active wins.
+    Returns {"allowlist_active": bool, "projects"/"folders"/"organizations": set}.
+    allowlist_active is False (empty scope) when no allowlist flags were given.
+    """
+    direct_projects = normalize_str_set(project_ids)
+    direct_folders = normalize_str_set(folder_ids)
+    direct_orgs = normalize_str_set(organization_ids)
+    parent_folders = normalize_str_set(parent_folder_ids)
+    parent_orgs = normalize_str_set(parent_org_ids)
     direct_active = bool(direct_projects or direct_folders or direct_orgs)
     parent_active = bool(parent_folders or parent_orgs)
     allowlist_active = bool(direct_active or parent_active)
@@ -330,42 +541,418 @@ def _resolve_effective_allowlist_scope(
 
 
 def _count_non_rm_service_plan(args, *, every_flag_missing: bool, first_run: bool, last_run: bool, more: bool) -> int:
-    count = 0
-    count += int(args.cloud_compute or args.cloud_compute_resources or every_flag_missing)
-    count += int(args.cloud_compute or args.cloud_compute_network or every_flag_missing)
-    count += int(args.cloud_compute or args.cloud_compute_lb or every_flag_missing)
-    count += int(args.cloud_functions or every_flag_missing)
-    count += int(args.cloud_storage or every_flag_missing)
-    count += int(args.cloud_bigquery or every_flag_missing)
-    count += int(args.cloud_bigtable or every_flag_missing)
-    count += int(args.cloud_pubsub or every_flag_missing)
-    count += int(args.cloud_firestore or every_flag_missing)
-    count += int(args.cloud_dns or every_flag_missing)
-    count += int(args.service_directory or every_flag_missing)
-    count += int(args.app_engine or every_flag_missing)
-    count += int(first_run and args.workspace_cloud_identity)
-    count += int(args.cloud_secretsmanager or every_flag_missing)
-    count += int(args.storage_transfer or every_flag_missing)
-    count += int(args.cloud_redis or every_flag_missing)
-    count += int(args.cloud_iam or every_flag_missing)
-    count += int(args.cloud_run or every_flag_missing)
-    count += int(args.cloud_sql or every_flag_missing)
-    count += int(args.cloud_kms or every_flag_missing)
-    count += int(args.artifact_registry or every_flag_missing)
-    count += int(args.gke or every_flag_missing)
-    count += int(args.cloud_build or every_flag_missing)
-    count += int(args.cloud_composer or every_flag_missing)
-    count += int(args.cloud_tasks or every_flag_missing)
-    count += int(args.api_keys or every_flag_missing)
-    count += int(args.cloud_batch or every_flag_missing)
+    count = sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing))
+    count += int(first_run and args.workspace_identity)
     count += int(last_run and not more)
     return count
 
 
+def _extract_global_tokens(user_args) -> tuple[list[str], int]:
+    """Pull the project-independent flags (and --parallel-services) out of the
+    user's enum_all args so they can be re-passed to each per-service sub-call."""
+    p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    p.add_argument("--debug", "-v", action="store_true")
+    p.add_argument("--iam", action="store_true")
+    p.add_argument("--get", action="store_true")
+    p.add_argument("--all-resource-permissions", "--all-permissions", dest="all_perms", action="store_true")
+    p.add_argument("--download", nargs="?", const="all", default=None)
+    p.add_argument("--dont-download", dest="dont_download", default=None)
+    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--regions-list", dest="regions_list", default=None)
+    p.add_argument("--zones-list", dest="zones_list", default=None)
+    p.add_argument("--download-output", dest="download_output", default=None)
+    p.add_argument("--parallel-services", dest="parallel_services", type=int, default=1)
+    g, _ = p.parse_known_args(list(user_args or []))
+
+    tokens: list[str] = []
+    if g.debug:
+        tokens.append("-v")
+    if g.iam:
+        tokens.append("--iam")
+    if g.get:
+        tokens.append("--get")
+    if g.all_perms:
+        tokens.append("--all-permissions")
+    if g.download is not None:
+        tokens += ["--download", g.download]
+    if g.dont_download:
+        tokens += ["--dont-download", g.dont_download]
+    if g.threads:
+        tokens += ["--threads", str(g.threads)]
+    if g.regions_list:
+        tokens += ["--regions-list", g.regions_list]
+    if g.zones_list:
+        tokens += ["--zones-list", g.zones_list]
+    if g.download_output:
+        tokens += ["--download-output", g.download_output]
+    return tokens, max(1, int(g.parallel_services or 1))
+
+
+def _enabled_parallel_services(user_args) -> list[tuple[str, str]]:
+    """Which per-project services to run, matching run_module's every_flag_missing
+    semantics: no service flags -> all; otherwise only the ones requested."""
+    p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    for key, flag in _PARALLEL_SERVICES:
+        p.add_argument(flag, dest=key, action="store_true")
+    p.add_argument("--cloud-compute", dest="cloud_compute", action="store_true")
+    p.add_argument("--resource-manager", dest="resource_manager", action="store_true")
+    p.add_argument("--workspace-cloud-identity", dest="workspace_identity", action="store_true")
+    g, _ = p.parse_known_args(list(user_args or []))
+
+    selected = {key for key, _ in _PARALLEL_SERVICES if getattr(g, key, False)}
+    if g.cloud_compute:
+        selected |= {"cloud_compute_resources", "cloud_compute_network", "cloud_compute_lb"}
+
+    # Opt-in services (e.g. asset_inventory) are ADDITIVE: they never count toward
+    # "a service was selected" and run ONLY when their own flag is passed -- so a bare
+    # run (or a run with only opt-in flags) still runs every non-opt-in service. This
+    # matches run_module's every_flag_missing semantics (which excludes opt-in gates).
+    opt_in_gates = {spec.gate_flags[0] for spec in _SERVICES if spec.opt_in}
+    non_opt_in_selected = selected - opt_in_gates
+    any_service_flag = bool(non_opt_in_selected) or g.resource_manager or g.workspace_identity
+    if not any_service_flag:
+        non_opt_in_selected = {key for key, _ in _PARALLEL_SERVICES if key not in opt_in_gates}
+    final = non_opt_in_selected | (selected & opt_in_gates)
+    return [(key, flag) for key, flag in _PARALLEL_SERVICES if key in final]
+
+
+def _resolve_target_projects(session, explicit_project_ids) -> list[str]:
+    explicit = [str(p).strip() for p in (explicit_project_ids or []) if str(p).strip()]
+    if explicit:
+        return list(dict.fromkeys(explicit))
+    rows = session.get_data("abstract_tree_hierarchy", columns=["project_id", "type"]) or []
+    discovered = [
+        str(row.get("project_id") or "").strip()
+        for row in rows
+        if str(row.get("type") or "").strip().lower() == "project" and str(row.get("project_id") or "").strip()
+    ]
+    return list(dict.fromkeys(discovered))
+
+
+def _ledger_done_units(session, run_id: str) -> set[tuple[str, str]]:
+    """Return the (project_id, service) units marked done UNDER ``run_id``.
+
+    Scoped to one run token so runs are independent: a fresh token sees nothing
+    done (full re-run), while ``--resume <token>`` re-reads that token's completed
+    units and skips them. Binding units appear here too, keyed by the pseudo
+    (__hierarchy__/project, __bindings__) pair.
+    """
+    rows = session.get_data(
+        _TASK_LEDGER_TABLE,
+        columns=["project_id", "service", "status"],
+        where={"run_id": run_id},
+    ) or []
+    return {
+        (str(r.get("project_id")), str(r.get("service")))
+        for r in rows
+        if str(r.get("status") or "") == "done"
+    }
+
+
+def _ledger_mark(session, project_id, service, status, run_id, *, error=""):
+    """Upsert a (project_id, service) unit's status into the resume ledger.
+
+    status is pending/running/done/failed; started_at/finished_at timestamps are
+    stamped on the relevant transitions and error text is truncated to 2000 chars.
+    DB write -- called on the main thread only.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "project_id": project_id,
+        "service": service,
+        "status": status,
+        "run_id": run_id,
+        "error": str(error or "")[:2000],
+    }
+    if status == "running":
+        payload["started_at"] = now
+    if status in ("done", "failed"):
+        payload["finished_at"] = now
+    session.insert_data(_TASK_LEDGER_TABLE, payload)
+
+
+def _ledger_incomplete(session, run_id: str) -> bool:
+    """True if any unit recorded under ``run_id`` is not yet 'done' (so the run has
+    resumable work left). Used to decide whether to drop the ledger on completion."""
+    rows = session.get_data(_TASK_LEDGER_TABLE, columns=["status"], where={"run_id": run_id}) or []
+    return any(str(row.get("status") or "") != "done" for row in rows)
+
+
+def _ledger_clear(session, run_id: str) -> None:
+    """Drop this run's ledger rows -- a fully-completed run has nothing to resume."""
+    session.delete_data(_TASK_LEDGER_TABLE, {"run_id": run_id})
+
+
+def run_parallel(session, user_args, explicit_project_ids=None, *, include_workspace: bool = True) -> int:
+    """Cross-project parallel enum_all with pipelined IAM policy bindings.
+
+    Phase 1 runs Resource Manager once to discover the hierarchy. Phase 2 then
+    fans the per-(project, service) enumerators out across a worker pool AND
+    pipelines IAM policy-binding collection per hierarchy node instead of waiting
+    in one end-of-run barrier:
+
+      * org + folder node bindings depend only on the hierarchy, so they start
+        immediately alongside the service pool;
+      * each project's node + resource bindings fire the moment that project's
+        services finish, overlapping the still-running projects.
+
+    Phase 3 reconciles any cached resource missing a project_id and rebuilds the
+    principal table once. Resumable: completed (project, service) units -- and the
+    pipelined binding units (``__bindings__`` per project plus ``__hierarchy__``)
+    -- are recorded in enum_all_task_ledger and skipped on re-run.
+    """
+    from gcpwn.modules.everything.utilities.iam_policy_bindings import (
+        IAMPolicyBindingsResource,
+        materialize_member_permissions,
+    )
+
+    global_tokens, workers = _extract_global_tokens(user_args)
+    services = _enabled_parallel_services(user_args)
+    run_id, is_resume = resolve_run_token(user_args)
+
+    # Per-download-type wall-clock cap, read off the shared session by the sub-modules'
+    # download loops (scoped sessions delegate the attribute to this base). 0 = unlimited.
+    _dt_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    _dt_parser.add_argument("--download-timeout", dest="download_timeout", type=int, default=0)
+    _dt_args, _ = _dt_parser.parse_known_args(list(user_args or []))
+    session.download_time_budget = int(_dt_args.download_timeout or 0)
+
+    # Phase 1: Resource Manager once (discovers the hierarchy + all projects).
+    print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
+    run_module([*global_tokens, "--phase", "rm", "--resource-manager"], session)
+
+    targets = _resolve_target_projects(session, explicit_project_ids)
+    if not targets:
+        print(f"{UtilityTools.RED}[X] No target projects resolved; nothing to enumerate.{UtilityTools.RESET}")
+        return -1
+
+    done_units = _ledger_done_units(session, run_id)
+    tasks: list[tuple[str, str, str]] = []
+    skipped = 0
+    for project_id in targets:
+        for service_key, service_flag in services:
+            if (project_id, service_key) in done_units:
+                skipped += 1
+                continue
+            _ledger_mark(session, project_id, service_key, "pending", run_id)
+            tasks.append((project_id, service_key, service_flag))
+
+    # Pipelined binding units: org+folder once, plus one per project.
+    hierarchy_pending = (_HIERARCHY_LEDGER_KEY, _BINDINGS_SERVICE) not in done_units
+    bindings_pending = {p for p in targets if (p, _BINDINGS_SERVICE) not in done_units}
+    binding_total = (1 if hierarchy_pending else 0) + len(bindings_pending)
+    total_units = len(tasks) + binding_total
+
+    if is_resume and not done_units:
+        print(
+            f"{UtilityTools.YELLOW}[!] --resume {run_id}: no completed units recorded for this token; "
+            f"running all units under it.{UtilityTools.RESET}"
+        )
+    print(
+        f"{UtilityTools.BOLD}[*] Run token: {run_id}{UtilityTools.RESET}"
+        f"  (interrupt-safe -- resume THIS run with:  modules run enum_all ... "
+        f"--parallel-services {workers} --resume {run_id})"
+    )
+    resume_note = f" (resuming: {skipped} services already done)" if skipped else ""
+    print(
+        f"{UtilityTools.BOLD}[*] Phase 2/3: {len(tasks)} (project,service) units + "
+        f"{binding_total} pipelined binding unit(s) across {len(targets)} project(s), "
+        f"{workers} workers{resume_note}{UtilityTools.RESET}"
+    )
+
+    if total_units:
+        # Service units still to run this invocation, counted per project so each
+        # project's binding task can fire the moment its last service completes.
+        remaining: dict[str, int] = defaultdict(int)
+        for pid, _svc, _flag in tasks:
+            remaining[pid] += 1
+
+        def _run_service(project_id: str, service_key: str, service_flag: str) -> bool:
+            scoped = ProjectScopedSession(session, project_id)
+            scoped._enum_all_suppress_progress = True
+            output.begin_task(f"{service_key}@{project_id}")
+            _ledger_mark(session, project_id, service_key, "running", run_id)
+            failed = False
+            try:
+                run_module([*global_tokens, "--phase", "services", service_flag], scoped)
+                _ledger_mark(session, project_id, service_key, "done", run_id)
+            except Exception:
+                failed = True
+                _ledger_mark(session, project_id, service_key, "failed", run_id, error=traceback.format_exc())
+            finally:
+                output.end_task(failed=failed)
+            return failed
+
+        def _run_bindings(scope: dict, label: str, ledger_pid: str, bind_project: str, *, mark_done: bool = True) -> None:
+            # A project's binding pass reads that project's *enumerated resources* for
+            # per-resource getIamPolicy (scope={"project_id":..} sets include_resources=True).
+            # So if any of the project's services FAILED this run, its resource set is
+            # incomplete -- run the binding anyway (captures what's present) but do NOT mark
+            # the unit "done" (mark_done=False), so a resume re-runs it once the failed
+            # service's resources exist. Otherwise the failed service's resources would keep
+            # their direct IAM policies forever unenumerated (Phase 3 orphan reconcile skips
+            # in-targets projects).
+            scoped = ProjectScopedSession(session, bind_project)
+            scoped._enum_all_suppress_progress = True
+            output.begin_task(label)
+            _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "running", run_id)
+            failed = False
+            try:
+                IAMPolicyBindingsResource(scoped).run(save_raw_policies=True, scope=scope, sync_users=False)
+                if mark_done:
+                    _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "done", run_id)
+                else:
+                    _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "failed", run_id,
+                                 error="deferred: a service in this project failed; bindings will re-run on resume")
+            except Exception:
+                failed = True
+                _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "failed", run_id, error=traceback.format_exc())
+            finally:
+                output.end_task(failed=failed)
+
+        base_project = str(session.project_id or "")
+        with ParallelOutputManager(total=total_units) as output:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                binding_futures = []
+                # org + folder bindings depend only on Phase 1 -> launch immediately.
+                if hierarchy_pending:
+                    binding_futures.append(
+                        executor.submit(_run_bindings, {"hierarchy": True}, "bindings@org+folder", _HIERARCHY_LEDGER_KEY, base_project)
+                    )
+                # Projects whose services are all already done (resume) bind now.
+                for project_id in targets:
+                    if project_id in bindings_pending and remaining[project_id] == 0:
+                        bindings_pending.discard(project_id)
+                        binding_futures.append(
+                            executor.submit(_run_bindings, {"project_id": project_id}, f"bindings@{project_id}", project_id, project_id)
+                        )
+
+                service_futures = {
+                    executor.submit(_run_service, pid, svc, flag): pid
+                    for pid, svc, flag in tasks
+                }
+                # Projects with >=1 failed service this run -> their binding runs but isn't
+                # marked done, so a resume re-binds after the failed service's resources land.
+                failed_projects: set[str] = set()
+                # As each project's last service finishes, pipeline its bindings.
+                for future in as_completed(service_futures):
+                    pid = service_futures[future]
+                    try:
+                        service_failed = bool(future.result())
+                    except Exception:
+                        service_failed = True
+                    if service_failed:
+                        failed_projects.add(pid)
+                    remaining[pid] -= 1
+                    if remaining[pid] <= 0 and pid in bindings_pending:
+                        bindings_pending.discard(pid)
+                        binding_futures.append(
+                            executor.submit(
+                                _run_bindings, {"project_id": pid}, f"bindings@{pid}", pid, pid,
+                                mark_done=(pid not in failed_projects),
+                            )
+                        )
+
+                for future in binding_futures:
+                    future.result()
+
+    # Phase 3: reconcile cached resources missing a project_id, then rebuild the
+    # principal/user table once now that every node's bindings have landed.
+    print(f"{UtilityTools.BOLD}[*] Phase 3/3: reconcile orphan resources + rebuild principals{UtilityTools.RESET}")
+    try:
+        IAMPolicyBindingsResource(session).run(
+            save_raw_policies=True,
+            scope={"orphans": True, "known_projects": targets},
+            sync_users=False,
+        )
+    except Exception:
+        traceback.print_exc()
+    session.sync_users()
+    materialize_member_permissions(session)  # keep the member view in sync (no manual process step)
+    # Phase 4: Google Workspace (tenant-scoped -> run ONCE, after GCP). enum_gcp
+    # passes include_workspace=False; the top enum_all runs it. Degrades gracefully
+    # when the caller has no Workspace access (most GCP creds don't).
+    if include_workspace:
+        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 4: Google Workspace (tenant-scoped, once){UtilityTools.RESET}")
+        try:
+            from gcpwn.modules.everything.enumeration.enum_google_workspace import (
+                run_module as run_workspace_all,
+            )
+            ws_args = ["-v"] if ("-v" in user_args or "--debug" in user_args) else []
+            if "--download-google-drive" in user_args:
+                ws_args.append("--download-google-drive")
+            run_workspace_all(ws_args, session)
+        except Exception:
+            traceback.print_exc()
+    if not _ledger_incomplete(session, run_id):
+        _ledger_clear(session, run_id)  # every unit done -> nothing to resume; drop this run's token
+    print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Parallel enum_all complete.{UtilityTools.RESET}")
+    return 1
+
+
 def run_module(user_args, session):
+    """Module entrypoint: run the selected per-service enumerators for one project.
+
+    Standard module contract: returns 1 on success, 2 when Resource Manager
+    discovered MORE projects than were previously cached (signals the caller to
+    re-run across the expanded project set), -1 on an arg/allowlist error.
+
+    With no service flags every service runs; otherwise only the requested ones.
+    --phase (hidden) lets the parallel orchestrator drive rm/services/bindings
+    independently; the default "all" preserves the original monolithic order:
+    Resource Manager once, then each service, then enum_gcp_policy_bindings last
+    (bindings must run last so the allow-policy cache covers all discovered
+    resources). Allowlist flags scope which projects/folders/orgs are enumerated.
+    """
     parser = argparse.ArgumentParser(description="Enumerate all services", allow_abbrev=False)
     parser.add_argument("--download-output", required=False, help="Output directory for downloaded artifacts")
-    parser.add_argument("--threads", type=int, default=3, help="Worker threads for region/zone fan-out (default: 3)")
+    parser.add_argument(
+        "--download-timeout",
+        dest="download_timeout",
+        type=int,
+        default=0,
+        help=(
+            "Per-download-TYPE wall-clock cap in seconds. If a download type (bucket blobs, "
+            "function sources, secrets, serial output, ...) runs longer than this, its remaining "
+            "items are skipped and enumeration moves to the next type. Default: 0 = no limit."
+        ),
+    )
+    parser.add_argument(
+        "--download-google-drive",
+        dest="download_google_drive",
+        action="store_true",
+        help=(
+            "Opt in to Google Drive in the Workspace phase: runs enum_drive --all-users "
+            "--download (lists AND downloads Drive file content for every cached user). "
+            "OFF by default so Drive files are never pulled unless explicitly requested."
+        ),
+    )
+    parser.add_argument("--threads", type=int, default=4, help="Worker threads for region/zone fan-out (default: 4)")
+    parser.add_argument(
+        "--phase",
+        choices=["all", "rm", "services"],
+        default="all",
+        help=argparse.SUPPRESS,  # internal: used by the parallel orchestrator to run one pipeline phase
+    )
+    parser.add_argument(
+        "--parallel-services",
+        type=int,
+        default=1,
+        help=(
+            "Enumerate services concurrently across projects with N workers "
+            "(default: 1 = sequential). Each run records progress under a run token "
+            "(printed at start); a plain re-run starts fresh."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help=(
+            "Resume a prior --parallel-services run by its token (printed at that run's "
+            "start): re-runs ONLY the units that run left incomplete, instead of starting "
+            "over. Requires --parallel-services > 1."
+        ),
+    )
     parser.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
     parser.add_argument("--zones-list", required=False, help="Zones in comma-separated format")
     allowlist_group = parser.add_argument_group(
@@ -473,7 +1060,24 @@ def run_module(user_args, session):
     parser.add_argument("--cloud-dns", action="store_true", help="Execute Cloud DNS enumeration")
     parser.add_argument("--service-directory", action="store_true", help="Execute Service Directory enumeration")
     parser.add_argument("--app-engine", action="store_true", help="Execute App Engine enumeration")
-    parser.add_argument("--workspace-cloud-identity", action="store_true", help="Execute Google Workspace Cloud Identity enumeration")
+    parser.add_argument("--workspace-cloud-identity", dest="workspace_identity", action="store_true", help="Execute Google Workspace Cloud Identity enumeration")
+    parser.add_argument("--cloud-scheduler", action="store_true", help="Execute Cloud Scheduler enumeration")
+    parser.add_argument("--cloud-workflows", action="store_true", help="Execute Cloud Workflows enumeration")
+    parser.add_argument("--spanner", action="store_true", help="Execute Cloud Spanner enumeration")
+    parser.add_argument("--alloydb", action="store_true", help="Execute AlloyDB enumeration")
+    parser.add_argument("--orgpolicy", action="store_true", help="Execute Organization Policy enumeration")
+    parser.add_argument("--eventarc", action="store_true", help="Execute Eventarc enumeration")
+    parser.add_argument("--workstations", action="store_true", help="Execute Cloud Workstations enumeration")
+    parser.add_argument("--cloud-billing", action="store_true", help="Execute Cloud Billing enumeration")
+    parser.add_argument("--cloud-shell", action="store_true", help="Execute Cloud Shell enumeration")
+    parser.add_argument("--cloud-logging", action="store_true", help="Execute Cloud Logging enumeration")
+    parser.add_argument("--dataproc", action="store_true", help="Execute Dataproc enumeration")
+    parser.add_argument("--dataflow", action="store_true", help="Execute Dataflow enumeration")
+    parser.add_argument("--notebooks", action="store_true", help="Execute Vertex AI Workbench enumeration")
+    parser.add_argument("--cloud-deploy", action="store_true", help="Execute Cloud Deploy enumeration")
+    parser.add_argument("--bigquery-datatransfer", action="store_true", help="Execute BigQuery Data Transfer enumeration")
+    parser.add_argument("--service-usage", action="store_true", help="Execute Service Usage (enabled-API) enumeration")
+    parser.add_argument("--asset-inventory", action="store_true", help="Execute Cloud Asset Inventory enumeration (opt-in; skipped by default)")
     parser.add_argument(
         "--download",
         nargs="?",
@@ -503,14 +1107,24 @@ def run_module(user_args, session):
     )
     args = parser.parse_args(user_args)
 
+    # Per-download-type wall-clock cap; download loops in the sub-modules read it off
+    # the shared session (DownloadBudget). 0 = unlimited.
+    session.download_time_budget = int(getattr(args, "download_timeout", 0) or 0)
+
+    if getattr(args, "resume", None) and int(getattr(args, "parallel_services", 1) or 1) <= 1:
+        print(
+            f"{UtilityTools.YELLOW}[!] --resume only applies to --parallel-services runs "
+            f"(the resumable ledger is built there); ignoring it for this sequential run.{UtilityTools.RESET}"
+        )
+
     try:
         project_allowlist_inline = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "project_allowlist", None)),
+            flatten_arg_groups(getattr(args, "project_allowlist", None)),
             value_label="project id",
             numeric_only=False,
         )
         project_allowlist_files = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "project_allowlist_file", None)),
+            flatten_arg_groups(getattr(args, "project_allowlist_file", None)),
             value_label="project id",
             numeric_only=False,
             files_only=True,
@@ -518,12 +1132,12 @@ def run_module(user_args, session):
         scoped_project_ids = list(dict.fromkeys([*project_allowlist_inline, *project_allowlist_files]))
 
         folder_allowlist_inline = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "folder_allowlist", None)),
+            flatten_arg_groups(getattr(args, "folder_allowlist", None)),
             value_label="folder id",
             numeric_only=True,
         )
         folder_allowlist_files = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "folder_allowlist_file", None)),
+            flatten_arg_groups(getattr(args, "folder_allowlist_file", None)),
             value_label="folder id",
             numeric_only=True,
             files_only=True,
@@ -531,12 +1145,12 @@ def run_module(user_args, session):
         scoped_folder_ids = list(dict.fromkeys([*folder_allowlist_inline, *folder_allowlist_files]))
 
         org_allowlist_inline = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "org_allowlist", None)),
+            flatten_arg_groups(getattr(args, "org_allowlist", None)),
             value_label="organization id",
             numeric_only=True,
         )
         org_allowlist_files = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "org_allowlist_file", None)),
+            flatten_arg_groups(getattr(args, "org_allowlist_file", None)),
             value_label="organization id",
             numeric_only=True,
             files_only=True,
@@ -544,12 +1158,12 @@ def run_module(user_args, session):
         scoped_organization_ids = list(dict.fromkeys([*org_allowlist_inline, *org_allowlist_files]))
 
         parent_folder_inline = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "parent_allowlist_folder", None)),
+            flatten_arg_groups(getattr(args, "parent_allowlist_folder", None)),
             value_label="parent folder id",
             numeric_only=True,
         )
         parent_folder_files = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "parent_allowlist_folder_file", None)),
+            flatten_arg_groups(getattr(args, "parent_allowlist_folder_file", None)),
             value_label="parent folder id",
             numeric_only=True,
             files_only=True,
@@ -557,12 +1171,12 @@ def run_module(user_args, session):
         parent_allowlist_folder_ids = list(dict.fromkeys([*parent_folder_inline, *parent_folder_files]))
 
         parent_org_inline = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "parent_allowlist_org", None)),
+            flatten_arg_groups(getattr(args, "parent_allowlist_org", None)),
             value_label="parent organization id",
             numeric_only=True,
         )
         parent_org_files = parse_id_input_values(
-            _flatten_arg_groups(getattr(args, "parent_allowlist_org_file", None)),
+            flatten_arg_groups(getattr(args, "parent_allowlist_org_file", None)),
             value_label="parent organization id",
             numeric_only=True,
             files_only=True,
@@ -624,7 +1238,23 @@ def run_module(user_args, session):
             args.cloud_dns,
             args.service_directory,
             args.app_engine,
-            args.workspace_cloud_identity,
+            args.workspace_identity,
+            args.cloud_scheduler,
+            args.cloud_workflows,
+            args.spanner,
+            args.alloydb,
+            args.orgpolicy,
+            args.eventarc,
+            args.workstations,
+            args.cloud_billing,
+            args.cloud_shell,
+            args.cloud_logging,
+            args.dataproc,
+            args.dataflow,
+            args.notebooks,
+            args.cloud_deploy,
+            args.bigquery_datatransfer,
+            args.service_usage,
         ]
     )
 
@@ -633,6 +1263,19 @@ def run_module(user_args, session):
     run_total = max(1, int(run_ctx.get("total", 1) or 1))
     first_run = run_index == 0
     last_run = run_index == (run_total - 1)
+
+    # Pipeline phase gating. "all" (default) keeps the original monolithic
+    # behavior. The parallel orchestrator drives the phases independently:
+    #   rm       -> Resource Manager (once; discovers the hierarchy/projects)
+    #   services -> the per-project resource enumerators (parallelizable)
+    #   bindings -> enum_gcp_policy_bindings (once; aggregates across all projects)
+    phase = getattr(args, "phase", "all")
+    do_rm = phase in ("all", "rm")
+    do_services = phase in ("all", "services")
+    do_bindings = phase == "all"
+    # Parallel orchestrator drives per-(project,service) sub-calls; suppress the
+    # shared _ENUM_PROGRESS counter/banner there (the orchestrator owns progress).
+    suppress_progress = bool(getattr(session, "_enum_all_suppress_progress", False))
 
     planned_services = 0
     planned_services += int(
@@ -643,39 +1286,16 @@ def run_module(user_args, session):
             or allowlist_requested
         )
     )
-    planned_services += int(args.cloud_compute or args.cloud_compute_resources or every_flag_missing)
-    planned_services += int(args.cloud_compute or args.cloud_compute_network or every_flag_missing)
-    planned_services += int(args.cloud_compute or args.cloud_compute_lb or every_flag_missing)
-    planned_services += int(args.cloud_functions or every_flag_missing)
-    planned_services += int(args.cloud_storage or every_flag_missing)
-    planned_services += int(args.cloud_bigquery or every_flag_missing)
-    planned_services += int(args.cloud_bigtable or every_flag_missing)
-    planned_services += int(args.cloud_pubsub or every_flag_missing)
-    planned_services += int(args.cloud_firestore or every_flag_missing)
-    planned_services += int(args.cloud_dns or every_flag_missing)
-    planned_services += int(args.service_directory or every_flag_missing)
-    planned_services += int(args.app_engine or every_flag_missing)
-    planned_services += int(first_run and args.workspace_cloud_identity)
-    planned_services += int(args.cloud_secretsmanager or every_flag_missing)
-    planned_services += int(args.storage_transfer or every_flag_missing)
-    planned_services += int(args.cloud_redis or every_flag_missing)
-    planned_services += int(args.cloud_iam or every_flag_missing)
-    planned_services += int(args.cloud_run or every_flag_missing)
-    planned_services += int(args.cloud_sql or every_flag_missing)
-    planned_services += int(args.cloud_kms or every_flag_missing)
-    planned_services += int(args.artifact_registry or every_flag_missing)
-    planned_services += int(args.gke or every_flag_missing)
-    planned_services += int(args.cloud_build or every_flag_missing)
-    planned_services += int(args.cloud_composer or every_flag_missing)
-    planned_services += int(args.cloud_tasks or every_flag_missing)
-    planned_services += int(args.api_keys or every_flag_missing)
-    planned_services += int(args.cloud_batch or every_flag_missing)
+    planned_services += sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing))
+    planned_services += int(first_run and args.workspace_identity)
     planned_services += int(last_run)
 
-    _ENUM_PROGRESS.update({"enabled": True, "index": 0, "total": planned_services})
+    if not suppress_progress:
+        _ENUM_PROGRESS.update({"enabled": True, "index": 0, "total": planned_services})
 
     more = False
-    print(f"{UtilityTools.BOLD}[*] Starting enum_all for project {session.project_id}{UtilityTools.RESET}")
+    if not suppress_progress:
+        print(f"{UtilityTools.BOLD}[*] Starting enum_all for project {session.project_id}{UtilityTools.RESET}")
     if planned_services > 0:
         print(f"[*] Planned service modules: {planned_services}")
     if scoped_project_ids:
@@ -694,7 +1314,7 @@ def run_module(user_args, session):
 
     allowlist_active = allowlist_requested
 
-    if first_run and (args.resource_manager or every_flag_missing or allowlist_active):
+    if do_rm and first_run and (args.resource_manager or every_flag_missing or allowlist_active):
         original_project_count = len(session.global_project_list)
         module_args = ["-v"] if args.debug else []
         if args.iam:
@@ -711,7 +1331,7 @@ def run_module(user_args, session):
             "allowlist_active": bool(direct_allowlist_active),
         }
         try:
-            _run_other_module(session, module_args, "gcpwn.modules.resourcemanager.enumeration.enum_resources")
+            _run_other_module(session, module_args, "gcpwn.modules.gcp.resourcemanager.enumeration.enum_resources")
         finally:
             if previous_rm_scope is None:
                 if hasattr(session, "_enum_all_rm_scope"):
@@ -735,12 +1355,12 @@ def run_module(user_args, session):
             )
             cached_scope = {
                 "allowlist_active": bool(resolved_scope.get("allowlist_active", False)),
-                "projects": sorted(_normalize_scope_values(resolved_scope.get("projects", []))),
-                "folders": sorted(_normalize_scope_values(resolved_scope.get("folders", []))),
-                "organizations": sorted(_normalize_scope_values(resolved_scope.get("organizations", []))),
+                "projects": sorted(normalize_str_set(resolved_scope.get("projects", []))),
+                "folders": sorted(normalize_str_set(resolved_scope.get("folders", []))),
+                "organizations": sorted(normalize_str_set(resolved_scope.get("organizations", []))),
             }
             session._enum_all_effective_allowlist_scope = dict(cached_scope)
-        effective_projects = _normalize_scope_values(cached_scope.get("projects", []))
+        effective_projects = normalize_str_set(cached_scope.get("projects", []))
         current_project_id = str(session.project_id or "").strip()
         run_non_rm_for_project = current_project_id in effective_projects
         if first_run:
@@ -771,270 +1391,23 @@ def run_module(user_args, session):
         remaining_services = int(last_run and not more)
     _ENUM_PROGRESS["total"] = max(completed_services, completed_services + remaining_services)
 
-    if run_non_rm_for_project and (args.cloud_compute or args.cloud_compute_resources or every_flag_missing):
+    # Per-project resource enumerators run only in the 'services' phase
+    # (and in 'all'). RM/bindings phases skip them.
+    run_services = run_non_rm_for_project and do_services
+    # Workspace Cloud Identity is a once-per-run (first_run) discovery, like RM.
+    if do_rm and run_non_rm_for_project and first_run and args.workspace_identity:
         module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.zones_list:
-            module_args.extend(["--zones-list", args.zones_list])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        if _download_requested("compute_screenshot"):
-            module_args.append("--take-screenshot")
-        if _download_requested("compute_serial"):
-            module_args.append("--download-serial")
-        if _download_requested("compute_artifacts"):
-            module_args.append("--download")
-        if _download_requested("compute_screenshot", "compute_serial", "compute_artifacts"):
-            if args.download_output:
-                module_args.extend(["--output", args.download_output])
-        _run_other_module(session, module_args, "gcpwn.modules.cloudcompute.enumeration.enum_cloudcompute_resources")
+        _run_other_module(session, module_args, "gcpwn.modules.workspace.cloud_identity.enumeration.enum_cloud_identity")
 
-    if run_non_rm_for_project and (args.cloud_compute or args.cloud_compute_network or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudcompute.enumeration.enum_cloudcompute_network")
-
-    if run_non_rm_for_project and (args.cloud_compute or args.cloud_compute_lb or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudcompute.enumeration.enum_cloudcompute_lb")
-
-    if run_non_rm_for_project and (args.cloud_functions or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get or _download_requested("function_env"):
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        if _download_requested("function_source"):
-            module_args.append("--download")
-            if args.download_output:
-                module_args.extend(["--output", args.download_output])
-        _run_other_module(session, module_args, "gcpwn.modules.cloudfunctions.enumeration.enum_cloudfunctions")
-
-    if run_non_rm_for_project and (args.cloud_storage or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        if _download_requested("buckets"):
-            module_args.append("--download")
-            if args.download_output:
-                module_args.extend(["--output", args.download_output])
-        _run_other_module(session, module_args, "gcpwn.modules.cloudstorage.enumeration.enum_cloudstorage")
-
-    if run_non_rm_for_project and (args.cloud_bigquery or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("bigquery_tables"):
-            module_args.extend(["--download", "table"])
-        _run_other_module(session, module_args, "gcpwn.modules.bigquery.enumeration.enum_bigquery")
-
-    if run_non_rm_for_project and (args.cloud_bigtable or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.bigtable.enumeration.enum_bigtable")
-
-    if run_non_rm_for_project and (args.cloud_pubsub or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.pubsub.enumeration.enum_pubsub")
-
-    if run_non_rm_for_project and (args.cloud_firestore or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("firestore_data"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.firestore.enumeration.enum_firestore")
-
-    if run_non_rm_for_project and (args.cloud_dns or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("clouddns_record_sets"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.clouddns.enumeration.enum_clouddns")
-
-    if run_non_rm_for_project and (args.service_directory or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.servicedirectory.enumeration.enum_servicedirectory")
-
-    if run_non_rm_for_project and (args.app_engine or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.appengine.enumeration.enum_appengine")
-
-    if run_non_rm_for_project and first_run and args.workspace_cloud_identity:
-        module_args = ["-v"] if args.debug else []
-        _run_other_module(session, module_args, "gcpwn.modules.workspace_cloud_identity.enumeration.enum_cloud_identity")
-
-    if run_non_rm_for_project and (args.cloud_secretsmanager or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        if _download_requested("secrets"):
-            module_args.extend(["--download", "--values"])
-        _run_other_module(session, module_args, "gcpwn.modules.secretsmanager.enumeration.enum_secretsmanager")
-
-    if run_non_rm_for_project and (args.storage_transfer or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.storagetransfer.enumeration.enum_storagetransfer")
-
-    if run_non_rm_for_project and (args.cloud_redis or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.memorystore.enumeration.enum_memorystore")
-
-    if run_non_rm_for_project and (args.cloud_iam or every_flag_missing):
-        module_args = ["--service-accounts", "--custom-roles", "--pools", "--providers"]
-        if args.iam:
-            module_args.append("--iam")
-        if args.get:
-            module_args.append("--get")
-        if args.debug:
-            module_args.append("-v")
-        _run_other_module(session, module_args, "gcpwn.modules.iam.enumeration.enum_iam")
-
-    if run_non_rm_for_project and (args.cloud_run or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("cloudrun_revision_env"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudrun.enumeration.enum_cloudrun")
-
-    if run_non_rm_for_project and (args.cloud_sql or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudsql.enumeration.enum_cloudsql")
-
-    if run_non_rm_for_project and (args.cloud_kms or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.kms.enumeration.enum_kms")
-
-    if run_non_rm_for_project and (args.artifact_registry or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("artifactregistry_files"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.artifactregistry.enumeration.enum_artifactregistry")
-
-    if run_non_rm_for_project and (args.gke or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        _run_other_module(session, module_args, "gcpwn.modules.gke.enumeration.enum_gke")
-
-    if run_non_rm_for_project and (args.cloud_build or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("cloudbuild_builds"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudbuild.enumeration.enum_cloudbuild")
-
-    if run_non_rm_for_project and (args.cloud_composer or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("composer_configs"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.cloudcomposer.enumeration.enum_cloudcomposer")
-
-    if run_non_rm_for_project and (args.cloud_tasks or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if args.iam:
-            module_args.append("--iam")
-        if _download_requested("cloudtasks_requests"):
-            module_args.append("--download")
-            if args.download_output:
-                module_args.extend(["--output", args.download_output])
-        _run_other_module(session, module_args, "gcpwn.modules.cloudtasks.enumeration.enum_cloudtasks")
-
-    if run_non_rm_for_project and (args.api_keys or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("apikeys_content"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.apikeys.enumeration.enum_apikeys")
-
-    if run_non_rm_for_project and (args.cloud_batch or every_flag_missing):
-        module_args = ["-v"] if args.debug else []
-        module_args.extend(["--threads", str(args.threads)])
-        if args.regions_list:
-            module_args.extend(["--regions-list", args.regions_list])
-        if args.get:
-            module_args.append("--get")
-        if _download_requested("batch_scripts"):
-            module_args.append("--download")
-        _run_other_module(session, module_args, "gcpwn.modules.batch.enumeration.enum_batch")
+    # Per-project resource enumerators -> one declarative table (see _SERVICES).
+    for spec in _SERVICES:
+        if run_services and _service_selected(spec, args, every_flag_missing):
+            _run_other_module(session, _build_service_args(spec, args, _download_requested), spec.module)
 
     # Must be called last: builds IAM allow-policy cache across all cached resources.
-    if last_run and not more:
+    if do_bindings and last_run and not more:
         module_args = ["-v"] if args.debug else []
-        _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_policy_bindings")
+        _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_gcp_policy_bindings")
 
     _ENUM_PROGRESS.update({"enabled": False, "index": 0, "total": 0})
     if more:

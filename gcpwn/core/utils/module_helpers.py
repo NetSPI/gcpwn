@@ -4,6 +4,7 @@ import ast
 import csv
 import json
 import textwrap
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -75,6 +76,11 @@ def load_data(path: str | Path, *, kind: Literal["json"] | None = None) -> Any:
     raise ValueError(f"Unsupported data file type for {file_path}. Provide kind='json'.")
 
 
+# Mapping files (module registry, IAM/escalation maps) are static config read many
+# times per run. Cache the parsed result; callers treat the returned object as
+# read-only (they .get() and copy rows before mutating). Cleared automatically on
+# process exit; call load_mapping_data.cache_clear() if a mapping file is rewritten.
+@lru_cache(maxsize=None)
 def load_mapping_data(*parts: str, kind: Literal["json"] | None = None) -> Any:
     return load_data(Path(resources.files("gcpwn.mappings").joinpath(*parts)), kind=kind)
 
@@ -85,6 +91,43 @@ def module_data_file(anchor_file: str, *parts: str) -> Path:
 
 def read_lines(path: str | Path) -> list[str]:
     return [line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def iter_module_rows(payload: Any) -> list[dict[str, Any]]:
+    """Flatten module_mappings.json into per-module dict rows across both schema shapes.
+
+    Supports the flat ``{"modules": [...]}`` form and the nested
+    ``{"services": [{"service": ..., "categories": {cat: [...]}}]}`` form. In the nested
+    form each row is tagged with ``service`` and ``module_category`` (stripped, ``""`` when
+    absent); callers layer their own display defaults / field selection on top. The single
+    home for parsing the module-registry schema (shared by the CLI dispatch and the REPL).
+    """
+    if not isinstance(payload, dict):
+        return []
+    flat_rows = payload.get("modules")
+    if isinstance(flat_rows, list):
+        return [dict(row) for row in flat_rows if isinstance(row, dict)]
+
+    rows: list[dict[str, Any]] = []
+    for service_entry in payload.get("services") or []:
+        if not isinstance(service_entry, dict):
+            continue
+        service_name = str(service_entry.get("service") or "").strip()
+        categories = service_entry.get("categories") or {}
+        if not isinstance(categories, dict):
+            continue
+        for category, modules in categories.items():
+            if not isinstance(modules, list):
+                continue
+            category_name = str(category or "").strip()
+            for module in modules:
+                if not isinstance(module, dict):
+                    continue
+                row = dict(module)
+                row.setdefault("module_category", category_name)
+                row.setdefault("service", service_name)
+                rows.append(row)
+    return rows
 
 
 def normalize_service_account_resource_name(sa_value, default_project="-"):
@@ -131,31 +174,114 @@ def resolve_regions_args(session, args, *, default_region: str = "-") -> list[st
     return [default_region]
 
 
+@lru_cache(maxsize=1)
+def load_service_locations() -> dict[str, list[str]]:
+    """Parse the consolidated mappings/service_locations.txt into {service: [locations]}.
+
+    Sections are headed by ``[<service>]``; blank lines and ``#`` comments are
+    ignored. Replaces the per-module ``utilities/data/locations.txt`` files."""
+    text = resources.files("gcpwn.mappings").joinpath("service_locations.txt").read_text(encoding="utf-8")
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1].strip().lower()
+            sections.setdefault(current, [])
+            continue
+        if current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def static_locations(service: str) -> list[str]:
+    """The hardcoded fallback locations for ``service`` from the consolidated file."""
+    return list(load_service_locations().get(str(service or "").strip().lower(), []))
+
+
+def discover_service_locations(credentials, api_name: str, api_version: str, project_id: str) -> list[str]:
+    """Live ``<service>.projects.locations.list`` lookup. Returns the location IDs,
+    or [] on any failure (caller falls back to the static list)."""
+    project = str(project_id or "").strip()
+    if not (credentials and api_name and api_version and project):
+        return []
+    try:
+        # Lazy import avoids a module-load cycle with service_runtime.
+        from gcpwn.core.utils.service_runtime import build_discovery_service
+
+        service = build_discovery_service(credentials, api_name, api_version)
+        response = service.projects().locations().list(name=f"projects/{project}").execute()
+        return [
+            str(location.get("locationId")).strip()
+            for location in (response.get("locations") or [])
+            if str(location.get("locationId") or "").strip()
+        ]
+    except Exception:
+        return []
+
+
 def resolve_regions_from_module_data(
     session,
     args,
     *,
-    module_file: str,
+    service: str | None = None,
+    discovery: tuple[str, str] | None = None,
+    module_file: str | None = None,
     locations_filename: str = "locations.txt",
     default_region: str = "-",
 ) -> list[str]:
-    known_locations = read_lines(module_data_file(module_file, "data", locations_filename))
+    """Resolve the regions/locations a region-scoped enum module fans out over.
+
+    Precedence: explicit ``--regions-list`` / ``--regions-file`` win, then the
+    workspace's preferred_regions. Otherwise (default, or ``--all-regions``) the
+    module's full location set is used -- discovered LIVE from the service's
+    ``projects.locations.list`` API when ``discovery`` is given, falling back to
+    the consolidated static list (``service``) or a legacy per-module file."""
+
+    def _static() -> list[str]:
+        if service:
+            return static_locations(service)
+        if module_file:
+            return read_lines(module_data_file(module_file, "data", locations_filename))
+        return []
+
+    def _known() -> list[str]:
+        if discovery is not None:
+            discovered = discover_service_locations(
+                getattr(session, "credentials", None),
+                discovery[0],
+                discovery[1],
+                getattr(session, "project_id", "") or "",
+            )
+            if discovered:
+                return discovered
+        return _static()
 
     if getattr(args, "regions_list", None):
         return [region.strip() for region in str(args.regions_list).split(",") if region.strip()]
     if getattr(args, "regions_file", None):
         return read_lines(args.regions_file)
     if getattr(args, "all_regions", False):
-        return known_locations or [default_region]
+        return _known() or [default_region]
 
     preferred = getattr(getattr(session, "workspace_config", None), "preferred_regions", None)
     if preferred:
         return [str(region).strip() for region in preferred if str(region).strip()]
 
-    return known_locations or [default_region]
+    return _known() or [default_region]
+
+
+def region_resolver_for(service, discovery=None):
+    """A run_components region_resolver bound to a service (+optional discovery tuple)."""
+    def _resolve(session, args):
+        return resolve_regions_from_module_data(session, args, service=service, discovery=discovery)
+    return _resolve
 
 
 def split_path_tokens(value: Any, *, separator: str = "/", drop_empty: bool = True) -> list[str]:
+    """Split a resource path into stripped tokens (the basis of the extract_* helpers)."""
     text = str(value or "").strip()
     if not text:
         return []
@@ -166,6 +292,7 @@ def split_path_tokens(value: Any, *, separator: str = "/", drop_empty: bool = Tr
 
 
 def extract_path_tail(value: Any, *, separator: str = "/", drop_empty: bool = True, default: str = "") -> str:
+    """Return the last path segment (e.g. the short id from ``projects/p/.../name``)."""
     parts = split_path_tokens(value, separator=separator, drop_empty=drop_empty)
     if not parts:
         return str(default or "").strip()
@@ -173,6 +300,10 @@ def extract_path_tail(value: Any, *, separator: str = "/", drop_empty: bool = Tr
 
 
 def extract_path_segment(resource_name: str, segment_name: str) -> str:
+    """Return the value following ``segment_name`` in a GCP resource path.
+
+    e.g. ``extract_path_segment("projects/p/locations/us", "projects")`` -> ``"p"``.
+    Returns "" if the segment is absent or has no following token."""
     if not resource_name:
         return ""
     parts = split_path_tokens(resource_name, separator="/", drop_empty=True)
@@ -183,6 +314,7 @@ def extract_path_segment(resource_name: str, segment_name: str) -> str:
 
 
 def extract_location_from_resource_name(resource_name: str, *, include_zones: bool = False) -> str:
+    """Pull the region/location from a resource path; optionally fall back to ``zones/``."""
     location = extract_path_segment(resource_name, "locations")
     if location:
         return location
@@ -192,6 +324,12 @@ def extract_location_from_resource_name(resource_name: str, *, include_zones: bo
 
 
 def resource_name_from_value(row_or_name: Any, *field_names: str) -> str:
+    """Extract a resource name from a str, a DB row dict, or an API object.
+
+    Accepts a bare string (returned stripped), or looks up ``field_names`` (default
+    ``("name",)``) first as dict keys then as attributes, returning the first
+    non-empty hit. Lets callers pass either a raw name or the row/object holding it.
+    """
     if isinstance(row_or_name, str):
         return str(row_or_name).strip()
     if isinstance(row_or_name, dict):
@@ -215,6 +353,14 @@ def name_from_input(
     separator: str = "/",
     error_message: str = "Invalid resource ID format.",
 ) -> str:
+    """Expand a short user-supplied id into a full resource name via a template.
+
+    If ``value`` already starts with a ``passthrough_prefixes`` entry (default
+    ``projects/``) it is assumed full and returned as-is. Otherwise ``value`` is
+    split on ``separator`` and zipped into ``template``: int entries index the
+    split input parts, str entries are literals (``.format(project_id=...)``-aware).
+    The number of input parts must equal ``max(int segments)+1`` or ``ValueError``
+    is raised with ``error_message``. Returns the joined full resource name."""
     text = str(value or "").strip()
     if not text:
         return ""
@@ -237,6 +383,7 @@ def name_from_input(
 
 
 def extract_project_id_from_resource(row_or_name: Any, *, fallback_project: str = "", field_names: tuple[str, ...] = ("name",)) -> str:
+    """Pull the project id from a resource's ``projects/<id>/...`` name, else fallback."""
     resource_name = resource_name_from_value(row_or_name, *field_names)
     return extract_path_segment(resource_name, "projects") or str(fallback_project or "").strip()
 
@@ -246,6 +393,11 @@ def normalize_bigquery_resource_id(resource_id: str) -> str:
 
 
 def split_bigquery_dataset_id(resource_id: str, *, fallback_project: str = "") -> tuple[str, str]:
+    """Parse a dataset id into ``(project_id, dataset_id)`` from path or dotted form.
+
+    Accepts both ``projects/<p>/datasets/<d>`` and ``<p>.<d>`` (BigQuery's
+    ``project:dataset`` is normalized to dots first). If only a bare dataset is
+    given, ``fallback_project`` is used as the project."""
     text = normalize_bigquery_resource_id(resource_id)
     if text.startswith("projects/") and "/datasets/" in text:
         project_id = extract_path_segment(text, "projects")
@@ -264,6 +416,12 @@ def _split_bigquery_child_id(
     child_segment: str,
     fallback_project: str = "",
 ) -> tuple[str, str, str]:
+    """Parse ``project.dataset.<child>`` (or its path form) into a 3-tuple.
+
+    ``child_segment`` selects ``tables``/``routines``. Handles the full
+    ``projects/.../datasets/.../<child>/...`` path and the dotted form; a 2-part
+    dotted id uses ``fallback_project``. Returns ``(project, dataset, child)`` with
+    empty middle/child fields if unparseable."""
     text = normalize_bigquery_resource_id(resource_id)
     if text.startswith("projects/") and "/datasets/" in text and f"/{child_segment}/" in text:
         project_id = extract_path_segment(text, "projects")
@@ -311,6 +469,7 @@ def bigquery_routine_iam_resource_name(resource_id: str, *, fallback_project: st
 
 
 def dedupe_strs(values: Iterable[str] | None) -> list[str]:
+    """Strip, drop empties, and de-duplicate strings while preserving first-seen order."""
     output: list[str] = []
     seen: set[str] = set()
     for value in values or []:
@@ -331,6 +490,10 @@ def _stringify(value: Any) -> str:
 
 
 def parse_json_value(value: Any, *, default: Any = None) -> Any:
+    """Decode a JSON string, passing through already-parsed dict/list, never raising.
+
+    Returns ``default`` on None, empty, or invalid JSON. Convenient for columns that
+    may hold either a JSON-encoded blob or an already-deserialized value."""
     if value is None:
         return default
     if isinstance(value, (dict, list)):
@@ -344,6 +507,18 @@ def parse_json_value(value: Any, *, default: Any = None) -> Any:
         return default
 
 
+def normalize_str_set(values: Any) -> set[str]:
+    """Coerce a value (or iterable of values) into a set of stripped, non-empty strings.
+
+    A single non-iterable value is treated as a one-element collection (so a bare
+    string is NOT iterated char-by-char). Empty/blank entries are dropped. This is
+    the canonical "strip these into a set" helper -- prefer it over hand-rolled
+    ``{str(v).strip() for v in vals if str(v).strip()}`` comprehensions.
+    """
+    candidates = values if isinstance(values, (list, tuple, set, frozenset)) else [values]
+    return {token for value in candidates if (token := str(value or "").strip())}
+
+
 def parse_string_list(
     value: Any,
     *,
@@ -351,6 +526,13 @@ def parse_string_list(
     allow_python_literal: bool = True,
     fallback_to_single: bool = False,
 ) -> list[str]:
+    """Coerce a value into a list of non-empty strings, tolerating many encodings.
+
+    Already-iterable (set/tuple/list) values are stringified directly. A string is
+    tried as JSON (if ``allow_json``) then as a Python literal (if
+    ``allow_python_literal``) -- DB columns historically stored lists either way.
+    If neither parses, returns ``[token]`` when ``fallback_to_single`` else ``[]``.
+    """
     if value is None:
         return []
     if isinstance(value, (set, tuple, list)):
@@ -660,12 +842,18 @@ def _write_xlsx_sheet(worksheet, *, workbook, rows: list[dict[str, Any]]) -> Non
             )
 
 
+def _prepare_export_file(path: str, suffix: str) -> Path:
+    """Normalize an export path to ``suffix`` and ensure its parent directory exists."""
+    out_file = Path(path).expanduser()
+    if out_file.suffix.lower() != suffix:
+        out_file = out_file.with_suffix(suffix)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    return out_file
+
+
 def export_sqlite_dbs_to_csv_blob(*, db_paths: list[str], out_csv_path: str) -> dict[str, Any]:
     bundle = collect_sqlite_export_bundle(db_paths=db_paths)
-    out_file = Path(out_csv_path).expanduser()
-    if out_file.suffix.lower() != ".csv":
-        out_file = out_file.with_suffix(".csv")
-    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file = _prepare_export_file(out_csv_path, ".csv")
 
     with out_file.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -682,10 +870,7 @@ def export_sqlite_dbs_to_csv_blob(*, db_paths: list[str], out_csv_path: str) -> 
 
 def export_sqlite_dbs_to_json_blob(*, db_paths: list[str], out_json_path: str) -> dict[str, Any]:
     bundle = collect_sqlite_export_bundle(db_paths=db_paths)
-    out_file = Path(out_json_path).expanduser()
-    if out_file.suffix.lower() != ".json":
-        out_file = out_file.with_suffix(".json")
-    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file = _prepare_export_file(out_json_path, ".json")
 
     payload = {
         "columns": [column for column in UNIFORM_EXPORT_COLUMNS if column != "remaining_json"] + ["remaining_data"],
@@ -719,10 +904,7 @@ def export_sqlite_dbs_to_excel_blob(
         ) from exc
 
     bundle = collect_sqlite_export_bundle(db_paths=db_paths)
-    out_file = Path(out_xlsx_path).expanduser()
-    if out_file.suffix.lower() != ".xlsx":
-        out_file = out_file.with_suffix(".xlsx")
-    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file = _prepare_export_file(out_xlsx_path, ".xlsx")
 
     workbook = xlsxwriter.Workbook(str(out_file))
     try:

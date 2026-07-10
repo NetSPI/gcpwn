@@ -86,7 +86,6 @@ class OpenGraphBuildContext:
         # keyed by {"base", "with_inferred"}.
         self._simplified_hierarchy_permissions_cache: dict[str, dict[str, Any]] = {}
         self._scope_resource_indexes_cache = None
-        self._initialize_core_caches()
 
     _ROW_TABLES = {
         "raw_allow_bindings": "iam_allow_policies",
@@ -97,22 +96,24 @@ class OpenGraphBuildContext:
         "cloudfunctions_functions": "cloudfunctions_functions",
         "cloudrun_services": "cloudrun_services",
         "cloudrun_jobs": "cloudrun_jobs",
+        # WIF tables feed stage-4 resource expansion (WIF_PROVIDER_IN_POOL /
+        # GCP_FEDERATION_POSSIBLE / WIF EXISTS_IN_PROJECT). Without these mappings
+        # context.rows() returns [] and those edges silently never emit.
+        "workload_identity_pools": "workload_identity_pools",
+        "workload_identity_providers": "workload_identity_providers",
         "workspace_users": "workspace_users",
         "workspace_groups": "workspace_groups",
         "hierarchy_rows": "abstract_tree_hierarchy",
         "group_memberships": "workspace_group_memberships",
+        "workspace_admin_roles": "workspace_admin_roles",
+        "workspace_role_assignments": "workspace_role_assignments",
+        # SA domain-wide-delegation grants -> DOMAIN_WIDE_DELEG edges (stage 1).
+        "workspace_delegations": "workspace_delegations",
+        # Group access/posting settings -> CAN_JOIN edges for self-join-open groups.
+        "workspace_group_settings": "workspace_group_settings",
+        # Drive file exposure -> CAN_READ edges for public / anyone-with-link files.
+        "workspace_drive_files": "workspace_drive_files",
     }
-
-    def _initialize_core_caches(self) -> None:
-        """
-        Eagerly build the core OpenGraph context caches once at construction.
-
-        This keeps cache-building logic centralized inside context creation
-        rather than spread across builder callsites.
-        """
-        self.hierarchy_data()
-        self.simplified_hierarchy_permissions(include_inferred_permissions=False)
-        self.scope_resource_indexes()
 
     def _fetch_rows_for_key(self, key: str) -> list[dict[str, Any]]:
         table_name = self._ROW_TABLES.get(str(key or "").strip())
@@ -122,6 +123,8 @@ class OpenGraphBuildContext:
         return list(values) if isinstance(values, list) else []
 
     def rows(self, key: str) -> list[dict[str, Any]]:
+        # Returns the CACHED list by reference (no per-call copy). All OpenGraph
+        # callers treat rows() read-only; the golden pipeline test guards this.
         key_token = str(key or "").strip()
         if not key_token:
             return []
@@ -129,25 +132,34 @@ class OpenGraphBuildContext:
         if cached is None:
             cached = self._fetch_rows_for_key(key_token)
             self._rows_cache[key_token] = cached
-        return list(cached)
+        return cached
 
     def service_table_names(self) -> list[str]:
         if self._service_table_names_cache is not None:
-            return list(self._service_table_names_cache)
+            return self._service_table_names_cache
         try:
-            cursor = getattr(getattr(self.session, "data_master", None), "service_cursor", None)
+            data_master = getattr(self.session, "data_master", None)
+            cursor = getattr(data_master, "cursor", None)
             if cursor is None:
                 self._service_table_names_cache = []
-                return []
+                return self._service_table_names_cache
             rows = cursor.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             ).fetchall()
-            names = [str(row[0] or "").strip() for row in rows if row and str(row[0] or "").strip()]
+            # The unified DB also holds control-plane tables (workspaces/session/
+            # session_actions); they are not service resources -- keep them out of
+            # the graph pipeline.
+            control_plane = getattr(data_master, "_CONTROL_PLANE_TABLES", frozenset())
+            names = [
+                name
+                for row in rows
+                if row and (name := str(row[0] or "").strip()) and name not in control_plane
+            ]
             self._service_table_names_cache = names
-            return list(names)
+            return self._service_table_names_cache
         except Exception:
             self._service_table_names_cache = []
-            return []
+            return self._service_table_names_cache
 
     def service_table_columns(self, table_name: str) -> list[str]:
         token = str(table_name or "").strip()
@@ -155,19 +167,19 @@ class OpenGraphBuildContext:
             return []
         cached = self._service_table_columns_cache.get(token)
         if cached is not None:
-            return list(cached)
+            return cached
         try:
-            cursor = getattr(getattr(self.session, "data_master", None), "service_cursor", None)
+            cursor = getattr(getattr(self.session, "data_master", None), "cursor", None)
             if cursor is None:
                 self._service_table_columns_cache[token] = []
-                return []
+                return self._service_table_columns_cache[token]
             rows = cursor.execute(f'PRAGMA table_info("{token}")').fetchall()
             columns = [str(row[1] or "").strip() for row in rows if len(row) > 1 and str(row[1] or "").strip()]
             self._service_table_columns_cache[token] = columns
-            return list(columns)
+            return columns
         except Exception:
             self._service_table_columns_cache[token] = []
-            return []
+            return self._service_table_columns_cache[token]
 
     def service_rows(self, table_name: str) -> list[dict[str, Any]]:
         token = str(table_name or "").strip()
@@ -182,7 +194,7 @@ class OpenGraphBuildContext:
                 values = []
             cached = list(values) if isinstance(values, list) else []
             self._rows_cache[cache_key] = cached
-        return list(cached)
+        return cached
 
     def simplified_hierarchy_permissions(self, *, include_inferred_permissions: bool = False) -> dict[str, Any]:
         cache_key = "with_inferred" if include_inferred_permissions else "base"
@@ -198,12 +210,12 @@ class OpenGraphBuildContext:
                 session=self.session if include_inferred_permissions else None,
             )
             self._simplified_hierarchy_permissions_cache[cache_key] = cached
-        return dict(cached)
+        return cached
 
     def hierarchy_data(self) -> dict[str, Any]:
         if self._hierarchy_metadata is None:
             self._hierarchy_metadata = _build_hierarchy_data(self.rows("hierarchy_rows"))
-        return dict(self._hierarchy_metadata)
+        return self._hierarchy_metadata
 
     def scope_resource_indexes(self):
         if self._scope_resource_indexes_cache is not None:

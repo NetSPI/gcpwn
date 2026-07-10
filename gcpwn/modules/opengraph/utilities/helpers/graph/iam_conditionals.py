@@ -10,16 +10,6 @@ from typing import Any, Iterable, List
 
 
 @dataclass(frozen=True)
-class ConditionNarrowing:
-    expression: str
-    narrowed_prefixes: List[str]
-    narrowed_equals: List[str]
-    narrowed_services: List[str]
-    narrowed_resource_types: List[str]
-    unresolved: bool
-
-
-@dataclass(frozen=True)
 class ConditionOption:
     option_id: str
     expression: str
@@ -29,34 +19,6 @@ class ConditionOption:
     narrowed_resource_types: List[str]
     unresolved: bool
     filter_summary: str
-
-
-def extract_condition_narrowing(condition: Any) -> ConditionNarrowing | None:
-    if not isinstance(condition, dict):
-        return None
-    expression = str(condition.get("expression") or "").strip()
-    if not expression:
-        return None
-    return ConditionNarrowing(
-        expression=expression,
-        narrowed_prefixes=[],
-        narrowed_equals=[],
-        narrowed_services=[],
-        narrowed_resource_types=[],
-        unresolved=True,
-    )
-
-
-def narrow_resource_names(resource_names: Iterable[str], narrowing: ConditionNarrowing | None) -> list[str]:
-    _ = narrowing
-    # Placeholder behavior: no narrowing.
-    return [str(name or "").strip() for name in (resource_names or []) if str(name or "").strip()]
-
-
-def summarize_condition_narrowing(narrowing: ConditionNarrowing | None) -> str:
-    if not narrowing:
-        return ""
-    return "condition evaluation placeholder"
 
 
 class StatementConditionalsEngine:

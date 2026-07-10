@@ -37,6 +37,21 @@ pip-wheel-metadata/
 .env.*
 .python-version
 
+# Claude Code local state (settings, agent worktree staging, session data).
+# Commit shared config deliberately with `git add -f .claude/<file>` if ever needed.
+.claude/
+
+# AI-assistant instruction files (local guidance, not part of the shipped tool).
+# Force-add deliberately with `git add -f CLAUDE.md` if you ever want to share one.
+CLAUDE.md
+AGENTS.md
+AGENT.md
+GEMINI.md
+.cursorrules
+.cursor/
+.aider*
+.github/copilot-instructions.md
+
 # Workspace databases
 databases/*.db
 databases/*.db-shm
@@ -61,3 +76,8 @@ scripts/*.txt
 *.swp
 *.swo
 *.log
+
+# Never commit credential keys
+*my_key.json
+*service-account*.json
+*-sa-key.json

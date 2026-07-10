@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from gcpwn.core.console import UtilityTools
+from gcpwn.core.utils.module_helpers import parse_json_value
 from gcpwn.modules.opengraph.utilities.stage_2_policy_bindings import (
     build_resolved_binding_entries,
 )
@@ -187,6 +188,7 @@ def _source_to_section(source_value: str) -> str | None:
 
 
 def _edge_section(edge: dict[str, Any]) -> str:
+    """Classify an exported edge into one split section, preferring its `source` provenance over its kind."""
     props = edge.get("properties")
     if isinstance(props, dict):
         source_section = _source_to_section(str(props.get("source") or ""))
@@ -202,6 +204,7 @@ def _edge_section(edge: dict[str, Any]) -> str:
 
 
 def _node_section(node: dict[str, Any]) -> str:
+    """Classify an exported node into one split section, preferring its `source` provenance, then kinds."""
     props = node.get("properties")
     if isinstance(props, dict):
         source_section = _source_to_section(str(props.get("source") or ""))
@@ -216,23 +219,6 @@ def _node_section(node: dict[str, Any]) -> str:
     if any("key" in token or "workloadidentity" in token for token in kind_tokens):
         return "resource_expansion"
     return "resource_expansion"
-
-
-def _build_graph_payload(*, metadata: dict[str, Any], nodes: list[dict[str, Any]], edges: list[dict[str, Any]], section: str | None = None) -> dict[str, Any]:
-    metadata_payload = dict(metadata or {})
-    if section:
-        metadata_payload["split_section"] = section
-    return {
-        "metadata": metadata_payload,
-        "graph": {
-            "nodes": list(nodes or []),
-            "edges": list(edges or []),
-        },
-        "summary": {
-            "nodes": len(nodes or []),
-            "edges": len(edges or []),
-        },
-    }
 
 
 def _source_kind_only_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -269,6 +255,14 @@ def _json_value_size_bytes(value: Any) -> int:
 
 
 def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -> None:
+    """
+    Stream the single-file OpenGraph JSON to disk node-by-node/edge-by-edge with progress.
+
+    Streams rather than json.dump(payload) because full graphs can be very large; it
+    writes the metadata/graph/summary envelope by hand and emits each node/edge object
+    individually so memory stays bounded and a live progress line is shown. The resulting
+    file is the same OpenGraph contract shape export_opengraph_json produced.
+    """
     metadata = _source_kind_only_metadata(dict(payload.get("metadata") or {}))
     graph = dict(payload.get("graph") or {})
     nodes = [node for node in (graph.get("nodes") or []) if isinstance(node, dict)]
@@ -319,6 +313,20 @@ def _write_split_outputs(
     manifest_output_dir: str | None = None,
     debug: bool = False,
 ) -> tuple[list[str], str]:
+    """
+    Write the graph as per-section, size-bounded JSON parts plus a manifest, for BloodHound.
+
+    Splits the single payload into sections (users_groups / iam_bindings /
+    inferred_permissions / resource_expansion) by classifying each node/edge
+    (_node_section/_edge_section), then chunks each section into parts that stay within
+    ~max_size_mb +/- size_tolerance_mb (a soft band chosen for speed, not exact sizing).
+    Each part is a self-contained OpenGraph payload: every node referenced by a part's
+    edges is included, so parts import independently. Single-part sections are renamed to
+    the legacy `<stem>_<section>.json`. Optionally parallelizes file writes across
+    split_threads. Returns (list_of_written_files_incl_manifest, manifest_path).
+
+    Each part re-emits its border nodes, so node counts across parts overlap by design.
+    """
     max_size_bytes = max(1, int(float(max_size_mb) * 1024 * 1024))
     tolerance_bytes = max(0, int(float(size_tolerance_mb) * 1024 * 1024))
     soft_min_bytes = max(1, max_size_bytes - tolerance_bytes)
@@ -692,6 +700,15 @@ def _write_split_outputs(
 
 
 def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = False):
+    """
+    Render in-memory nodes/edges into the single-file OpenGraph JSON payload.
+
+    Converts each node/edge through node_to_opengraph/edge_to_opengraph (which enforce the
+    BloodHound id/kinds/edge contract), then sorts nodes by id and edges by
+    (start, end, kind) so exports are deterministic/diffable. Returns the
+    {"metadata": {"source_kind": "GCPBase"}, "graph": {...}, "summary": {...}} payload that
+    the writers consume; the "GCPBase" source_kind is part of the import contract.
+    """
     UtilityTools.dlog(
         debug,
         "export: loaded graph objects",
@@ -796,6 +813,16 @@ def _parse_args(user_args):
         ),
     )
     parser.add_argument(
+        "--cai-file",
+        required=False,
+        help=(
+            "Build the graph directly from a Cloud Asset Inventory export file (NDJSON from "
+            "`gcloud asset export`, or a JSON array of assets) INSTEAD of the SQLite tables. "
+            "No prior enumeration is needed; the generated graph is exported but NOT persisted "
+            "to this workspace's opengraph tables."
+        ),
+    )
+    parser.add_argument(
         "--split-json-output",
         action="store_true",
         help=(
@@ -870,17 +897,18 @@ def _parse_args(user_args):
 
 
 def _decode_json_field(raw_value) -> dict:
-    token = str(raw_value or "").strip()
-    if not token:
-        return {}
-    try:
-        decoded = json.loads(token)
-    except Exception:
-        return {}
+    decoded = parse_json_value(raw_value, default={})
     return decoded if isinstance(decoded, dict) else {}
 
 
 def _load_existing_opengraph_from_db(session) -> tuple[list[OpenGraphNode], list[OpenGraphEdge]]:
+    """
+    Rehydrate persisted OpenGraph rows back into in-memory nodes/edges for re-export.
+
+    Reads the workspace-scoped opengraph_nodes/opengraph_edges tables (--use-existing-
+    opengraph-db path), decodes properties_json, and backfills name/display_name. Rows
+    missing a required id/type are skipped. Main-thread only (session.get_data).
+    """
     node_rows = session.get_data("opengraph_nodes") or []
     edge_rows = session.get_data("opengraph_edges") or []
 
@@ -941,6 +969,7 @@ def _emit_binding_coverage_warnings(context) -> None:
 
 
 def _run_iam_bindings_stage(context) -> dict[str, object]:
+    """Stage 2 runner: resolve IAM policy bindings into the graph and surface coverage warnings."""
     build_resolved_binding_entries(context)
     step_stats = dict(context.get_artifact("iam_policy_bindings_stage_stats") or {})
     _emit_binding_coverage_warnings(context)
@@ -1049,6 +1078,26 @@ def _exclude_service_agent_nodes(
 
 
 def run_module(user_args, session):
+    """
+    OpenGraph module entry point: build the BloodHound graph and export it.
+
+    Module-contract function: run_module(user_args, session) -> 1 on success, -1 on
+    failure. Orchestrates the five-phase pipeline (parse args -> build shared
+    OpenGraphBuildContext -> run the selected stages in fixed _STAGE_REGISTRY order ->
+    apply default-mode trims -> persist) and then exports single-file (and optional
+    split) graph JSON. Runs entirely on the main thread; stages share one
+    OpenGraphBuilder and all DB reads/writes (session.get_data / persist_opengraph) stay
+    here, never in worker threads.
+
+    Modes:
+    - default: rebuild the graph from cached SQLite tables and persist (--reset clears
+      this workspace's prior graph first).
+    - --use-existing-opengraph-db: skip the rebuild and re-export from persisted
+      opengraph_nodes/opengraph_edges.
+    With no explicit stage flag all stages run; if iam_allow_policies is empty the IAM
+    bindings stage is skipped (and is an error when explicitly requested via
+    --iam-bindings).
+    """
     # Phase 1: parse args + mode selection.
     args = _parse_args(user_args)
 
@@ -1056,6 +1105,24 @@ def run_module(user_args, session):
     use_existing_opengraph_db = bool(args.use_existing_opengraph_db)
     if use_existing_opengraph_db:
         should_run_graph_build = False
+
+    # Data source: the workspace SQLite tables (default) or a Cloud Asset Inventory
+    # export file. The CAI source serves get_data() from the mapped export and
+    # delegates output/path/config calls to the real session.
+    data_source = session
+    if getattr(args, "cai_file", None):
+        if use_existing_opengraph_db:
+            print("[X] --cai-file cannot be combined with --use-existing-opengraph-db.")
+            return -1
+        from gcpwn.modules.gcp.assetinventory.utilities.cai_source import CaiFileSource
+        try:
+            data_source = CaiFileSource(session, args.cai_file)
+        except Exception as exc:
+            print(f"[X] Failed to read CAI export file {args.cai_file!r}: {exc}")
+            return -1
+        summary = ", ".join(f"{t}={n}" for t, n in sorted(data_source.table_summary.items())) or "(no mapped rows)"
+        print(f"[*] Building OpenGraph from CAI export {args.cai_file} "
+              f"({data_source.record_count} assets -> {summary}).")
 
     nodes: list[OpenGraphNode] = []
     edges: list[OpenGraphEdge] = []
@@ -1066,16 +1133,16 @@ def run_module(user_args, session):
         if args.cond_eval:
             print("[*] --cond-eval enabled in pass-through mode; condition filters currently return input scopes unchanged.")
 
-        raw_allow_bindings = session.get_data("iam_allow_policies") or []
+        raw_allow_bindings = data_source.get_data("iam_allow_policies") or []
         if args.iam_bindings and not raw_allow_bindings:
-            print("[X] No IAM policy data was found in SQLite (iam_allow_policies). Run enum_policy_bindings first.")
+            print("[X] No IAM policy data was found (iam_allow_policies). Run enum_gcp_policy_bindings first (or pass --cai-file with iam-policy assets).")
             return -1
         if run_all_steps and not raw_allow_bindings:
             print("[*] No IAM policy data was found in SQLite (iam_allow_policies). Skipping IAM bindings step.")
 
         # Phase 2: build shared context used by all stages.
         context = OpenGraphBuildContext(
-            session=session,
+            session=data_source,
             options=OpenGraphBuildOptions(
                 include_all=args.include_all,
                 expand_inheritance=args.expand_inherited,
@@ -1159,7 +1226,10 @@ def run_module(user_args, session):
         _print_trim_summary(trim_stats)
 
         # Phase 5: persist generated graph snapshot.
-        persist_opengraph(session, nodes, edges, clear_existing=args.reset)
+        if getattr(args, "cai_file", None):
+            print("[*] CAI-file mode: skipping persist to workspace opengraph tables (export only).")
+        else:
+            persist_opengraph(session, nodes, edges, clear_existing=args.reset)
     elif use_existing_opengraph_db:
         nodes, edges = _load_existing_opengraph_from_db(session)
         if not nodes and not edges:

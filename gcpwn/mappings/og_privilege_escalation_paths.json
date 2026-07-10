@@ -2,28 +2,28 @@
   "single_permission_rules": {
     "CAN_MODIFY_PROJECT_IAM": {
       "permission": "resourcemanager.projects.setIamPolicy",
-      "description": "Can change project IAM bindings/roles. Can add an IAM binding making yourself administrator thus essentially controlling all resources in project.  Warning: This will wipe all previous IAM bindings with a new set of IAM bindings so its sa good idea to run get-iam-policy first and then set-iam-policy with the same policy bindings albeit your modified content\nGCPwn Module: modules run exploit_setiampolicy Gcloud Commands: gcloud projects get-iam-policy my-project --format=json > policy.json; #edit policy.json like adding yourself as admin;  gcloud projects set-iam-policy my-project policy.json",
+      "description": "Can change project IAM bindings/roles. Can add an IAM binding making yourself administrator thus essentially controlling all resources in project.  Warning: This will wipe all previous IAM bindings with a new set of IAM bindings so its sa good idea to run get-iam-policy first and then set-iam-policy with the same policy bindings albeit your modified content\nGCPwn Module: modules run exploit_gcp_setiampolicy Gcloud Commands: gcloud projects get-iam-policy my-project --format=json > policy.json; #edit policy.json like adding yourself as admin;  gcloud projects set-iam-policy my-project policy.json",
       "resource_scopes_possible": [
         "project"
       ]
     },
     "CAN_MODIFY_FOLDER_IAM": {
       "permission": "resourcemanager.folders.setIamPolicy",
-      "description": "Can change folder IAM bindings/roles. This can grant control over all descendant projects/resources via inherited IAM. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud resource-manager folders get-iam-policy <FOLDER_ID> --format=json > policy.json; #edit policy.json; gcloud resource-manager folders set-iam-policy <FOLDER_ID> policy.json",
+      "description": "Can change folder IAM bindings/roles. This can grant control over all descendant projects/resources via inherited IAM. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud resource-manager folders get-iam-policy <FOLDER_ID> --format=json > policy.json; #edit policy.json; gcloud resource-manager folders set-iam-policy <FOLDER_ID> policy.json",
       "resource_scopes_possible": [
         "folder"
       ]
     },
     "CAN_MODIFY_ORG_IAM": {
       "permission": "resourcemanager.organizations.setIamPolicy",
-      "description": "Can change organization IAM bindings/roles. This can grant broad tenancy-wide control across folders and projects. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud organizations get-iam-policy <ORG_ID> --format=json > policy.json; #edit policy.json; gcloud organizations set-iam-policy <ORG_ID> policy.json",
+      "description": "Can change organization IAM bindings/roles. This can grant broad tenancy-wide control across folders and projects. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud organizations get-iam-policy <ORG_ID> --format=json > policy.json; #edit policy.json; gcloud organizations set-iam-policy <ORG_ID> policy.json",
       "resource_scopes_possible": [
         "org"
       ]
     },
     "CAN_MODIFY_SA_IAM": {
       "permission": "iam.serviceAccounts.setIamPolicy",
-      "description": "Can change service account IAM bindings/roles (for example, adding Token Creator or actAs members). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud iam service-accounts get-iam-policy <SA_EMAIL> --format=json > policy.json; #edit policy.json; gcloud iam service-accounts set-iam-policy <SA_EMAIL> policy.json",
+      "description": "Can change service account IAM bindings/roles (for example, adding Token Creator or actAs members). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud iam service-accounts get-iam-policy <SA_EMAIL> --format=json > policy.json; #edit policy.json; gcloud iam service-accounts set-iam-policy <SA_EMAIL> policy.json",
       "target_selector": {
         "mode": "resource_types",
         "resource_types": [
@@ -37,7 +37,7 @@
     },
     "CAN_MODIFY_COMPUTE_INSTANCE_IAM": {
       "permission": "compute.instances.setIamPolicy",
-      "description": "Can change IAM policy on specific Compute Engine VM instances (who can operate/manage that VM). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud compute instances get-iam-policy <INSTANCE_NAME> --zone <ZONE> --format=json > policy.json; #edit policy.json; gcloud compute instances set-iam-policy <INSTANCE_NAME> policy.json --zone <ZONE>",
+      "description": "Can change IAM policy on specific Compute Engine VM instances (who can operate/manage that VM). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud compute instances get-iam-policy <INSTANCE_NAME> --zone <ZONE> --format=json > policy.json; #edit policy.json; gcloud compute instances set-iam-policy <INSTANCE_NAME> policy.json --zone <ZONE>",
       "target_selector": {
         "mode": "resource_types",
         "resource_types": [
@@ -51,7 +51,7 @@
     },
     "CAN_MODIFY_ClOUD_RUN_FUNCTION_IAM": {
       "permission": "cloudfunctions.functions.setIamPolicy",
-      "description": "Can change IAM policy on Cloud Functions (for example, granting invoker/admin access). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
+      "description": "Can change IAM policy on Cloud Functions (for example, granting invoker/admin access). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
       "target_selector": {
         "mode": "resource_types",
         "resource_types": [
@@ -65,7 +65,7 @@
     },
     "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM": {
       "permission": "secretmanager.secrets.setIamPolicy",
-      "description": "Can change IAM policy on Secret Manager (for example, granting roles/owner to the caller so you can read the secret). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
+      "description": "Can change IAM policy on Secret Manager (for example, granting roles/owner to the caller so you can read the secret). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
       "target_selector": {
         "mode": "resource_types",
         "resource_types": [

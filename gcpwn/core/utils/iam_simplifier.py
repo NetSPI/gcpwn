@@ -1,7 +1,20 @@
+"""Canonical IAM allow-policy simplifier shared by the process and OpenGraph paths.
+
+Takes raw allow-policy rows (per resource) and produces three views keyed by
+normalized member: flattened member->resource->roles rows, a per-member binding
+index (with direct/convenience/inherited provenance), and an optional inferred
+permission index keyed by ``member:credname``. Keeping both pipelines on this one
+implementation prevents the member-keying drift that previously made the same
+policy member hash differently in process vs OpenGraph (see iam_principals).
+
+OpenGraph depends on the exact shape/keys emitted here; treat the output contract
+as load-bearing and do not casually reshape it.
+"""
+
 from __future__ import annotations
 
 import json
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import Any, Callable, Iterable
 
 from gcpwn.core.action_schema import (
@@ -9,7 +22,12 @@ from gcpwn.core.action_schema import (
     ACTION_SCOPE_COLUMNS,
     ACTION_SCOPE_KEY_TO_SCOPE_TYPE,
 )
-from gcpwn.core.utils.module_helpers import extract_path_tail, parse_json_value
+from gcpwn.core.utils.hierarchy import descendants as _descendants
+from gcpwn.core.utils.module_helpers import (
+    extract_path_tail,
+    normalize_str_set as _normalize_tokens,
+    parse_json_value,
+)
 
 
 _CONVENIENCE_MEMBER_PREFIXES = ("projectViewer:", "projectEditor:", "projectOwner:")
@@ -21,14 +39,6 @@ def _default_normalize_member(member: str) -> str:
 
 def _default_is_convenience_member(member: str) -> bool:
     return str(member or "").strip().startswith(_CONVENIENCE_MEMBER_PREFIXES)
-
-
-def _normalize_tokens(values: Iterable[Any] | Any) -> set[str]:
-    if isinstance(values, (list, tuple, set, frozenset)):
-        candidates = values
-    else:
-        candidates = [values]
-    return {token for value in candidates if (token := str(value or "").strip())}
 
 
 def _policy_dict(raw: Any) -> dict[str, Any]:
@@ -44,6 +54,11 @@ def _resource_binding_key(resource_type: str, resource_name: str, project_id: st
 
 
 def _canonical_scope_type(scope_type: str, scope_name: str) -> str:
+    """Resolve a scope to ``org``/``folder``/``project`` from its type or name prefix.
+
+    Trusts an explicit valid ``scope_type``; otherwise infers from the resource
+    name (``organizations/``, ``folders/``, ``projects/``). Returns the lowercased
+    type token unchanged if neither identifies a hierarchy scope."""
     token = str(scope_type or "").strip().lower()
     if token in {"org", "folder", "project"}:
         return token
@@ -55,25 +70,6 @@ def _canonical_scope_type(scope_type: str, scope_name: str) -> str:
     if name.startswith("projects/"):
         return "project"
     return token
-
-
-def _descendants(children_by_parent: dict[str, list[str]], root: str) -> list[str]:
-    root_name = str(root or "").strip()
-    if not root_name:
-        return []
-    out: list[str] = []
-    seen = {root_name}
-    queue: deque[str] = deque(children_by_parent.get(root_name, []))
-    while queue:
-        current = queue.popleft()
-        if current in seen:
-            continue
-        seen.add(current)
-        out.append(current)
-        for child in children_by_parent.get(current, []):
-            if child not in seen:
-                queue.append(child)
-    return out
 
 
 def _parse_scope_binding_key(
@@ -101,6 +97,13 @@ def _parse_resource_key(
     *,
     known_project_ids: set[str] | None = None,
 ) -> tuple[str, str, str] | None:
+    """Split a ``<type>:<name>@<project_id>`` binding key into its 3 parts.
+
+    The ``@<project_id>`` suffix is optional and only peeled off when the left
+    side still contains a ``:`` (so an email's ``@`` is never mistaken for the
+    separator) and -- if ``known_project_ids`` is given -- the suffix is a real
+    project id. Returns ``(scope_type, scope_name, project_id)`` or None if the
+    key has no ``type:name`` shape."""
     token = str(resource_key or "").strip()
     if not token:
         return None
@@ -152,6 +155,12 @@ def _iter_member_roles_from_policy(
     *,
     normalize_member: Callable[[str], str],
 ) -> Iterable[tuple[str, list[str]]]:
+    """Yield ``(normalized_member, sorted_roles)`` from a stored allow-policy.
+
+    Accepts both stored shapes: a pre-collapsed ``by_member`` map, or the raw
+    ``bindings`` list (role -> members), which it collapses per member. Members are
+    run through ``normalize_member`` so keying is consistent; members with no roles
+    are skipped."""
     by_member = policy.get("by_member")
     if isinstance(by_member, dict):
         for member, details in by_member.items():
@@ -191,6 +200,14 @@ def _build_project_role_members(
     normalize_member: Callable[[str], str],
     is_convenience_member: Callable[[str], bool],
 ) -> dict[str, dict[str, set[str]]]:
+    """Index, per project, which concrete members hold owner/editor/viewer.
+
+    Builds ``{project_id_or_number: {role: {members}}}`` from real (non-convenience)
+    members' project-scoped owner/editor/viewer bindings. This is the lookup used to
+    EXPAND the convenience principals (``projectOwner:``/``projectEditor:``/
+    ``projectViewer:``) into the actual members they resolve to, since GCP exposes
+    those grants only via the synthetic principal. Indexed by both project id and
+    project number so either form of a scope name resolves."""
     owner_editor_viewer = {"roles/owner", "roles/editor", "roles/viewer"}
     index: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
 
@@ -236,6 +253,25 @@ def _build_member_binding_index(
     normalize_member: Callable[[str], str],
     is_convenience_member: Callable[[str], bool],
 ) -> dict[str, dict[str, dict[str, Any]]]:
+    """Build the per-member binding index with direct/inherited/convenience records.
+
+    Pipeline:
+      1. For every allow-policy row, record DIRECT bindings under
+         ``by_member[member]["<type>:<name>@<project>"]`` with deduped records.
+      2. If ``include_inheritance``, walk the resource hierarchy (children_by_parent
+         from ``hierarchy_data``) and copy each scope's direct bindings down to every
+         descendant scope as INHERITED records (tagged ``inherited_from``).
+      3. Resolve convenience principals: expand ``projectOwner/Editor/Viewer`` grants
+         to the concrete members holding that role in the project (via
+         ``_build_project_role_members``), recording them as CONVENIENCE records on
+         the concrete member, tagged ``derived_from`` the convenience principal.
+
+    Records are deduped by a (role, condition, inherited, inherited_from) fingerprint.
+    The convenience principals themselves are dropped from the final output (only
+    their expansions survive). Final records carry a ``record_origin`` of
+    ``direct``/``convenience``/``inherited``. Keys are always
+    ``<resource_type>:<resource_name>@<project_id>`` for one uniform scheme.
+    """
     # Example `member_binding_index` shape returned from this helper:
     # Note: keys are always "<resource_type>:<resource_name>@<project_id>".
     # For project scopes this can look repetitive (e.g.
@@ -558,6 +594,18 @@ def _build_member_binding_index(
 def _build_inferred_permission_inputs_from_session(
     session: Any,
 ) -> tuple[dict[str, dict[str, list[str]]], dict[str, list[str]]]:
+    """Derive inferred-permission inputs from the workspace's recorded actions.
+
+    Reads ``session.get_actions()`` (the per-credential evidence store) plus the
+    session credential rows, and returns:
+      - ``enumed_permissions_by_credname``: ``{credname: {resource_key: [perms]}}``
+        flattening both scope-tier columns (org/folder/project/workspace) and
+        per-service columns into resource keys (``<type>:<name>[@project]``). When a
+        service permission has no concrete asset it falls back to ``project:<id>``.
+      - ``credname_member_map``: ``{credname: ["user:..."|"serviceAccount:..."]}``,
+        choosing the prefix from credtype / the ``.gserviceaccount.com`` suffix.
+
+    DB-read only (no writes); must run on the main thread like all session.get_*."""
     credname_member_map: dict[str, list[str]] = {}
     for row in (session.get_session_data("session", columns=["credname", "email", "credtype"]) or []):
         credname = str(row.get("credname") or "").strip()

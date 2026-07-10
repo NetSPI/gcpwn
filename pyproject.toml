@@ -27,10 +27,12 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=9.0"
+  "pytest>=9.0",
+  "ruff==0.15.18",
+  "mypy==2.1.0"
 ]
 table = [
-  "prettytable==3.17.0"
+  "prettytable==3.18.0"
 ]
 excel = [
   "xlsxwriter==3.2.9"
@@ -49,11 +51,48 @@ include-package-data = true
 "gcpwn" = [
   "mappings/*.json",
   "mappings/*.txt",
-  "modules/*/utilities/data/*.txt",
-  "modules/*/utilities/data/*.zip",
+  "modules/**/utilities/data/*.txt",
+  "modules/**/utilities/data/*.zip",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["gcpwn*"]
 namespaces = true
+
+# -----------------------------
+# Lint / type-check configuration
+# -----------------------------
+# Ruff is the BLOCKING CI gate. The rule set is intentionally conservative
+# (real-bug rules only, no style/formatting churn) so it stays green on the
+# existing ~60k LOC. Grow `select` over time (B, UP, SIM, DTZ, ...) as the
+# codebase is cleaned up; see CLAUDE.md for the roadmap.
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["scripts", "tests/**/data"]
+
+[tool.ruff.lint]
+# E9  = syntax/IndentationError/IO errors (always real)
+# F   = pyflakes: undefined names, unused imports, f-string bugs, redefinitions
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# OpenGraph entry shims re-export run_module as their public API.
+"gcpwn/modules/opengraph/enumeration/*.py" = ["F401"]
+
+# Mypy is currently NON-BLOCKING in CI (informational). It is scoped to the
+# core package, where type hints are richest and the logic is most critical.
+# Goal: drive `gcpwn/core` to zero errors, then flip CI to blocking and widen
+# the scope to gcpwn/cli and gcpwn/modules. See CLAUDE.md.
+[tool.mypy]
+python_version = "3.11"
+files = ["gcpwn/core"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+# Lenient on purpose: we are not requiring full annotations yet, only catching
+# real type errors (bad indexing, attribute access on wrong types, redefs).
+check_untyped_defs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_redundant_casts = true

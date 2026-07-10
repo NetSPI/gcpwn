@@ -30,7 +30,13 @@ on:
         required: true
         type: boolean
         default: true
+      build_windows:
+        description: "Build Windows binary (windows-latest)"
+        required: true
+        type: boolean
+        default: true
 
+# Least privilege by default; only the jobs that publish release assets opt up to write.
 permissions:
   contents: read
 
@@ -38,6 +44,9 @@ concurrency:
   group: build-release-${{ github.ref_name }}
   cancel-in-progress: false
 
+# Every job re-asserts the same authorization guard (GitHub Actions has no shared
+# anchors) as defense-in-depth: only WebbinRoot, on NetSPI/gcpwn, on refs/heads/main.
+# Downstream jobs also chain via `needs`, so an unauthorized run stops at preflight.
 jobs:
   preflight-tests:
     if: >-
@@ -45,80 +54,110 @@ jobs:
       github.repository == 'NetSPI/gcpwn' &&
       github.actor == 'WebbinRoot' &&
       github.triggering_actor == 'WebbinRoot' &&
-      inputs.run_tests &&
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
     steps:
       - name: Checkout
-        # v6.0.2
+        # v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
 
       - name: Setup Python
-        # v6.2.0
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        # v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # Job always runs when authorized so downstream can use plain `needs`; the
+      # tests themselves are what run_tests toggles. A no-op job here still succeeds.
       - name: Install dependencies
-        run: |
-          python -m pip install .[dev]
+        if: inputs.run_tests
+        run: python -m pip install .[dev]
 
       - name: Run unit tests
+        if: inputs.run_tests
         run: python -m pytest -q -ra tests/unit tests/module_contracts
 
   resolve-build-targets:
     if: >-
-      always() &&
-      !cancelled() &&
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'NetSPI/gcpwn' &&
       github.actor == 'WebbinRoot' &&
       github.triggering_actor == 'WebbinRoot' &&
-      (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
       github.ref == 'refs/heads/main'
     needs: preflight-tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
     outputs:
       os_matrix: ${{ steps.set-matrix.outputs.os_matrix }}
     steps:
       - name: Resolve selected OS targets
         id: set-matrix
         shell: bash
-        env:
-          BUILD_LINUX: ${{ inputs.build_linux }}
-          BUILD_MACOS: ${{ inputs.build_macos }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import sys
+          sel=()
+          if [ "${{ inputs.build_linux }}" = "true" ];   then sel+=('"ubuntu-latest"'); fi
+          if [ "${{ inputs.build_macos }}" = "true" ];   then sel+=('"macos-latest"'); fi
+          if [ "${{ inputs.build_windows }}" = "true" ]; then sel+=('"windows-latest"'); fi
+          if [ ${#sel[@]} -eq 0 ]; then
+            echo "Select at least one build target OS (linux/macos/windows)." >&2
+            exit 1
+          fi
+          IFS=,
+          echo "os_matrix=[${sel[*]}]" >> "$GITHUB_OUTPUT"
+          echo "Resolved build targets: [${sel[*]}]"
 
-          selected = []
-          if os.environ.get("BUILD_LINUX", "").lower() == "true":
-              selected.append("ubuntu-latest")
-          if os.environ.get("BUILD_MACOS", "").lower() == "true":
-              selected.append("macos-latest")
+  # Manual gate + release creation in one job: the protected `release` environment must
+  # be approved before this job runs, so the approval directly gates the contents:write.
+  # Fails closed if that environment exists without protection rules, then creates/updates
+  # the GitHub Release.
+  create-release:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'NetSPI/gcpwn' &&
+      github.actor == 'WebbinRoot' &&
+      github.triggering_actor == 'WebbinRoot' &&
+      github.ref == 'refs/heads/main'
+    needs: resolve-build-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release
+    permissions:
+      contents: write
+    steps:
+      - name: Assert protected release environment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Guard against implicit, unprotected environment creation: if 'release'
+          # exists without protection rules, fail closed (no approval actually gated us).
+          RULE_COUNT="$(gh api "repos/${GITHUB_REPOSITORY}/environments/release" --jq '.protection_rules | length')"
+          if [ "${RULE_COUNT}" -lt 1 ]; then
+            echo "Release environment exists but has no protection rules configured."
+            exit 1
+          fi
 
-          if not selected:
-              print("Select at least one build target OS (linux/macos).", file=sys.stderr)
-              sys.exit(1)
-
-          out_path = os.environ["GITHUB_OUTPUT"]
-          with open(out_path, "a", encoding="utf-8") as handle:
-              handle.write(f"os_matrix={json.dumps(selected)}\n")
-
-          print(f"Resolved build targets: {selected}")
-          PY
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TITLE: ${{ inputs.release_title }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          RELEASE_TARGET: ${{ github.sha }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES"
+          else
+            gh release create "$RELEASE_TAG" --target "$RELEASE_TARGET" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES"
+          fi
 
   build-executables:
     if: >-
@@ -134,22 +173,26 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.resolve-build-targets.outputs.os_matrix) }}
-        extras_label: [base, table, excel, table_excel]
-    name: Build (${{ matrix.os }} | ${{ matrix.extras_label }})
+        variant:
+          - { label: base, extras: "" }
+          - { label: table, extras: "table" }
+          - { label: excel, extras: "excel" }
+          - { label: table_excel, extras: "table,excel" }
+    name: Build (${{ matrix.os }} | ${{ matrix.variant.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     permissions:
       contents: write
     steps:
       - name: Checkout
-        # v6.0.2
+        # v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
 
       - name: Setup Python
-        # v6.2.0
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        # v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.14"
           cache: pip
@@ -158,154 +201,65 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          case "${{ matrix.extras_label }}" in
-            base)
-              EXTRAS=""
-              ;;
-            table)
-              EXTRAS="table"
-              ;;
-            excel)
-              EXTRAS="excel"
-              ;;
-            table_excel)
-              EXTRAS="table,excel"
-              ;;
-            *)
-              echo "Unsupported extras_label: ${{ matrix.extras_label }}"
-              exit 1
-              ;;
-          esac
-
+          EXTRAS="${{ matrix.variant.extras }}"
           if [ -n "$EXTRAS" ]; then
-            python -m pip install ".[${EXTRAS}]" pyinstaller==6.20.0
+            python -m pip install ".[${EXTRAS}]" pyinstaller==6.21.0
           else
-            python -m pip install . pyinstaller==6.20.0
+            python -m pip install . pyinstaller==6.21.0
           fi
 
       - name: Build executable
         shell: bash
         run: |
-          # --noconfirm: overwrite existing output files/directories without interactive prompts.
-          # --clean: remove temporary build cache from prior runs before building.
-          # --onefile: emit a single-file executable rather than a folder-based bundle.
-          # --name gcpwn: set the final executable name.
-          # --collect-submodules gcpwn: include dynamically imported gcpwn modules.
-          # --collect-data gcpwn: include packaged non-Python data files used at runtime.
-          # gcpwn/__main__.py: build from the package CLI entrypoint.
+          # gcpwn's per-service modules are imported DYNAMICALLY by dotted path (from
+          # mappings/module-mappings.json) and live in PEP-420 namespace packages
+          # (only gcpwn/__init__.py exists). PyInstaller's static analysis and
+          # --collect-submodules CANNOT discover them, so we enumerate the full module
+          # set by walking the source tree and pass each as --hidden-import. Importing
+          # each also pulls in the third-party deps it uses (e.g. the google-cloud libs).
+          #   --onefile: single-file executable.  --collect-data gcpwn: bundle the
+          #   runtime data files (IAM/escalation mappings + per-module wordlists/zips).
+          MODS="$RUNNER_TEMP/gcpwn_hidden_imports.txt"
+          python - <<'PY' > "$MODS"
+          from pathlib import Path
+          names = {"gcpwn"}
+          for py in Path("gcpwn").rglob("*.py"):
+              if "__pycache__" in py.parts:
+                  continue
+              parts = list(py.relative_to("gcpwn").with_suffix("").parts)
+              if parts and parts[-1] == "__init__":
+                  parts = parts[:-1]
+              names.add(".".join(["gcpwn", *parts]))
+          print("\n".join(sorted(names)))
+          PY
+          HIDDEN_ARGS=()
+          while IFS= read -r mod; do
+            HIDDEN_ARGS+=(--hidden-import "$mod")
+          done < "$MODS"
+          echo "Collected $(( ${#HIDDEN_ARGS[@]} / 2 )) gcpwn hidden-import modules"
           python -m PyInstaller \
             --noconfirm \
             --clean \
             --onefile \
             --name gcpwn \
-            --collect-submodules gcpwn \
             --collect-data gcpwn \
+            "${HIDDEN_ARGS[@]}" \
             gcpwn/__main__.py
 
-      - name: Verify executable
-        shell: bash
-        run: |
-          EXECUTABLE="dist/gcpwn"
-          test -f "$EXECUTABLE"
-          "$EXECUTABLE" --help >/dev/null
-          echo "Verified executable: $EXECUTABLE"
-
-      - name: Prepare artifact
-        shell: bash
-        run: |
-          mkdir -p release
-          SRC="dist/gcpwn"
-          DST="release/gcpwn-${{ matrix.os }}-${{ matrix.extras_label }}"
-          cp "$SRC" "$DST"
-          echo "ASSET_PATH=$DST" >> "$GITHUB_ENV"
-
-      - name: Upload artifact to GitHub Release
+      - name: Verify and upload binary to the release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          test -f "$ASSET_PATH"
-          gh release upload "$RELEASE_TAG" "$ASSET_PATH" --clobber
-
-  create-release:
-    if: >-
-      always() &&
-      !cancelled() &&
-      github.event_name == 'workflow_dispatch' &&
-      github.repository == 'NetSPI/gcpwn' &&
-      github.actor == 'WebbinRoot' &&
-      github.triggering_actor == 'WebbinRoot' &&
-      needs.resolve-build-targets.result == 'success' &&
-      (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
-      needs.release-approval.result == 'success' &&
-      github.ref == 'refs/heads/main'
-    needs:
-      - preflight-tests
-      - resolve-build-targets
-      - release-approval
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Create or update GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_TITLE: ${{ inputs.release_title }}
-          RELEASE_NOTES: ${{ inputs.release_notes }}
-          RELEASE_TARGET: ${{ github.sha }}
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES"
-          else
-            gh release create "$RELEASE_TAG" \
-              --target "$RELEASE_TARGET" \
-              --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES"
-          fi
-
-  release-approval:
-    # Manual gate for release operations.
-    # This job must pass before create-release/build-executables can write assets to Releases.
-    if: >-
-      always() &&
-      !cancelled() &&
-      github.event_name == 'workflow_dispatch' &&
-      github.repository == 'NetSPI/gcpwn' &&
-      github.actor == 'WebbinRoot' &&
-      github.triggering_actor == 'WebbinRoot' &&
-      needs.resolve-build-targets.result == 'success' &&
-      (needs.preflight-tests.result == 'success' || needs.preflight-tests.result == 'skipped') &&
-      github.ref == 'refs/heads/main'
-    needs:
-      - preflight-tests
-      - resolve-build-targets
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment:
-      name: release
-    permissions:
-      contents: read
-    steps:
-      - name: Assert protected release environment
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Guard against implicit, unprotected environment creation.
-          # If 'release' exists without protection rules, fail closed.
-          RULE_COUNT="$(gh api "repos/${GITHUB_REPOSITORY}/environments/release" --jq '.protection_rules | length')"
-          if [ "${RULE_COUNT}" -lt 1 ]; then
-            echo "Release environment exists but has no protection rules configured."
-            exit 1
-          fi
-
-      - name: Await protected release approval
-        run: echo "Release environment approved."
+          # PyInstaller appends .exe on Windows; dist/gcpwn elsewhere.
+          EXT=""
+          if [ "$RUNNER_OS" = "Windows" ]; then EXT=".exe"; fi
+          BIN="dist/gcpwn${EXT}"
+          test -f "$BIN"
+          "$BIN" --help >/dev/null
+          ASSET="gcpwn-${{ matrix.os }}-${{ matrix.variant.label }}${EXT}"
+          cp "$BIN" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
+          echo "Uploaded $ASSET"

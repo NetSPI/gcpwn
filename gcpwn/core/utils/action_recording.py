@@ -1,3 +1,10 @@
+"""In-memory accumulators for discovered permissions before they are flushed to the DB.
+
+These build the nested ``action_dict`` that a module later hands to
+``session.insert_actions``. They are pure dict mutation (safe to call from worker
+threads), unlike the DB write that consumes the result, which is main-thread only.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -13,6 +20,23 @@ def record_permissions(
     resource_type: str | None = None,
     resource_label: str | None = None,
 ) -> None:
+    """Accumulate discovered permission(s) into an in-memory action tree, two ways.
+
+    Permissions are deduped/stripped first; nothing is recorded if empty.
+
+    Two mutually-exclusive shapes depending on the kwargs supplied:
+      - Scope form (``scope_key`` and/or ``scope_label`` given): records under
+        ``action_dict[scope_key][scope_label]`` as a set of permissions (used for
+        org/folder/project/workspace-level grants). Both tokens must be non-empty
+        or it silently no-ops.
+      - Resource form (``project_id`` + ``resource_type`` + ``resource_label``):
+        records under ``action_dict[project_id][permission][resource_type]`` as a
+        set of resource labels -- a per-permission inverted index of which
+        resources the credential can act on. All three tokens required.
+
+    Mutates ``action_dict`` in place; returns None. Pure dict work -- safe in a
+    worker thread, but the eventual ``insert_actions`` flush is main-thread only.
+    """
     normalized_permissions: list[str] = []
     seen_permissions: set[str] = set()
     if isinstance(permissions, str):
@@ -48,6 +72,11 @@ def record_permissions(
 
 
 def has_recorded_actions(action_dict: dict[str, Any] | Any) -> bool:
+    """True if the action tree holds any non-empty leaf (avoids flushing empties).
+
+    A top-level value counts only if it is a non-empty inner dict (or a truthy
+    scalar); an empty ``{...: {}}`` reads as "nothing recorded". Lets callers skip
+    an ``insert_actions`` call when enumeration found no permissions."""
     for value in (action_dict or {}).values():
         if isinstance(value, dict):
             if any(bool(item) for item in value.values()):

@@ -6,14 +6,16 @@ from typing import Any, Callable, Iterable
 
 from google.iam.v1 import iam_policy_pb2
 
-from gcpwn.core.utils.service_runtime import handle_service_error
+from gcpwn.core.utils.service_runtime import handle_discovery_error, handle_service_error
 
 
 @lru_cache(maxsize=1)
 def _all_unique_permissions() -> tuple[str, ...]:
+    # parents[2] is the gcpwn package root (parents[0]=utils, [1]=core, [2]=gcpwn).
     permissions_path = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "modules"
+        / "gcp"
         / "resourcemanager"
         / "utilities"
         / "data"
@@ -34,15 +36,11 @@ def permissions_with_prefixes(
     *prefixes: str | Iterable[str],
     exclude_permissions: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    normalized_prefixes = tuple(str(prefix or "").strip() for prefix in prefixes if str(prefix or "").strip())
+    normalized_prefixes = tuple(cleaned for prefix in prefixes if (cleaned := str(prefix or "").strip()))
     if not normalized_prefixes:
         return ()
 
-    excluded = {
-        str(permission or "").strip()
-        for permission in exclude_permissions or ()
-        if str(permission or "").strip()
-    }
+    excluded = {cleaned for permission in exclude_permissions or () if (cleaned := str(permission or "").strip())}
 
     return tuple(
         permission
@@ -98,5 +96,45 @@ def call_test_iam_permissions(
             return_not_enabled=return_not_enabled,
             not_found_label=not_found_label,
             quiet_not_found=quiet_not_found,
+        )
+        return [] if result in (None, "Not Enabled") else list(result or [])
+
+
+def call_discovery_test_iam_permissions(
+    *,
+    session: Any,
+    discovery_service: Any,
+    resource_name: str,
+    request_builder: Callable[[Any, str], Any],
+    api_name: str,
+    service_label: str,
+) -> list[str]:
+    """testIamPermissions over a googleapiclient DISCOVERY service; return granted perms.
+
+    The discovery sibling of ``call_test_iam_permissions`` (which is for GAPIC clients),
+    for services whose testIamPermissions only lives on the discovery API (apigateway,
+    bigquery, clouddns, some compute). ``request_builder(discovery_service, resource_name)``
+    builds the collection-specific request (e.g. ``svc.gateways().testIamPermissions(...)``);
+    this runs ``.execute()``, extracts/strips ``response["permissions"]``, and funnels any
+    error through ``handle_discovery_error`` (yielding ``[]``). Does NOT record evidence --
+    the caller records the returned permissions with test_iam provenance.
+    """
+    normalized_resource_name = str(resource_name or "").strip()
+    if not normalized_resource_name:
+        return []
+    try:
+        response = request_builder(discovery_service, normalized_resource_name).execute()
+        return [
+            str(permission).strip()
+            for permission in ((response or {}).get("permissions") or [])
+            if str(permission).strip()
+        ]
+    except Exception as exc:
+        result = handle_discovery_error(
+            session,
+            api_name,
+            normalized_resource_name,
+            exc,
+            service_label=service_label,
         )
         return [] if result in (None, "Not Enabled") else list(result or [])

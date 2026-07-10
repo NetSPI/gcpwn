@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from gcpwn.core.utils.module_helpers import normalize_str_set
+
 
 def ensure_subject_state(role_subject_state: dict[str, dict[str, dict[str, Any]]], entry: Any) -> dict[str, Any]:
     role_state = role_subject_state.setdefault(entry.role_name, {})
@@ -110,12 +112,8 @@ def record_destination(
     destination["rule_names"].add(str(rule_name or "").strip())
     if str(rule_description or "").strip():
         destination["rule_descriptions"].add(str(rule_description).strip())
-    destination["matched_permissions"].update(
-        token for permission in (matched_permissions or ()) if (token := str(permission or "").strip())
-    )
-    destination["evidence_bindings"].update(
-        token for binding_id in (evidence_bindings or ()) if (token := str(binding_id or "").strip())
-    )
+    destination["matched_permissions"].update(normalize_str_set(list(matched_permissions or ())))
+    destination["evidence_bindings"].update(normalize_str_set(list(evidence_bindings or ())))
     destination["attached_scope_ids"].add(entry.attached_scope_name)
     destination["attached_scope_types"].add(entry.attached_scope_type)
     destination["sources"].add(entry.source)

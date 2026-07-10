@@ -10,6 +10,40 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint and type-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Don't leave the GITHUB_TOKEN in the runner's git config where PR code
+          # could reuse it (defense-in-depth; the token is read-only here anyway).
+          persist-credentials: false
+
+      - name: Setup Python
+        # v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install lint tools
+        # ruff/mypy do not need the project's runtime deps (mypy uses
+        # ignore_missing_imports), so install them directly for a fast job.
+        run: python -m pip install ruff==0.15.21 mypy==2.2.0
+
+      - name: Ruff (blocking)
+        run: ruff check .
+
+      - name: Mypy (informational, non-blocking)
+        # Scoped to gcpwn/core via pyproject. Tracking issue: drive this to
+        # zero, then remove continue-on-error to make it a blocking gate.
+        continue-on-error: true
+        run: mypy
+
   tests:
     name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -19,12 +53,16 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout
-        # v6.0.2
+        # v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Don't leave the GITHUB_TOKEN in the runner's git config where PR code
+          # could reuse it (defense-in-depth; the token is read-only here anyway).
+          persist-credentials: false
 
       - name: Setup Python
-        # v6.2.0
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        # v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -37,3 +75,51 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q -ra tests/unit tests/module_contracts
+
+  package:
+    name: Package smoke (wheel builds, installs, runs)
+    # Catches packaging regressions the source-tree tests miss: bundled data files,
+    # the console-script entry point, and the writable databases path. --no-deps
+    # keeps it fast (the smoke does not need the heavy runtime deps).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Don't leave the GITHUB_TOKEN in the runner's git config where PR code
+          # could reuse it (defense-in-depth; the token is read-only here anyway).
+          persist-credentials: false
+
+      - name: Setup Python
+        # v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build and install the wheel
+        run: |
+          python -m pip install -U pip build
+          python -m build --wheel
+          python -m pip install --no-deps dist/*.whl
+
+      - name: Smoke the installed package from outside the source tree
+        # Run from runner.temp so `import gcpwn` resolves to the INSTALLED wheel,
+        # not ./gcpwn. Verifies the entry point, the bundled data files (mappings +
+        # a per-module wordlist), and that the databases path is writable (never
+        # under the read-only site-packages install dir).
+        working-directory: ${{ runner.temp }}
+        run: |
+          gcpwn --help >/dev/null
+          python - <<'PY'
+          from importlib import resources
+          from gcpwn.core.db import DataController
+          from gcpwn.core.utils.module_helpers import load_mapping_data
+          assert load_mapping_data("module-mappings.json", kind="json"), "mappings not bundled"
+          assert load_mapping_data("database_info.json", kind="json"), "database_info.json not bundled"
+          assert resources.files("gcpwn.modules.gcp.cloudstorage.utilities.data").joinpath("top_level_domains.txt").is_file(), "per-module data not bundled"
+          assert "site-packages" not in DataController.database_path, "databases path under site-packages"
+          print("Package smoke passed.")
+          PY

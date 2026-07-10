@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import OpenGraphBuilder, node_to_opengraph
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import (
-    BindingPlusScopeEntry,
     ScopeResourceIndexes,
     _emit_iam_binding_edges_from_entries,
 )
+
+from conftest import make_binding_entry
 
 
 class _TestContext:
@@ -41,36 +42,6 @@ class _TestContext:
 
     def scope_resource_indexes(self) -> ScopeResourceIndexes:
         return self._scope_indexes
-
-
-def _entry(*, binding_suffix: str, role_name: str, permissions: set[str]) -> BindingPlusScopeEntry:
-    return BindingPlusScopeEntry(
-        principal_id="user:alice@example.com",
-        expanded_from_convenience_member="",
-        binding_composite_id=f"iambinding:{role_name}@project:demo-project#{binding_suffix}",
-        role_name=role_name,
-        permissions=frozenset(permissions),
-        attached_scope_name="projects/demo-project",
-        attached_scope_type="project",
-        attached_scope_display="demo-project",
-        source_scope_name="projects/demo-project",
-        source_scope_type="project",
-        source_scope_display="demo-project",
-        effective_scope_name="projects/demo-project",
-        effective_scope_type="project",
-        effective_scope_display="demo-project",
-        project_id="demo-project",
-        inherited=False,
-        source="unit_test",
-        condition_expr_raw="",
-        condition_hash="",
-        condition_option_id="",
-        condition_option_summary="",
-        condition_services=frozenset(),
-        condition_resource_types=frozenset(),
-        condition_name_prefixes=frozenset(),
-        condition_name_equals=frozenset(),
-    )
 
 
 def _test_combo_hop_rule() -> dict:
@@ -115,12 +86,12 @@ def _test_combo_hop_rule() -> dict:
 def test_key_combo_rule_does_not_emit_partial_chain_without_targets() -> None:
     context = _TestContext(allow_resources=[])
     entries = [
-        _entry(
+        make_binding_entry(
             binding_suffix="create",
             role_name="roles/compute.instanceAdmin.v1",
             permissions={"compute.instances.create"},
         ),
-        _entry(
+        make_binding_entry(
             binding_suffix="actas",
             role_name="roles/iam.serviceAccountUser",
             permissions={"iam.serviceAccounts.actAs"},
@@ -153,12 +124,12 @@ def test_key_combo_rule_uses_short_multi_binding_display_name() -> None:
         ]
     )
     entries = [
-        _entry(
+        make_binding_entry(
             binding_suffix="create",
             role_name="roles/compute.instanceAdmin.v1",
             permissions={"compute.instances.create"},
         ),
-        _entry(
+        make_binding_entry(
             binding_suffix="actas",
             role_name="roles/iam.serviceAccountUser",
             permissions={"iam.serviceAccounts.actAs"},
