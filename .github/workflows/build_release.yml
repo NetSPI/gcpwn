@@ -212,7 +212,7 @@ jobs:
         shell: bash
         run: |
           # gcpwn's per-service modules are imported DYNAMICALLY by dotted path (from
-          # mappings/module-mappings.json) and live in PEP-420 namespace packages
+          # mappings/module_mappings.json) and live in PEP-420 namespace packages
           # (only gcpwn/__init__.py exists). PyInstaller's static analysis and
           # --collect-submodules CANNOT discover them, so we enumerate the full module
           # set by walking the source tree and pass each as --hidden-import. Importing

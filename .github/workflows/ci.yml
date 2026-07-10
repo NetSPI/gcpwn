@@ -117,7 +117,7 @@ jobs:
           from importlib import resources
           from gcpwn.core.db import DataController
           from gcpwn.core.utils.module_helpers import load_mapping_data
-          assert load_mapping_data("module-mappings.json", kind="json"), "mappings not bundled"
+          assert load_mapping_data("module_mappings.json", kind="json"), "mappings not bundled"
           assert load_mapping_data("database_info.json", kind="json"), "database_info.json not bundled"
           assert resources.files("gcpwn.modules.gcp.cloudstorage.utilities.data").joinpath("top_level_domains.txt").is_file(), "per-module data not bundled"
           assert "site-packages" not in DataController.database_path, "databases path under site-packages"
