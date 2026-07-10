@@ -35,9 +35,12 @@ from gcpwn.core.utils.resume import resolve_run_token
 from gcpwn.core.utils.scoped_session import ProjectScopedSession
 from gcpwn.core.utils.service_runtime import (
     add_standard_arguments,
+    cancel_requested,
+    clear_cancel,
     flatten_arg_groups,
     parse_csv_arg,
     parse_id_input_values,
+    request_cancel,
 )
 
 # (service dest -> CLI flag) for the per-project enumerators the orchestrator
@@ -683,6 +686,69 @@ def _ledger_clear(session, run_id: str) -> None:
     session.delete_data(_TASK_LEDGER_TABLE, {"run_id": run_id})
 
 
+def _resume_hint(mod_name: str, run_id: str, workers: int) -> str:
+    """The 'resume THIS run with: ...' command line, shown at run start AND when a run
+    is interrupted, so the token is never buried in scrollback."""
+    return (
+        f"modules run {mod_name} ... --parallel-services {workers} --resume {run_id}"
+    )
+
+
+def _token_generated_at(run_id: str) -> str:
+    """Run tokens are minted as a UTC ``%Y%m%d%H%M%S`` timestamp -> render it back to a
+    readable date. Non-timestamp tokens (unlikely) fall back to the raw value."""
+    try:
+        return datetime.strptime(run_id, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (ValueError, TypeError):
+        return "unknown"
+
+
+def _list_run_tokens(session) -> int:
+    """Print every resumable run token in this workspace with when it was generated,
+    its last activity, and how far it got. Interrupted/failed runs persist their
+    ledger; cleanly-finished runs clear theirs, so this lists what you can --resume."""
+    rows = session.get_data(
+        _TASK_LEDGER_TABLE,
+        columns=["run_id", "status", "started_at", "finished_at"],
+    ) or []
+    if not rows:
+        print(f"{UtilityTools.YELLOW}[!] No saved run tokens -- nothing to resume "
+              f"(finished runs clear their ledger).{UtilityTools.RESET}")
+        return 0
+
+    runs: dict[str, dict] = {}
+    for r in rows:
+        rid = str(r.get("run_id") or "")
+        if not rid:
+            continue
+        agg = runs.setdefault(rid, {"total": 0, "done": 0, "failed": 0, "last": ""})
+        agg["total"] += 1
+        status = str(r.get("status") or "")
+        if status == "done":
+            agg["done"] += 1
+        elif status == "failed":
+            agg["failed"] += 1
+        for stamp in (r.get("finished_at"), r.get("started_at")):
+            stamp = str(stamp or "")
+            if stamp and stamp > agg["last"]:
+                agg["last"] = stamp
+
+    print(f"{UtilityTools.BOLD}[*] Saved run tokens ({len(runs)}) -- resume with "
+          f"--parallel-services N --resume <TOKEN>:{UtilityTools.RESET}")
+    for rid in sorted(runs, reverse=True):
+        agg = runs[rid]
+        remaining = agg["total"] - agg["done"]
+        state = "complete" if remaining == 0 else f"{remaining} unit(s) left"
+        if agg["failed"]:
+            state += f", {agg['failed']} failed"
+        last = str(agg["last"] or "").replace("T", " ")[:19] or "n/a"
+        print(
+            f"    {rid}  | generated {_token_generated_at(rid)} | last activity {last} "
+            f"| {agg['done']}/{agg['total']} done ({state})"
+        )
+    return 0
+
+
 def run_parallel(session, user_args, explicit_project_ids=None, *, include_workspace: bool = True) -> int:
     """Cross-project parallel enum_all with pipelined IAM policy bindings.
 
@@ -705,6 +771,16 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         IAMPolicyBindingsResource,
         materialize_member_permissions,
     )
+
+    # --list-tokens is a standalone report: list resumable tokens and exit without
+    # touching the pool (works whether or not --parallel-services was passed).
+    if "--list-tokens" in list(user_args or []):
+        return _list_run_tokens(session)
+
+    # enum_gcp re-exports run_parallel with include_workspace=False; surface the
+    # invoked name so token/resume hints say the command the user actually typed.
+    mod_name = "enum_all" if include_workspace else "enum_gcp"
+    clear_cancel()  # fresh run: reset any cancel flag left set by a prior Ctrl+C
 
     global_tokens, workers = _extract_global_tokens(user_args)
     services = _enabled_parallel_services(user_args)
@@ -750,8 +826,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         )
     print(
         f"{UtilityTools.BOLD}[*] Run token: {run_id}{UtilityTools.RESET}"
-        f"  (interrupt-safe -- resume THIS run with:  modules run enum_all ... "
-        f"--parallel-services {workers} --resume {run_id})"
+        f"  (interrupt-safe -- resume THIS run with:  {_resume_hint(mod_name, run_id, workers)})"
     )
     resume_note = f" (resuming: {skipped} services already done)" if skipped else ""
     print(
@@ -768,6 +843,10 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             remaining[pid] += 1
 
         def _run_service(project_id: str, service_key: str, service_flag: str) -> bool:
+            if cancel_requested():
+                # Aborting: don't touch the ledger so the unit stays 'pending' and a
+                # --resume re-runs it. (begin/end_task both skipped -> counts stay balanced.)
+                return True
             scoped = ProjectScopedSession(session, project_id)
             scoped._enum_all_suppress_progress = True
             output.begin_task(f"{service_key}@{project_id}")
@@ -775,7 +854,14 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             failed = False
             try:
                 run_module([*global_tokens, "--phase", "services", service_flag], scoped)
-                _ledger_mark(session, project_id, service_key, "done", run_id)
+                if cancel_requested():
+                    # A Ctrl+C cut this service's region/zone fan-out short, so its data
+                    # may be partial -- mark it NOT done so --resume re-enumerates it fully.
+                    failed = True
+                    _ledger_mark(session, project_id, service_key, "failed", run_id,
+                                 error="interrupted: partial enumeration; will re-run on resume")
+                else:
+                    _ledger_mark(session, project_id, service_key, "done", run_id)
             except Exception:
                 failed = True
                 _ledger_mark(session, project_id, service_key, "failed", run_id, error=traceback.format_exc())
@@ -792,6 +878,8 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             # service's resources exist. Otherwise the failed service's resources would keep
             # their direct IAM policies forever unenumerated (Phase 3 orphan reconcile skips
             # in-targets projects).
+            if cancel_requested():
+                return  # aborting: leave the binding unit unmarked so --resume re-runs it
             scoped = ProjectScopedSession(session, bind_project)
             scoped._enum_all_suppress_progress = True
             output.begin_task(label)
@@ -799,7 +887,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             failed = False
             try:
                 IAMPolicyBindingsResource(scoped).run(save_raw_policies=True, scope=scope, sync_users=False)
-                if mark_done:
+                if mark_done and not cancel_requested():
                     _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "done", run_id)
                 else:
                     _ledger_mark(session, ledger_pid, _BINDINGS_SERVICE, "failed", run_id,
@@ -812,7 +900,11 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
 
         base_project = str(session.project_id or "")
         with ParallelOutputManager(total=total_units) as output:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Manual (not `with`) so a Ctrl+C can shut the pool down with
+            # cancel_futures=True -- dropping the queued units immediately -- instead of
+            # the context manager's shutdown(wait=True) draining the whole backlog first.
+            executor = ThreadPoolExecutor(max_workers=workers)
+            try:
                 binding_futures = []
                 # org + folder bindings depend only on Phase 1 -> launch immediately.
                 if hierarchy_pending:
@@ -855,6 +947,23 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
 
                 for future in binding_futures:
                     future.result()
+            except KeyboardInterrupt:
+                # One Ctrl+C: flip the cancel flag so in-flight workers (and their inner
+                # region fan-outs) stop, and echo the resume token so it isn't buried in
+                # scrollback. Re-raise for the REPL's handler; the finally drains the pool.
+                request_cancel()
+                print(
+                    f"\n{UtilityTools.YELLOW}[!] Interrupted -- resume THIS run with:  "
+                    f"{_resume_hint(mod_name, run_id, workers)}{UtilityTools.RESET}"
+                )
+                raise
+            finally:
+                # cancel_futures drops the queued units at once. On the interrupt path
+                # cancel is set -> wait=True so the <=N in-flight workers finish (their
+                # inner fan-outs bail immediately) BEFORE the prompt returns -- no
+                # background chatter, and no thread survives into the next command to
+                # race clear_cancel(). Normal path: all futures already done -> no wait.
+                executor.shutdown(wait=cancel_requested(), cancel_futures=True)
 
     # Phase 3: reconcile cached resources missing a project_id, then rebuild the
     # principal/user table once now that every node's bindings have landed.
@@ -951,6 +1060,15 @@ def run_module(user_args, session):
             "Resume a prior --parallel-services run by its token (printed at that run's "
             "start): re-runs ONLY the units that run left incomplete, instead of starting "
             "over. Requires --parallel-services > 1."
+        ),
+    )
+    parser.add_argument(
+        "--list-tokens",
+        dest="list_tokens",
+        action="store_true",
+        help=(
+            "List every saved run token (interrupted/failed --parallel-services runs) with "
+            "when it was generated and its progress, then exit. Pick one to pass to --resume."
         ),
     )
     parser.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
@@ -1106,6 +1224,11 @@ def run_module(user_args, session):
         },
     )
     args = parser.parse_args(user_args)
+
+    # Standalone report: list resumable run tokens and exit (also handled in the
+    # parallel dispatcher, but keep it here so the flag works on any code path).
+    if getattr(args, "list_tokens", False):
+        return _list_run_tokens(session)
 
     # Per-download-type wall-clock cap; download loops in the sub-modules read it off
     # the shared session (DownloadBudget). 0 = unlimited.

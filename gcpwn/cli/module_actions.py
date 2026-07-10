@@ -22,7 +22,7 @@ from typing import Any, Sequence
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.hierarchy import render_tree_lines
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.service_runtime import flatten_arg_groups, parse_id_input_values
+from gcpwn.core.utils.service_runtime import clear_cancel, flatten_arg_groups, parse_id_input_values
 
 
 @dataclass(frozen=True)
@@ -599,6 +599,9 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
     always restored after the loop. KeyboardInterrupt returns 0 (clean abort).
     """
     try:
+        # Reset any cooperative-cancel flag left set by a previous run's Ctrl+C so a
+        # fresh module never bails out of its fan-out loops on start.
+        clear_cancel()
         runner = _parse_runner_args(module_args)
         passthrough_args = list(runner.passthrough)
 
@@ -669,7 +672,10 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
         # enum_all cross-project parallel mode: drive all projects through one
         # orchestrator (RM-once -> services pool -> bindings-once) instead of the
         # per-project sequential loop. Opt-in via --parallel-services N (N>1).
-        if mod_short in ("enum_all", "enum_gcp") and _parallel_services_count(passthrough_args) > 1:
+        # --list-tokens is also routed here so it runs ONCE (not per project).
+        if mod_short in ("enum_all", "enum_gcp") and (
+            _parallel_services_count(passthrough_args) > 1 or "--list-tokens" in passthrough_args
+        ):
             run_parallel = getattr(module, "run_parallel", None)
             if callable(run_parallel):
                 if runner.project_ids:
@@ -682,7 +688,12 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
                     result = run_parallel(session, list(passthrough_args), explicit_targets)
                     return 0 if result in (0, 1, 2) else -1
                 except KeyboardInterrupt:
-                    print(f"{UtilityTools.YELLOW}[!] Interrupted. Re-run to resume from the task ledger.{UtilityTools.RESET}")
+                    # run_parallel already echoed the exact resume command + token on its
+                    # way out; just note how to see all saved tokens later.
+                    print(
+                        f"{UtilityTools.YELLOW}[!] Interrupted. Resume with the token above, "
+                        f"or 'modules run {mod_short} --list-tokens' to list saved runs.{UtilityTools.RESET}"
+                    )
                     return -1
 
         plan, err = _plan_execution(session, action, runner, module_import_path)

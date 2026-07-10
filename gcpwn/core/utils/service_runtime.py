@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 from collections import defaultdict
 from time import perf_counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +36,28 @@ _API_DISABLED_SUBSTRINGS = (
     "Enable it by visiting",
     "has not been used in project",
 )
+
+# Cooperative cancellation. A single Ctrl+C in the REPL sets this flag so every
+# fan-out loop -- ``parallel_map`` here AND the enum_all service pool -- stops
+# starting NEW work immediately instead of draining its whole queue (the reason a
+# lone Ctrl+C used to look ignored: the pool kept feeding queued units). Cleared
+# at the start of each fresh orchestrator run.
+_CANCEL_EVENT = threading.Event()
+
+
+def request_cancel() -> None:
+    """Signal all cooperative fan-out loops to stop launching new work ASAP."""
+    _CANCEL_EVENT.set()
+
+
+def clear_cancel() -> None:
+    """Reset the cancel flag at the start of a fresh run."""
+    _CANCEL_EVENT.clear()
+
+
+def cancel_requested() -> bool:
+    """True once :func:`request_cancel` fired (until :func:`clear_cancel`)."""
+    return _CANCEL_EVENT.is_set()
 
 try:  # pragma: no cover
     from google.api_core.exceptions import Forbidden as _Forbidden, NotFound as _NotFound
@@ -461,13 +484,16 @@ def parallel_map(
     if worker_count <= 1:
         output = []
         for idx, item in enumerate(entries, start=1):
+            if cancel_requested():
+                break
             output.append(worker(item))
             if show_progress and _should_emit(idx):
                 print(f"[*] {label}: {idx}/{total} completed (last={_progress_token(item)})")
         return output
 
     results: list[Any] = [None] * len(entries)
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+    executor = ThreadPoolExecutor(max_workers=worker_count)
+    try:
         future_to_context = {executor.submit(worker, item): (idx, item) for idx, item in enumerate(entries)}
         completed = 0
         for future in as_completed(future_to_context):
@@ -480,6 +506,20 @@ def parallel_map(
                 completed += 1
                 if show_progress and _should_emit(completed):
                     print(f"[*] {label}: {completed}/{total} completed (last={_progress_token(item)})")
+            # A single Ctrl+C sets the cancel flag; stop collecting and let the
+            # finally-block drop the still-queued regions/zones rather than draining
+            # the whole fan-out.
+            if cancel_requested():
+                break
+    except KeyboardInterrupt:
+        request_cancel()
+        raise
+    finally:
+        # cancel_futures drops the still-queued regions/zones immediately. On the
+        # cancel/interrupt path we DO wait for the <=worker_count in-flight calls to
+        # finish so nothing keeps printing after control returns to the REPL; on the
+        # normal path every future is already done so the wait is a no-op.
+        executor.shutdown(wait=cancel_requested(), cancel_futures=True)
     return results
 
 
@@ -499,6 +539,8 @@ def map_regions_with_disabled_short_circuit(
     ``[(region, result)]`` pairs in region order."""
     region_list = [str(region or "").strip() for region in regions or [] if str(region or "").strip()]
     if not region_list:
+        return []
+    if cancel_requested():  # a Ctrl+C landed mid-service: don't start a new region scan
         return []
 
     first_region = region_list[0]
