@@ -31,7 +31,7 @@
 
 > In the spirit of transparency: parts of this project and documentation were developed with LLM coding assistance. Review code and behavior in your environment before operational use. Ideally the dependency summary at the end of the README and explanations throughout should be enough to meet and verify your operational needs.
 
-GCPwn (G-C-pwn) is a Google Cloud offensive security assessment framework built for workspace-driven credential handling, service enumeration, artifact collection, and graph-based attack-path analysis.
+GCPwn (G-C-pwn) is a Google Cloud offensive security assessment framework built for workspace-driven credential handling, service enumeration, artifact collection, and graph-based attack-path analysis. It also supports limited Google Workspace enumeration at this time.
 
 It is designed as a one-stop shop for three primary workflows:
 
@@ -210,6 +210,17 @@ modules run enum_gcp --iam --all-permissions --download
 
 # Same GCP sweep, but 3 services concurrently:
 modules run enum_gcp --iam --parallel-services 3
+
+# Pick specific services (comma/space separated tokens; omit to run all). See `-h` / --list-modules.
+modules run enum_gcp --modules storage,iam gke
+
+# --filter-enabled-services: probe each project's ENABLED APIs (serviceusage) ONCE, then
+# enumerate ONLY the services whose API is enabled instead of brute-forcing all ~40.
+# Falls back to running everything for a project if the probe is denied/empty.
+modules run enum_gcp --iam --filter-enabled-services
+
+# Reuse the already-cached project/folder/org hierarchy (skip Resource Manager re-discovery).
+modules run enum_gcp --iam --no-enum-resources
 
 # Google Workspace only (users/groups/admin-roles/OUs/domains/devices/OAuth grants).
 # Needs Workspace admin creds, OR a service account with domain-wide delegation ->

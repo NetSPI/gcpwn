@@ -202,6 +202,86 @@ def _module_display_name(key: str) -> str:
     return key.replace("_", " ").title()
 
 
+# --smart: gate key -> the GCP API(s) whose ENABLED state means this service is worth
+# enumerating. serviceusage is run once, then only services whose API is enabled run.
+_SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
+    "cloud_compute": ("compute.googleapis.com",),
+    "cloud_compute_resources": ("compute.googleapis.com",),
+    "cloud_compute_network": ("compute.googleapis.com",),
+    "cloud_compute_lb": ("compute.googleapis.com",),
+    "cloud_functions": ("cloudfunctions.googleapis.com",),
+    "cloud_storage": ("storage.googleapis.com",),
+    "cloud_bigquery": ("bigquery.googleapis.com",),
+    "cloud_bigtable": ("bigtable.googleapis.com", "bigtableadmin.googleapis.com"),
+    "cloud_pubsub": ("pubsub.googleapis.com",),
+    "cloud_firestore": ("firestore.googleapis.com",),
+    "cloud_dns": ("dns.googleapis.com",),
+    "service_directory": ("servicedirectory.googleapis.com",),
+    "app_engine": ("appengine.googleapis.com",),
+    "cloud_secretsmanager": ("secretmanager.googleapis.com",),
+    "storage_transfer": ("storagetransfer.googleapis.com",),
+    "cloud_redis": ("redis.googleapis.com",),
+    "cloud_run": ("run.googleapis.com",),
+    "cloud_sql": ("sqladmin.googleapis.com", "sql-component.googleapis.com"),
+    "cloud_kms": ("cloudkms.googleapis.com",),
+    "artifact_registry": ("artifactregistry.googleapis.com",),
+    "gke": ("container.googleapis.com",),
+    "cloud_build": ("cloudbuild.googleapis.com",),
+    "cloud_composer": ("composer.googleapis.com",),
+    "cloud_tasks": ("cloudtasks.googleapis.com",),
+    "api_keys": ("apikeys.googleapis.com",),
+    "cloud_batch": ("batch.googleapis.com",),
+    "cloud_scheduler": ("cloudscheduler.googleapis.com",),
+    "cloud_workflows": ("workflows.googleapis.com",),
+    "spanner": ("spanner.googleapis.com",),
+    "alloydb": ("alloydb.googleapis.com",),
+    "orgpolicy": ("orgpolicy.googleapis.com",),
+    "eventarc": ("eventarc.googleapis.com",),
+    "workstations": ("workstations.googleapis.com",),
+    "dataproc": ("dataproc.googleapis.com",),
+    "dataflow": ("dataflow.googleapis.com",),
+    "notebooks": ("notebooks.googleapis.com",),
+    "cloud_deploy": ("clouddeploy.googleapis.com",),
+    "bigquery_datatransfer": ("bigquerydatatransfer.googleapis.com",),
+    "asset_inventory": ("cloudasset.googleapis.com",),
+}
+
+# Under --smart these run REGARDLESS of the enabled-API probe: foundational (hierarchy /
+# IAM / the probe itself) or not cleanly gated by a single enable-able API.
+_SMART_ALWAYS_KEYS = frozenset(
+    {"resource_manager", "cloud_iam", "service_usage", "cloud_billing", "cloud_shell", "cloud_logging"}
+)
+
+
+def _smart_enabled_gate_keys(session, project_id: str) -> set[str] | None:
+    """Probe enabled APIs (serviceusage) for one project -> the service gate keys to run.
+
+    Runs enum_serviceusage once, reads the ENABLED services, and maps their API names to
+    gate keys (plus the always-on foundational keys). Returns None when the probe finds
+    NOTHING (API disabled / denied / empty) so the caller falls back to running EVERY
+    service -- "smart when we can see, brute-force when we can't."
+    """
+    try:
+        _run_other_module(session, [], "gcpwn.modules.gcp.serviceusage.enumeration.enum_serviceusage")
+        rows = session.get_data(
+            "serviceusage_services", columns=["service_name", "state"], where={"project_id": project_id}
+        ) or []
+    except Exception:
+        return None
+    enabled_apis = {
+        str(r.get("service_name") or "").strip().lower()
+        for r in rows
+        if str(r.get("state") or "").upper() == "ENABLED"
+    }
+    if not enabled_apis:
+        return None  # couldn't see the enabled set -> fall back to brute-forcing all services
+    keys = set(_SMART_ALWAYS_KEYS)
+    for gate_key, apis in _SERVICE_ENABLED_API.items():
+        if any(api in enabled_apis for api in apis):
+            keys.add(gate_key)
+    return keys
+
+
 def _print_module_tokens() -> None:
     """Print the --modules token vocabulary (canonical name + aliases), grouped."""
     aliases_by_key: dict[str, list[str]] = {}
@@ -948,11 +1028,31 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         print(f"{UtilityTools.RED}[X] No target projects resolved; nothing to enumerate.{UtilityTools.RESET}")
         return -1
 
+    # --filter-enabled-services: probe each project's ENABLED APIs once (serially, before
+    # the pool) and drop units for services whose API is disabled. A probe that finds
+    # nothing -> that project keeps all services (fall back to brute force).
+    smart = any(str(a).strip() in ("--filter-enabled-services", "--filter-enabled") for a in (user_args or []))
+    smart_keys_by_project: dict[str, set[str] | None] = {}
+    if smart:
+        print(f"{UtilityTools.BOLD}[*] --filter-enabled-services: probing enabled APIs per project (serviceusage)...{UtilityTools.RESET}")
+        for project_id in targets:
+            scoped = ProjectScopedSession(session, project_id)
+            keys = _smart_enabled_gate_keys(scoped, project_id)
+            smart_keys_by_project[project_id] = keys
+            if keys is None:
+                print(f"[*] --filter-enabled-services: {project_id} -> probe empty/denied; running ALL services.")
+            else:
+                names = sorted({_module_display_name(k) for k in keys if k not in _SMART_ALWAYS_KEYS})
+                print(f"[*] --filter-enabled-services: {project_id} -> {len(names)} enabled: {', '.join(names) or '(foundational only)'}")
+
     done_units = _ledger_done_units(session, run_id)
     tasks: list[tuple[str, str, str]] = []
     skipped = 0
     for project_id in targets:
+        proj_smart = smart_keys_by_project.get(project_id)
         for service_key, service_flag in services:
+            if proj_smart is not None and service_key not in proj_smart:
+                continue  # --smart: this project's API for the service is disabled
             if (project_id, service_key) in done_units:
                 skipped += 1
                 continue
@@ -1188,6 +1288,18 @@ def run_module(user_args, session):
         dest="list_modules",
         action="store_true",
         help="List every --modules service token (with aliases) and exit.",
+    )
+    selection_group.add_argument(
+        "--filter-enabled-services",
+        "--filter-enabled",
+        dest="filter_enabled_services",
+        action="store_true",
+        help=(
+            "Probe each project's ENABLED APIs (serviceusage) ONCE, then enumerate only "
+            "the services whose API is enabled instead of brute-forcing all ~40. Falls "
+            "back to running everything for a project when the probe is denied/empty. "
+            "Composes with --modules (intersection)."
+        ),
     )
     selection_group.add_argument(
         "--skip-resource-manager",
@@ -1666,9 +1778,25 @@ def run_module(user_args, session):
         module_args = ["-v"] if args.debug else []
         _run_other_module(session, module_args, "gcpwn.modules.workspace.cloud_identity.enumeration.enum_cloud_identity")
 
+    # --filter-enabled-services: probe this project's ENABLED APIs once, then run only the
+    # services whose API is enabled. None -> probe failed/empty, so fall back to run all.
+    smart_keys: set[str] | None = None
+    if run_services and getattr(args, "filter_enabled_services", False):
+        smart_keys = _smart_enabled_gate_keys(session, str(session.project_id or ""))
+        if smart_keys is None:
+            print(f"{UtilityTools.YELLOW}[*] --filter-enabled-services: enabled-API probe found nothing for "
+                  f"{session.project_id}; falling back to enumerating all services.{UtilityTools.RESET}")
+        else:
+            enabled_names = sorted({_module_display_name(k) for k in smart_keys if k not in _SMART_ALWAYS_KEYS})
+            print(f"[*] --filter-enabled-services: {len(enabled_names)} enabled service(s) for {session.project_id}: "
+                  f"{', '.join(enabled_names) or '(none beyond foundational)'}")
+
+    def _smart_allows(spec: "ServiceSpec") -> bool:
+        return smart_keys is None or any(gate in smart_keys for gate in spec.gate_flags)
+
     # Per-project resource enumerators -> one declarative table (see _SERVICES).
     for spec in _SERVICES:
-        if run_services and _service_selected(spec, args, every_flag_missing):
+        if run_services and _service_selected(spec, args, every_flag_missing) and _smart_allows(spec):
             _run_other_module(session, _build_service_args(spec, args, _download_requested), spec.module)
 
     # Must be called last: builds IAM allow-policy cache across all cached resources.
