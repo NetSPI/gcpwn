@@ -37,6 +37,12 @@ def _parse_args(user_args):
         action="store_true",
         help="If Resource Manager hierarchy is missing, run enum_resources automatically before policy-binding collection.",
     )
+    parser.add_argument(
+        "--no-ensure-tree",
+        dest="no_ensure_tree",
+        action="store_true",
+        help="Never run enum_resources here; use only the already-cached hierarchy (set by enum_all --no-enum-resources).",
+    )
     for group_key, flag, help_text in SERVICE_GROUP_FLAGS:
         parser.add_argument(flag, dest=group_key, action="store_true", help=help_text)
     scope_group = parser.add_mutually_exclusive_group(required=False)
@@ -101,7 +107,7 @@ def run_module(user_args, session):
 
     # A scoped run is driven by the parallel orchestrator, which has already run
     # Resource Manager; don't re-run discovery on top of it.
-    should_ensure_tree = scope is None and (
+    should_ensure_tree = scope is None and not getattr(args, "no_ensure_tree", False) and (
         bool(args.ensure_tree) or selected_groups is None or "resource_manager" in selected_groups
     )
     if should_ensure_tree:

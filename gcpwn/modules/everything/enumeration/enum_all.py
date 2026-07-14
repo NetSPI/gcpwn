@@ -41,6 +41,7 @@ from gcpwn.core.utils.service_runtime import (
     parse_csv_arg,
     parse_id_input_values,
     request_cancel,
+    set_stop_on_denied,
 )
 
 # (service dest -> CLI flag) for the per-project enumerators the orchestrator
@@ -91,6 +92,131 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("bigquery_datatransfer", "--bigquery-datatransfer"),
     ("service_usage", "--service-usage"),
 )
+
+# Umbrella / once-per-run selectors that aren't in _PARALLEL_SERVICES but are still
+# selectable by name via --modules (dest key -> canonical).
+_EXTRA_SELECTORS: tuple[str, ...] = ("cloud_compute", "resource_manager", "workspace_identity")
+
+# Every per-service gate attr the arg-parsed namespace must carry. Services are chosen
+# ONLY via --modules now (no per-service CLI flags), so run_module seeds these all False
+# with parser.set_defaults and --modules flips the selected ones True.
+_ALL_GATE_KEYS: tuple[str, ...] = tuple(key for key, _flag in _PARALLEL_SERVICES) + _EXTRA_SELECTORS
+
+# Short, memorable --modules aliases -> the gate key (dest) they select. The full flag
+# name minus the leading -- (e.g. "cloud-storage") always works too; these are the
+# friendly shorthands on top of that.
+_MODULE_TOKEN_ALIASES: dict[str, str] = {
+    "compute": "cloud_compute", "gce": "cloud_compute", "vms": "cloud_compute",
+    "compute-resources": "cloud_compute_resources",
+    "compute-network": "cloud_compute_network", "network": "cloud_compute_network",
+    "compute-lb": "cloud_compute_lb", "lb": "cloud_compute_lb",
+    "functions": "cloud_functions", "gcf": "cloud_functions",
+    "storage": "cloud_storage", "gcs": "cloud_storage", "buckets": "cloud_storage",
+    "bigquery": "cloud_bigquery", "bq": "cloud_bigquery",
+    "bigtable": "cloud_bigtable",
+    "pubsub": "cloud_pubsub",
+    "firestore": "cloud_firestore",
+    "dns": "cloud_dns",
+    "servicedirectory": "service_directory",
+    "appengine": "app_engine", "gae": "app_engine",
+    "secrets": "cloud_secretsmanager", "secretmanager": "cloud_secretsmanager",
+    "secretsmanager": "cloud_secretsmanager",
+    "redis": "cloud_redis", "memorystore": "cloud_redis",
+    "iam": "cloud_iam",
+    "run": "cloud_run",
+    "sql": "cloud_sql",
+    "kms": "cloud_kms",
+    "artifactregistry": "artifact_registry", "ar": "artifact_registry",
+    "kubernetes": "gke",
+    "build": "cloud_build",
+    "composer": "cloud_composer",
+    "tasks": "cloud_tasks",
+    "apikeys": "api_keys", "keys": "api_keys",
+    "batch": "cloud_batch",
+    "scheduler": "cloud_scheduler",
+    "workflows": "cloud_workflows",
+    "billing": "cloud_billing",
+    "shell": "cloud_shell",
+    "logging": "cloud_logging", "logs": "cloud_logging",
+    "assetinventory": "asset_inventory", "cai": "asset_inventory", "asset": "asset_inventory",
+    "datatransfer": "bigquery_datatransfer",
+    "serviceusage": "service_usage",
+    "rm": "resource_manager", "resourcemanager": "resource_manager",
+    "projects": "resource_manager", "hierarchy": "resource_manager",
+    "workspace": "workspace_identity", "cloud-identity": "workspace_identity",
+    "workspace-cloud-identity": "workspace_identity",
+}
+
+
+def _norm_token(token: str) -> str:
+    """Canonicalize a --modules token: lowercased, no leading --, hyphens->underscores."""
+    return str(token or "").strip().lower().lstrip("-").replace("-", "_")
+
+
+# Normalized token -> gate key (dest). Built from every per-service flag/key, the
+# umbrella selectors, and the friendly aliases above.
+_MODULE_TOKEN_MAP: dict[str, str] = {}
+for _key, _flag in _PARALLEL_SERVICES:
+    _MODULE_TOKEN_MAP[_norm_token(_key)] = _key
+    _MODULE_TOKEN_MAP[_norm_token(_flag)] = _key
+for _sel in _EXTRA_SELECTORS:
+    _MODULE_TOKEN_MAP[_norm_token(_sel)] = _sel
+for _alias, _dest in _MODULE_TOKEN_ALIASES.items():
+    _MODULE_TOKEN_MAP[_norm_token(_alias)] = _dest
+
+
+def _split_module_tokens(raw_values) -> list[str]:
+    """Flatten --modules values (append+nargs groups) and split on commas/whitespace."""
+    out: list[str] = []
+    for group in raw_values or []:
+        for item in (group if isinstance(group, (list, tuple)) else [group]):
+            out.extend(tok for tok in str(item).replace(",", " ").split() if tok)
+    return out
+
+
+def _resolve_module_tokens(raw_values) -> tuple[set[str], list[str]]:
+    """Resolve --modules tokens to gate keys. Returns (selected_keys, unknown_tokens)."""
+    keys: set[str] = set()
+    unknown: list[str] = []
+    for token in _split_module_tokens(raw_values):
+        dest = _MODULE_TOKEN_MAP.get(_norm_token(token))
+        if dest:
+            keys.add(dest)
+        else:
+            unknown.append(token)
+    return keys, unknown
+
+
+def _module_display_name(key: str) -> str:
+    """Human name for a gate key, reusing the _SERVICE_NAME_OVERRIDES service labels."""
+    manual = {
+        "cloud_compute": "Compute Engine (all)",
+        "resource_manager": "Resource Manager (projects/folders/orgs)",
+        "workspace_identity": "Google Workspace Cloud Identity",
+    }
+    if key in manual:
+        return manual[key]
+    for spec in _SERVICES:
+        if key in spec.gate_flags:
+            return _SERVICE_NAME_OVERRIDES.get(spec.module.rsplit(".", 1)[-1], key.replace("_", " ").title())
+    return key.replace("_", " ").title()
+
+
+def _print_module_tokens() -> None:
+    """Print the --modules token vocabulary (canonical name + aliases), grouped."""
+    aliases_by_key: dict[str, list[str]] = {}
+    for alias, dest in _MODULE_TOKEN_ALIASES.items():
+        aliases_by_key.setdefault(dest, []).append(alias)
+    print(f"{UtilityTools.BOLD}[*] --modules service tokens "
+          f"(comma/space separated; omit --modules to run ALL){UtilityTools.RESET}")
+    ordered = [key for key, _flag in _PARALLEL_SERVICES] + list(_EXTRA_SELECTORS)
+    for key in ordered:
+        names = [key.replace("_", "-")] + sorted(aliases_by_key.get(key, []))
+        extra = f"  (aliases: {', '.join(names[1:])})" if len(names) > 1 else ""
+        print(f"    {names[0]:28} {_module_display_name(key)}{extra}")
+    print(f"\n    Example:  {UtilityTools.BOLD}modules run enum_gcp --modules storage,iam gke{UtilityTools.RESET}")
+
+
 @dataclass(frozen=True)
 class ServiceSpec:
     """One per-project resource enumerator. Replaces ~10 lines of hand-written
@@ -565,11 +691,14 @@ def _extract_global_tokens(user_args) -> tuple[list[str], int]:
     p.add_argument("--zones-list", dest="zones_list", default=None)
     p.add_argument("--download-output", dest="download_output", default=None)
     p.add_argument("--parallel-services", dest="parallel_services", type=int, default=1)
+    p.add_argument("--stop-on-denied", dest="stop_on_denied", action="store_true")
     g, _ = p.parse_known_args(list(user_args or []))
 
     tokens: list[str] = []
     if g.debug:
         tokens.append("-v")
+    if g.stop_on_denied:
+        tokens.append("--stop-on-denied")
     if g.iam:
         tokens.append("--iam")
     if g.get:
@@ -595,15 +724,17 @@ def _enabled_parallel_services(user_args) -> list[tuple[str, str]]:
     """Which per-project services to run, matching run_module's every_flag_missing
     semantics: no service flags -> all; otherwise only the ones requested."""
     p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    for key, flag in _PARALLEL_SERVICES:
-        p.add_argument(flag, dest=key, action="store_true")
-    p.add_argument("--cloud-compute", dest="cloud_compute", action="store_true")
-    p.add_argument("--resource-manager", dest="resource_manager", action="store_true")
-    p.add_argument("--workspace-cloud-identity", dest="workspace_identity", action="store_true")
+    p.set_defaults(**{key: False for key in _ALL_GATE_KEYS})
+    p.add_argument("--modules", action="append", nargs="+")
     g, _ = p.parse_known_args(list(user_args or []))
 
+    # Services are chosen via --modules only; resolve tokens to gate keys.
+    module_keys, _unknown = _resolve_module_tokens(getattr(g, "modules", None))
+    for key in module_keys:
+        setattr(g, key, True)
+
     selected = {key for key, _ in _PARALLEL_SERVICES if getattr(g, key, False)}
-    if g.cloud_compute:
+    if getattr(g, "cloud_compute", False):
         selected |= {"cloud_compute_resources", "cloud_compute_network", "cloud_compute_lb"}
 
     # Opt-in services (e.g. asset_inventory) are ADDITIVE: they never count toward
@@ -612,7 +743,7 @@ def _enabled_parallel_services(user_args) -> list[tuple[str, str]]:
     # matches run_module's every_flag_missing semantics (which excludes opt-in gates).
     opt_in_gates = {spec.gate_flags[0] for spec in _SERVICES if spec.opt_in}
     non_opt_in_selected = selected - opt_in_gates
-    any_service_flag = bool(non_opt_in_selected) or g.resource_manager or g.workspace_identity
+    any_service_flag = bool(non_opt_in_selected) or getattr(g, "resource_manager", False) or getattr(g, "workspace_identity", False)
     if not any_service_flag:
         non_opt_in_selected = {key for key, _ in _PARALLEL_SERVICES if key not in opt_in_gates}
     final = non_opt_in_selected | (selected & opt_in_gates)
@@ -799,9 +930,18 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
     # and list a tree's org custom roles once per run instead of once per project.
     session._enum_iam_org_cache = set()
 
-    # Phase 1: Resource Manager once (discovers the hierarchy + all projects).
-    print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
-    run_module([*global_tokens, "--phase", "rm", "--resource-manager"], session)
+    # Phase 1: Resource Manager once (discovers the hierarchy + all projects) --
+    # unless --no-enum-resources / --skip-resource-manager, in which case we reuse the
+    # already-cached hierarchy and go straight to the cached target projects.
+    skip_rm = any(
+        str(a).strip() in ("--skip-resource-manager", "--no-enum-resources") for a in (user_args or [])
+    )
+    if skip_rm:
+        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager "
+              f"SKIPPED (--no-enum-resources) -- reusing cached hierarchy{UtilityTools.RESET}")
+    else:
+        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
+        run_module([*global_tokens, "--phase", "rm", "--resource-manager"], session)
 
     targets = _resolve_target_projects(session, explicit_project_ids)
     if not targets:
@@ -1019,9 +1159,53 @@ def run_module(user_args, session):
     (bindings must run last so the allow-policy cache covers all discovered
     resources). Allowlist flags scope which projects/folders/orgs are enumerated.
     """
-    parser = argparse.ArgumentParser(description="Enumerate all services", allow_abbrev=False)
-    parser.add_argument("--download-output", required=False, help="Output directory for downloaded artifacts")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(
+        description=(
+            "Enumerate GCP services across the discovered project hierarchy. With no "
+            "--modules flag every service runs; pass --modules to pick a subset."
+        ),
+        allow_abbrev=False,
+    )
+
+    # Service selection (the primary knob) --------------------------------------
+    selection_group = parser.add_argument_group(
+        "Service Selection",
+        "Choose which services to enumerate. Omit --modules to run EVERY service.",
+    )
+    selection_group.add_argument(
+        "--modules",
+        action="append",
+        nargs="+",
+        metavar="SERVICE",
+        help=(
+            "Services to enumerate, comma/space separated (e.g. --modules storage,iam gke). "
+            "Accepts short names (storage, iam, bq, gke, secrets, ...) or full flag names "
+            "(cloud-storage). Omit to run ALL services. See --list-modules for every token."
+        ),
+    )
+    selection_group.add_argument(
+        "--list-modules",
+        dest="list_modules",
+        action="store_true",
+        help="List every --modules service token (with aliases) and exit.",
+    )
+    selection_group.add_argument(
+        "--skip-resource-manager",
+        "--no-enum-resources",
+        dest="skip_resource_manager",
+        action="store_true",
+        help=(
+            "Skip Resource Manager discovery: do NOT (re-)enumerate projects/folders/orgs; "
+            "reuse the already-cached hierarchy. Use when it is unchanged since a prior "
+            "(slow) run."
+        ),
+    )
+
+    output_group = parser.add_argument_group("Output & Downloads")
+    execution_group = parser.add_argument_group("Execution & Resume")
+    scope_group = parser.add_argument_group("Region / Zone Scope")
+    output_group.add_argument("--download-output", required=False, help="Output directory for downloaded artifacts")
+    output_group.add_argument(
         "--download-timeout",
         dest="download_timeout",
         type=int,
@@ -1032,7 +1216,7 @@ def run_module(user_args, session):
             "items are skipped and enumeration moves to the next type. Default: 0 = no limit."
         ),
     )
-    parser.add_argument(
+    output_group.add_argument(
         "--download-google-drive",
         dest="download_google_drive",
         action="store_true",
@@ -1042,14 +1226,25 @@ def run_module(user_args, session):
             "OFF by default so Drive files are never pulled unless explicitly requested."
         ),
     )
-    parser.add_argument("--threads", type=int, default=4, help="Worker threads for region/zone fan-out (default: 4)")
+    execution_group.add_argument("--threads", type=int, default=4, help="Worker threads for region/zone fan-out (default: 4)")
+    execution_group.add_argument(
+        "--stop-on-denied",
+        dest="stop_on_denied",
+        action="store_true",
+        help=(
+            "Speed knob: on the FIRST 403 permission-denied in a service's region/zone "
+            "fan-out, skip that service's remaining regions (treat it like a disabled "
+            "API) instead of probing every region. OFF by default (a denial in one "
+            "region doesn't prove denial in another)."
+        ),
+    )
     parser.add_argument(
         "--phase",
         choices=["all", "rm", "services"],
         default="all",
         help=argparse.SUPPRESS,  # internal: used by the parallel orchestrator to run one pipeline phase
     )
-    parser.add_argument(
+    execution_group.add_argument(
         "--parallel-services",
         type=int,
         default=1,
@@ -1059,7 +1254,7 @@ def run_module(user_args, session):
             "(printed at start); a plain re-run starts fresh."
         ),
     )
-    parser.add_argument(
+    execution_group.add_argument(
         "--resume",
         default=None,
         help=(
@@ -1068,7 +1263,7 @@ def run_module(user_args, session):
             "over. Requires --parallel-services > 1."
         ),
     )
-    parser.add_argument(
+    execution_group.add_argument(
         "--list-tokens",
         dest="list_tokens",
         action="store_true",
@@ -1077,8 +1272,8 @@ def run_module(user_args, session):
             "when it was generated and its progress, then exit. Pick one to pass to --resume."
         ),
     )
-    parser.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
-    parser.add_argument("--zones-list", required=False, help="Zones in comma-separated format")
+    scope_group.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
+    scope_group.add_argument("--zones-list", required=False, help="Zones in comma-separated format")
     allowlist_group = parser.add_argument_group(
         "Scoped Allowlist Options",
         "Optional scope controls. If no allowlist flags are provided, all discovered resources are in scope.",
@@ -1156,53 +1351,12 @@ def run_module(user_args, session):
         action="store_true",
         help="For Resource Manager, pass --all-permissions to test the large permission sets",
     )
-    parser.add_argument("--cloud-run", action="store_true", help="Execute Cloud Run enumeration")
-    parser.add_argument("--cloud-sql", action="store_true", help="Execute Cloud SQL enumeration")
-    parser.add_argument("--cloud-kms", action="store_true", help="Execute Cloud KMS enumeration")
-    parser.add_argument("--artifact-registry", action="store_true", help="Execute Artifact Registry enumeration")
-    parser.add_argument("--gke", action="store_true", help="Execute GKE enumeration")
-    parser.add_argument("--cloud-build", action="store_true", help="Execute Cloud Build enumeration")
-    parser.add_argument("--cloud-composer", action="store_true", help="Execute Cloud Composer enumeration")
-    parser.add_argument("--cloud-tasks", action="store_true", help="Execute Cloud Tasks enumeration")
-    parser.add_argument("--api-keys", action="store_true", help="Execute API Keys enumeration")
-    parser.add_argument("--cloud-compute-network", action="store_true", help="Execute Compute network enumeration")
-    parser.add_argument("--cloud-compute-lb", action="store_true", help="Execute Compute load balancing enumeration")
-    parser.add_argument("--cloud-batch", action="store_true", help="Execute Batch enumeration")
-    parser.add_argument("--resource-manager", action="store_true", help="Execute Resource Manager enumeration")
-    parser.add_argument("--cloud-compute", action="store_true", help="Execute all Compute Engine enumeration modules")
-    parser.add_argument("--cloud-compute-resources", action="store_true", help="Execute Compute resource enumeration")
-    parser.add_argument("--cloud-functions", action="store_true", help="Execute Cloud Functions enumeration")
-    parser.add_argument("--cloud-storage", action="store_true", help="Execute Cloud Storage enumeration")
-    parser.add_argument("--cloud-bigquery", action="store_true", help="Execute BigQuery enumeration")
-    parser.add_argument("--cloud-bigtable", action="store_true", help="Execute Bigtable enumeration")
-    parser.add_argument("--cloud-pubsub", action="store_true", help="Execute Pub/Sub enumeration")
-    parser.add_argument("--cloud-firestore", action="store_true", help="Execute Firestore enumeration")
-    parser.add_argument("--cloud-iam", action="store_true", help="Execute IAM enumeration")
-    parser.add_argument("--cloud-secretsmanager", action="store_true", help="Execute Secret Manager enumeration")
-    parser.add_argument("--cloud-redis", action="store_true", help="Execute Memorystore enumeration")
-    parser.add_argument("--storage-transfer", action="store_true", help="Execute Storage Transfer enumeration")
-    parser.add_argument("--cloud-dns", action="store_true", help="Execute Cloud DNS enumeration")
-    parser.add_argument("--service-directory", action="store_true", help="Execute Service Directory enumeration")
-    parser.add_argument("--app-engine", action="store_true", help="Execute App Engine enumeration")
-    parser.add_argument("--workspace-cloud-identity", dest="workspace_identity", action="store_true", help="Execute Google Workspace Cloud Identity enumeration")
-    parser.add_argument("--cloud-scheduler", action="store_true", help="Execute Cloud Scheduler enumeration")
-    parser.add_argument("--cloud-workflows", action="store_true", help="Execute Cloud Workflows enumeration")
-    parser.add_argument("--spanner", action="store_true", help="Execute Cloud Spanner enumeration")
-    parser.add_argument("--alloydb", action="store_true", help="Execute AlloyDB enumeration")
-    parser.add_argument("--orgpolicy", action="store_true", help="Execute Organization Policy enumeration")
-    parser.add_argument("--eventarc", action="store_true", help="Execute Eventarc enumeration")
-    parser.add_argument("--workstations", action="store_true", help="Execute Cloud Workstations enumeration")
-    parser.add_argument("--cloud-billing", action="store_true", help="Execute Cloud Billing enumeration")
-    parser.add_argument("--cloud-shell", action="store_true", help="Execute Cloud Shell enumeration")
-    parser.add_argument("--cloud-logging", action="store_true", help="Execute Cloud Logging enumeration")
-    parser.add_argument("--dataproc", action="store_true", help="Execute Dataproc enumeration")
-    parser.add_argument("--dataflow", action="store_true", help="Execute Dataflow enumeration")
-    parser.add_argument("--notebooks", action="store_true", help="Execute Vertex AI Workbench enumeration")
-    parser.add_argument("--cloud-deploy", action="store_true", help="Execute Cloud Deploy enumeration")
-    parser.add_argument("--bigquery-datatransfer", action="store_true", help="Execute BigQuery Data Transfer enumeration")
-    parser.add_argument("--service-usage", action="store_true", help="Execute Service Usage (enabled-API) enumeration")
-    parser.add_argument("--asset-inventory", action="store_true", help="Execute Cloud Asset Inventory enumeration (opt-in; skipped by default)")
-    parser.add_argument(
+    # Services are selected ONLY via --modules -- there are no per-service CLI flags
+    # (an old --cloud-storage now errors as unrecognized). The downstream logic
+    # (every_flag_missing / _service_selected / planning) still reads args.<gate_key>,
+    # so seed them all False here; --modules flips the selected ones True after parse.
+    parser.set_defaults(**{key: False for key in _ALL_GATE_KEYS})
+    output_group.add_argument(
         "--download",
         nargs="?",
         const="all",
@@ -1212,7 +1366,7 @@ def run_module(user_args, session):
             "--download buckets,function_env,secrets,bigquery_tables,cloudrun_revision_env,artifactregistry_files,compute_artifacts"
         ),
     )
-    parser.add_argument(
+    output_group.add_argument(
         "--dont-download",
         required=False,
         help=(
@@ -1231,6 +1385,25 @@ def run_module(user_args, session):
     )
     args = parser.parse_args(user_args)
 
+    # --list-modules: print the token vocabulary and exit.
+    if getattr(args, "list_modules", False):
+        _print_module_tokens()
+        return 1
+
+    # --modules storage,iam gke -> set the matching per-service gate attrs, exactly as
+    # if the legacy --cloud-storage/--cloud-iam/--gke flags had been passed. Everything
+    # downstream (every_flag_missing, _service_selected) then works unchanged.
+    if getattr(args, "modules", None):
+        selected_keys, unknown = _resolve_module_tokens(args.modules)
+        if unknown:
+            UtilityTools.print_error(
+                f"Unknown --modules token(s): {', '.join(unknown)}. "
+                f"Run 'modules run enum_gcp --list-modules' for valid tokens."
+            )
+            return -1
+        for key in selected_keys:
+            setattr(args, key, True)
+
     # Standalone report: list resumable run tokens and exit (also handled in the
     # parallel dispatcher, but keep it here so the flag works on any code path).
     if getattr(args, "list_tokens", False):
@@ -1239,6 +1412,10 @@ def run_module(user_args, session):
     # Per-download-type wall-clock cap; download loops in the sub-modules read it off
     # the shared session (DownloadBudget). 0 = unlimited.
     session.download_time_budget = int(getattr(args, "download_timeout", 0) or 0)
+
+    # --stop-on-denied: process-global read by the deep 403 handlers to short-circuit
+    # region/zone fan-out on the first permission denial. Idempotent per (re-)entry.
+    set_stop_on_denied(bool(getattr(args, "stop_on_denied", False)))
 
     if getattr(args, "resume", None) and int(getattr(args, "parallel_services", 1) or 1) <= 1:
         print(
@@ -1399,7 +1576,7 @@ def run_module(user_args, session):
     #   services -> the per-project resource enumerators (parallelizable)
     #   bindings -> enum_gcp_policy_bindings (once; aggregates across all projects)
     phase = getattr(args, "phase", "all")
-    do_rm = phase in ("all", "rm")
+    do_rm = phase in ("all", "rm") and not getattr(args, "skip_resource_manager", False)
     do_services = phase in ("all", "services")
     do_bindings = phase == "all"
     # Parallel orchestrator drives per-(project,service) sub-calls; suppress the
@@ -1408,7 +1585,8 @@ def run_module(user_args, session):
 
     planned_services = 0
     planned_services += int(
-        first_run
+        do_rm
+        and first_run
         and (
             args.resource_manager
             or every_flag_missing
@@ -1536,6 +1714,10 @@ def run_module(user_args, session):
     # Must be called last: builds IAM allow-policy cache across all cached resources.
     if do_bindings and last_run and not more:
         module_args = ["-v"] if args.debug else []
+        # --no-enum-resources also forbids the bindings phase from (re)discovering the
+        # hierarchy on an empty cache; it uses only what's already cached.
+        if getattr(args, "skip_resource_manager", False):
+            module_args.append("--no-ensure-tree")
         _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_gcp_policy_bindings")
 
     _ENUM_PROGRESS.update({"enabled": False, "index": 0, "total": 0})

@@ -425,8 +425,32 @@ def test_map_regions_short_circuits_on_not_enabled(capsys) -> None:
     assert out == [("us", "Not Enabled")]
     assert seen == ["us"]
     msg = capsys.readouterr().out
-    assert "API not enabled" in msg
+    assert "short-circuiting remaining regions" in msg
     assert "us" in msg
+
+
+def test_stop_on_denied_short_circuits_403_denial() -> None:
+    # A 403 permission denial normally returns None (keep probing other regions);
+    # under --stop-on-denied it returns the "Not Enabled" short-circuit sentinel.
+    forbidden = getattr(sr, "_FORBIDDEN_EXCEPTIONS", ())
+    if not forbidden:
+        pytest.skip("google.api_core not importable in this environment")
+    exc = forbidden[0]("The caller does not have permission")  # denial, not disabled-API
+
+    def call():
+        return sr.handle_service_error(
+            exc, api_name="compute.instances.list", resource_name="instances",
+            service_label="Compute Engine", project_id="p",
+        )
+
+    sr.set_stop_on_denied(False)
+    try:
+        assert call() is None  # default: don't stop the scan
+        sr.set_stop_on_denied(True)
+        assert call() == "Not Enabled"  # opted-in: short-circuit
+    finally:
+        sr.set_stop_on_denied(False)
+    assert sr.stop_on_denied() is False  # reset
 
 
 def test_map_regions_single_region_enabled() -> None:

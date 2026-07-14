@@ -59,6 +59,27 @@ def cancel_requested() -> bool:
     """True once :func:`request_cancel` fired (until :func:`clear_cancel`)."""
     return _CANCEL_EVENT.is_set()
 
+
+# Opt-in "fail fast on 403 denied": when set, a permission-denied 403 short-circuits
+# region/zone fan-out just like a disabled API does, instead of probing every region on
+# the chance that permissions differ per region. Process-global (like the cancel flag)
+# so it reaches the deep error handlers without threading a param through every list
+# call; the CLI resets it before each module run and enum_all sets it from --stop-on-denied.
+_STOP_ON_DENIED = threading.Event()
+
+
+def set_stop_on_denied(enabled: bool) -> None:
+    """Enable/disable short-circuiting region fan-out on the first 403 permission denial."""
+    if enabled:
+        _STOP_ON_DENIED.set()
+    else:
+        _STOP_ON_DENIED.clear()
+
+
+def stop_on_denied() -> bool:
+    """True when --stop-on-denied is active for the current run."""
+    return _STOP_ON_DENIED.is_set()
+
 try:  # pragma: no cover
     from google.api_core.exceptions import Forbidden as _Forbidden, NotFound as _NotFound
 
@@ -139,6 +160,11 @@ def handle_service_error(
             UtilityTools.print_403_api_disabled(service_label, project_id)
             return "Not Enabled" if return_not_enabled else None
         UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
+        # --stop-on-denied: treat the denial like a disabled API so region/zone fan-out
+        # short-circuits (returns the same "Not Enabled" sentinel) instead of probing on.
+        if return_not_enabled and stop_on_denied():
+            print(f"[*] --stop-on-denied: skipping remaining regions/zones for {api_name} after a 403 denial.")
+            return "Not Enabled"
         return None
     if _NOTFOUND_EXCEPTIONS and isinstance(exc, _NOTFOUND_EXCEPTIONS):
         if not quiet_not_found:
@@ -211,9 +237,13 @@ def handle_discovery_error(
         if service_label and is_api_disabled_error(exc):
             UtilityTools.print_403_api_disabled(service_label, getattr(session, "project_id", None))
             return "Not Enabled"  # disabled API -> short-circuit the rest of the region scan
-        # A permission denial on one resource/region must NOT stop the whole scan
-        # (matches handle_service_error); return None so other regions still run.
+        # A permission denial on one resource/region normally does NOT stop the scan
+        # (matches handle_service_error); return None so other regions still run --
+        # unless --stop-on-denied opted into short-circuiting on the first denial.
         UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
+        if stop_on_denied():
+            print(f"[*] --stop-on-denied: skipping remaining regions/zones for {api_name} after a 403 denial.")
+            return "Not Enabled"
         return None
     if status == 404:
         UtilityTools.print_404_resource(resource_name)
@@ -549,9 +579,11 @@ def map_regions_with_disabled_short_circuit(
     if first_result == "Not Enabled":
         if show_progress:
             label = str(progress_label or "Region scan").strip() or "Region scan"
+            # "Not Enabled" is the short-circuit sentinel for a disabled API OR (under
+            # --stop-on-denied) a 403 denial; the specific reason was printed above.
             print(
-                f"[*] {label}: API not enabled (detected in region '{first_region}'); "
-                "skipping remaining regions."
+                f"[*] {label}: short-circuiting remaining regions "
+                f"(see the reason reported for region '{first_region}' above)."
             )
         return results
 

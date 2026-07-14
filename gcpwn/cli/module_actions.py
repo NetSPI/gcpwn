@@ -22,7 +22,12 @@ from typing import Any, Sequence
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.hierarchy import render_tree_lines
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.service_runtime import clear_cancel, flatten_arg_groups, parse_id_input_values
+from gcpwn.core.utils.service_runtime import (
+    clear_cancel,
+    flatten_arg_groups,
+    parse_id_input_values,
+    set_stop_on_denied,
+)
 
 
 @dataclass(frozen=True)
@@ -600,8 +605,11 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
     """
     try:
         # Reset any cooperative-cancel flag left set by a previous run's Ctrl+C so a
-        # fresh module never bails out of its fan-out loops on start.
+        # fresh module never bails out of its fan-out loops on start. Likewise reset the
+        # --stop-on-denied short-circuit so it never leaks from one module run to the next
+        # (enum_all re-sets it from its own args).
         clear_cancel()
+        set_stop_on_denied(False)
         runner = _parse_runner_args(module_args)
         passthrough_args = list(runner.passthrough)
 

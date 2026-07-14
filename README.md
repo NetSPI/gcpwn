@@ -31,7 +31,7 @@
 
 > In the spirit of transparency: parts of this project and documentation were developed with LLM coding assistance. Review code and behavior in your environment before operational use. Ideally the dependency summary at the end of the README and explanations throughout should be enough to meet and verify your operational needs.
 
-GCPwn (gee-see-pwn) is a Google Cloud offensive security assessment framework built for workspace-driven credential handling, service enumeration, artifact collection, and graph-based attack-path analysis.
+GCPwn (G-C-pwn) is a Google Cloud offensive security assessment framework built for workspace-driven credential handling, service enumeration, artifact collection, and graph-based attack-path analysis.
 
 It is designed as a one-stop shop for three primary workflows:
 

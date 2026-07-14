@@ -336,32 +336,54 @@ def test_output_only_for_specs_with_download_output_true():
 # _service_selected                                                           #
 # --------------------------------------------------------------------------- #
 def test_run_module_parser_defines_every_service_flag():
-    # Regression: every service in _SERVICES must have its CLI flag wired into the
-    # run_module arg parser (the sequential path), not just _PARALLEL_SERVICES. A
-    # missing flag makes `enum_all --<flag>` hard-fail with 'unrecognized arguments'.
-    import inspect
+    # Regression: every service in _SERVICES must be wired into the run_module parser
+    # (the sequential path). The legacy --<flag> flags are now built by a loop over
+    # _PARALLEL_SERVICES (hidden from --help), so assert each service's gate key is
+    # covered there (or is the compute umbrella) -- a missing one makes `enum_all
+    # --<flag>` hard-fail with 'unrecognized arguments'.
+    from gcpwn.modules.everything.enumeration.enum_all import _PARALLEL_SERVICES
 
-    from gcpwn.modules.everything.enumeration.enum_all import run_module
-
-    src = inspect.getsource(run_module)
+    parallel_keys = {key for key, _flag in _PARALLEL_SERVICES}
     for spec in _SERVICES:
-        flag = "--" + spec.gate_flags[0].replace("_", "-")
-        assert flag in src, f"run_module parser is missing {flag} (service {spec.module})"
+        key = spec.gate_flags[0]
+        assert key in parallel_keys or key == "cloud_compute", (
+            f"service {spec.module} gate key {key!r} is not wired via _PARALLEL_SERVICES"
+        )
 
 
-def test_run_module_parser_workspace_identity_dest():
-    # Regression: the sequential run_module parser must map --workspace-cloud-identity
-    # to dest 'workspace_identity' -- the attribute the every_flag_missing/planning
-    # blocks read. Without the dest it parses to 'workspace_cloud_identity' and EVERY
-    # `modules run enum_all` invocation AttributeErrors before any service runs.
-    import inspect
-
-    from gcpwn.modules.everything.enumeration.enum_all import run_module
-
-    src = inspect.getsource(run_module)
-    assert 'dest="workspace_identity"' in src or "dest='workspace_identity'" in src, (
-        "--workspace-cloud-identity must declare dest='workspace_identity'"
+def test_every_service_flag_resolves_as_a_modules_token():
+    # Each service's legacy flag name must also work as a --modules token (so
+    # `--modules cloud-storage` == `--cloud-storage`), plus the friendly aliases.
+    from gcpwn.modules.everything.enumeration.enum_all import (
+        _MODULE_TOKEN_MAP,
+        _norm_token,
+        _resolve_module_tokens,
     )
+
+    for spec in _SERVICES:
+        key = spec.gate_flags[0]
+        assert _norm_token(key.replace("_", "-")) in _MODULE_TOKEN_MAP, f"{key} not a --modules token"
+    # a mixed comma/space batch resolves; unknown tokens are reported
+    keys, unknown = _resolve_module_tokens([["storage,iam", "gke"], ["bq"]])
+    assert keys == {"cloud_storage", "cloud_iam", "gke", "cloud_bigquery"}
+    assert not unknown
+    keys, unknown = _resolve_module_tokens([["storage", "definitely_not_a_service"]])
+    assert unknown == ["definitely_not_a_service"] and keys == {"cloud_storage"}
+
+
+def test_workspace_identity_is_seeded_and_selectable():
+    # Regression: workspace_identity must be a seeded gate key (so args.workspace_identity
+    # exists for the every_flag_missing/planning blocks -- otherwise every `modules run
+    # enum_all` AttributeErrors) AND reachable via --modules now that there is no
+    # --workspace-cloud-identity flag.
+    from gcpwn.modules.everything.enumeration.enum_all import (
+        _ALL_GATE_KEYS,
+        _MODULE_TOKEN_MAP,
+        _norm_token,
+    )
+
+    assert "workspace_identity" in _ALL_GATE_KEYS
+    assert _MODULE_TOKEN_MAP[_norm_token("workspace")] == "workspace_identity"
 
 
 def test_service_selected_true_when_every_flag_missing():
@@ -412,11 +434,11 @@ def test_parallel_services_opt_in_is_additive():
 
     bare = keys([])
     assert "cloud_storage" in bare and "asset_inventory" not in bare
-    # opt-in flag ALONE is additive (every non-opt-in service still runs, plus it)
-    only_opt_in = keys(["--asset-inventory"])
+    # opt-in token ALONE is additive (every non-opt-in service still runs, plus it)
+    only_opt_in = keys(["--modules", "asset-inventory"])
     assert {"asset_inventory", "cloud_storage", "cloud_run"} <= only_opt_in
-    # a real service flag + the opt-in flag -> just that service plus the opt-in
-    combo = keys(["--cloud-storage", "--asset-inventory"])
+    # a real service token + the opt-in token -> just that service plus the opt-in
+    combo = keys(["--modules", "storage,asset-inventory"])
     assert combo >= {"cloud_storage", "asset_inventory"} and "cloud_run" not in combo
 
 
