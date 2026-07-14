@@ -1514,54 +1514,14 @@ def run_module(user_args, session):
             return False
         return any(str(token).strip() in download_tokens for token in tokens)
 
+    # "No service was selected" -> run every (non-opt-in) service. Derived from the
+    # service table (via --modules-seeded gate attrs), so adding a service to
+    # _PARALLEL_SERVICES flows through automatically -- no hand-maintained flag list.
+    # Opt-in services (asset_inventory) are excluded: passing only an opt-in token
+    # still counts as "nothing selected" so the bare-run sweep stays additive.
+    _opt_in_keys = {spec.gate_flags[0] for spec in _SERVICES if spec.opt_in}
     every_flag_missing = not any(
-        [
-            args.cloud_run,
-            args.cloud_sql,
-            args.cloud_kms,
-            args.artifact_registry,
-            args.gke,
-            args.cloud_build,
-            args.cloud_composer,
-            args.cloud_tasks,
-            args.api_keys,
-            args.cloud_compute_network,
-            args.cloud_compute_lb,
-            args.cloud_batch,
-            args.resource_manager,
-            args.cloud_compute,
-            args.cloud_compute_resources,
-            args.cloud_functions,
-            args.cloud_storage,
-            args.cloud_bigquery,
-            args.cloud_bigtable,
-            args.cloud_pubsub,
-            args.cloud_firestore,
-            args.cloud_iam,
-            args.cloud_secretsmanager,
-            args.cloud_redis,
-            args.storage_transfer,
-            args.cloud_dns,
-            args.service_directory,
-            args.app_engine,
-            args.workspace_identity,
-            args.cloud_scheduler,
-            args.cloud_workflows,
-            args.spanner,
-            args.alloydb,
-            args.orgpolicy,
-            args.eventarc,
-            args.workstations,
-            args.cloud_billing,
-            args.cloud_shell,
-            args.cloud_logging,
-            args.dataproc,
-            args.dataflow,
-            args.notebooks,
-            args.cloud_deploy,
-            args.bigquery_datatransfer,
-            args.service_usage,
-        ]
+        getattr(args, key, False) for key in _ALL_GATE_KEYS if key not in _opt_in_keys
     )
 
     run_ctx = getattr(session, "_module_run_context", None) or {}
