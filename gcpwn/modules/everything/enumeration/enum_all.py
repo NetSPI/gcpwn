@@ -997,6 +997,20 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
     services = _enabled_parallel_services(user_args)
     run_id, is_resume = resolve_run_token(user_args)
 
+    # Dynamic phase numbering: RM discovery + services + reconcile are always present;
+    # the enabled-API probe (--filter-enabled-services) and the Workspace phase (enum_all
+    # only) each add one. So "phase N/M" reflects what this specific run actually does.
+    filter_enabled = any(
+        str(a).strip() in ("--filter-enabled-services", "--filter-enabled") for a in (user_args or [])
+    )
+    _total_phases = 3 + (1 if filter_enabled else 0) + (1 if include_workspace else 0)
+    _phase_ctr = {"n": 0}
+
+    def _phase(label: str) -> str:
+        _phase_ctr["n"] += 1
+        return (f"{UtilityTools.BOLD}[*] {mod_name} | phase {_phase_ctr['n']}/{_total_phases}: "
+                f"{label}{UtilityTools.RESET}")
+
     # Per-download-type wall-clock cap, read off the shared session by the sub-modules'
     # download loops (scoped sessions delegate the attribute to this base). 0 = unlimited.
     _dt_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
@@ -1017,10 +1031,9 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         str(a).strip() in ("--skip-resource-manager", "--no-enum-resources") for a in (user_args or [])
     )
     if skip_rm:
-        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager "
-              f"SKIPPED (--no-enum-resources) -- reusing cached hierarchy{UtilityTools.RESET}")
+        print(_phase("Resource Manager SKIPPED (--no-enum-resources) -- reusing cached hierarchy"))
     else:
-        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
+        print(_phase("Resource Manager (discovery)"))
         run_module([*global_tokens, "--phase", "rm", "--modules", "resource-manager"], session)
 
     targets = _resolve_target_projects(session, explicit_project_ids)
@@ -1028,37 +1041,39 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         print(f"{UtilityTools.RED}[X] No target projects resolved; nothing to enumerate.{UtilityTools.RESET}")
         return -1
 
-    # --filter-enabled-services: probe each project's ENABLED APIs once (a serviceusage
-    # call per project), then drop units for services whose API is disabled. A probe that
-    # finds nothing -> that project keeps all services (fall back to brute force). The
-    # probes fan out at the SAME --parallel-services worker count (each uses its own
-    # ProjectScopedSession; DB writes serialize on the process lock), so this pre-phase
-    # doesn't become a serial bottleneck when there are many projects.
-    filter_enabled = any(str(a).strip() in ("--filter-enabled-services", "--filter-enabled") for a in (user_args or []))
+    # --filter-enabled-services phase: probe each project's ENABLED APIs once (a
+    # serviceusage call per project), then drop units for services whose API is disabled.
+    # A probe that finds nothing -> that project keeps all services (fall back to brute
+    # force). Probes fan out at the SAME --parallel-services worker count (each uses its
+    # own ProjectScopedSession; DB writes serialize on the process lock), with a running
+    # X/Y count so a many-project probe pre-phase shows progress.
     enabled_keys_by_project: dict[str, set[str] | None] = {}
     if filter_enabled:
         probe_workers = max(1, min(workers, len(targets)))
-        print(f"{UtilityTools.BOLD}[*] --filter-enabled-services: probing enabled APIs across "
-              f"{len(targets)} project(s) with {probe_workers} worker(s)...{UtilityTools.RESET}")
+        total_p = len(targets)
+        print(_phase(f"enabled-API probe (serviceusage) across {total_p} project(s), {probe_workers} worker(s)"))
+        _pc = {"n": 0}
+        _pc_lock = threading.Lock()
 
         def _probe(project_id: str) -> tuple[str, set[str] | None]:
             scoped = ProjectScopedSession(session, project_id)
-            return project_id, _enabled_service_gate_keys(scoped, project_id)
+            keys = _enabled_service_gate_keys(scoped, project_id)
+            with _pc_lock:
+                _pc["n"] += 1
+                done = _pc["n"]
+            if keys is None:
+                detail = "probe empty/denied -> ALL services"
+            else:
+                detail = f"{len([k for k in keys if k not in _ALWAYS_ENABLED_KEYS])} enabled"
+            print(f"[*]   probed {done}/{total_p}: {project_id} -> {detail}")
+            return project_id, keys
 
         if probe_workers > 1:
             with ThreadPoolExecutor(max_workers=probe_workers) as probe_pool:
                 probe_results = list(probe_pool.map(_probe, targets))
         else:
             probe_results = [_probe(p) for p in targets]
-
-        # Collect concurrently, print in target order (avoid interleaved worker output).
-        for project_id, keys in probe_results:
-            enabled_keys_by_project[project_id] = keys
-            if keys is None:
-                print(f"[*] --filter-enabled-services: {project_id} -> probe empty/denied; running ALL services.")
-            else:
-                names = sorted({_module_display_name(k) for k in keys if k not in _ALWAYS_ENABLED_KEYS})
-                print(f"[*] --filter-enabled-services: {project_id} -> {len(names)} enabled: {', '.join(names) or '(foundational only)'}")
+        enabled_keys_by_project = dict(probe_results)
 
     done_units = _ledger_done_units(session, run_id)
     tasks: list[tuple[str, str, str]] = []
@@ -1090,11 +1105,10 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
         f"  (interrupt-safe -- resume THIS run with:  {_resume_hint(mod_name, run_id, workers)})"
     )
     resume_note = f" (resuming: {skipped} services already done)" if skipped else ""
-    print(
-        f"{UtilityTools.BOLD}[*] Phase 2/3: {len(tasks)} (project,service) units + "
-        f"{binding_total} pipelined binding unit(s) across {len(targets)} project(s), "
-        f"{workers} workers{resume_note}{UtilityTools.RESET}"
-    )
+    print(_phase(
+        f"{len(tasks)} (project,service) units + {binding_total} pipelined binding unit(s) "
+        f"across {len(targets)} project(s), {workers} workers{resume_note}"
+    ))
 
     if total_units:
         # Service units still to run this invocation, counted per project so each
@@ -1228,7 +1242,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
 
     # Phase 3: reconcile cached resources missing a project_id, then rebuild the
     # principal/user table once now that every node's bindings have landed.
-    print(f"{UtilityTools.BOLD}[*] Phase 3/3: reconcile orphan resources + rebuild principals{UtilityTools.RESET}")
+    print(_phase("reconcile orphan resources + rebuild principals"))
     try:
         IAMPolicyBindingsResource(session).run(
             save_raw_policies=True,
@@ -1243,7 +1257,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
     # passes include_workspace=False; the top enum_all runs it. Degrades gracefully
     # when the caller has no Workspace access (most GCP creds don't).
     if include_workspace:
-        print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 4: Google Workspace (tenant-scoped, once){UtilityTools.RESET}")
+        print(_phase("Google Workspace (tenant-scoped, once)"))
         try:
             from gcpwn.modules.everything.enumeration.enum_google_workspace import (
                 run_module as run_workspace_all,
