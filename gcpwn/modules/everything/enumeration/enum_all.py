@@ -941,7 +941,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
               f"SKIPPED (--no-enum-resources) -- reusing cached hierarchy{UtilityTools.RESET}")
     else:
         print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
-        run_module([*global_tokens, "--phase", "rm", "--resource-manager"], session)
+        run_module([*global_tokens, "--phase", "rm", "--modules", "resource-manager"], session)
 
     targets = _resolve_target_projects(session, explicit_project_ids)
     if not targets:
@@ -999,7 +999,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             _ledger_mark(session, project_id, service_key, "running", run_id)
             failed = False
             try:
-                run_module([*global_tokens, "--phase", "services", service_flag], scoped)
+                run_module([*global_tokens, "--phase", "services", "--modules", service_flag.removeprefix("--")], scoped)
                 if cancel_requested():
                     # A Ctrl+C cut this service's region/zone fan-out short, so its data
                     # may be partial -- mark it NOT done so --resume re-enumerates it fully.
