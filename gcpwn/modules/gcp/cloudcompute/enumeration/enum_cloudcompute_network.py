@@ -356,7 +356,8 @@ def run_module(user_args, session):
                 listed = routers_resource.list(project_id=project_id, action_dict=scope_actions)
                 routers = [] if listed in ("Not Enabled", None) else list(listed or [])
                 if routers:
-                    routers_resource.save(routers, project_id=project_id)
+                    with routers_resource.session.batched_writes():
+                        routers_resource.save(routers, project_id=project_id)
 
             all_nats = []
             total_routers = len(routers)
@@ -376,7 +377,8 @@ def run_module(user_args, session):
                     action_dict=api_actions,
                 ) or []
                 if nats:
-                    router_nats_resource.save(nats, project_id=project_id, region=region, router_name=router_name)
+                    with router_nats_resource.session.batched_writes():
+                        router_nats_resource.save(nats, project_id=project_id, region=region, router_name=router_name)
                     all_nats.extend(nats)
                 if total_routers <= 50 or index in (1, total_routers) or index % max(5, total_routers // 20 or 1) == 0:
                     print(f"[*] Cloud NAT progress: {index}/{total_routers} routers checked")

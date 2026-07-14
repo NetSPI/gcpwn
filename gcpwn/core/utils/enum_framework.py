@@ -194,8 +194,9 @@ def _run_manual(resource, component, names, args, api_actions, project_id):
     if component.enrich_fn:
         rows = component.enrich_fn(rows, resource=resource, args=args, api_actions=api_actions) or []
     if component.persist:
-        for row in rows:
-            resource.save([row], project_id=project_id, location=_location_of(row))
+        with resource.session.batched_writes():
+            for row in rows:
+                resource.save([row], project_id=project_id, location=_location_of(row))
     return rows
 
 
@@ -330,7 +331,8 @@ def run_components(
                 if batch:
                     if component.persist:
                         save_kwargs = {component.save_parent_kwarg: parent_name} if component.save_parent_kwarg else {}
-                        resource.save(batch, project_id=project_id, **save_kwargs)
+                        with session.batched_writes():
+                            resource.save(batch, project_id=project_id, **save_kwargs)
                     rows.extend(batch)
         else:
             if component.scope == PROJECT:
@@ -351,7 +353,8 @@ def run_components(
                 batch = _process_listed(listed, resource, component, args, api_actions, iam_actions)
                 if batch:
                     if component.persist:
-                        resource.save(batch, project_id=project_id, location=location)
+                        with session.batched_writes():
+                            resource.save(batch, project_id=project_id, location=location)
                     rows.extend(batch)
 
         if not component.summarize:

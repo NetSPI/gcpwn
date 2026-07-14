@@ -21,6 +21,7 @@ Each test exercises one runner contract:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,12 @@ class FakeSession:
         self._cache = dict(cache or {})
         self.get_data_calls: list[dict] = []
         self.insert_actions_calls: list[dict] = []
+
+    @contextmanager
+    def batched_writes(self):
+        # Real sessions group the enclosed saves into one DB transaction; the fake
+        # just records nothing extra -- saves go straight through.
+        yield
 
     def get_data(self, table, columns="*", conditions=None, *, where=None, params=None):
         self.get_data_calls.append(

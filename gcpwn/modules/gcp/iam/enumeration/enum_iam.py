@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import threading
 from types import SimpleNamespace
 
 from google.cloud import iam_admin_v1
@@ -106,6 +107,13 @@ def _summarize_service_accounts(project_id, sa_rows) -> None:
 # Custom roles -- dual (project AND org) scope with a run-scoped org cache so
 # enum_all (per-project) lists org roles once. Genuinely bespoke; kept as a tail.
 # --------------------------------------------------------------------------- #
+
+# Serializes the org-scope "already listed?" check + list across enum_all's parallel
+# workers, so concurrent cloud_iam units for projects in the same org don't each fire
+# the org roles.list() before the first has populated the shared cache.
+_ORG_ROLE_CACHE_LOCK = threading.Lock()
+
+
 def _normalize_role_scope_value(raw_scope: str, scope_type: str) -> str:
     text = str(raw_scope or "").strip()
     if not text:
@@ -205,11 +213,25 @@ def _run_custom_roles(session, args, project_id) -> None:
     explicit_project_scopes = _normalize_role_scope_list(getattr(args, "project", None), "project")
     explicit_org_scopes = _normalize_role_scope_list(getattr(args, "org", None), "org")
     # Run-scoped cache: enum_all invokes enum_iam per project, but org roles are the
-    # same across a tree -> list a given org's roles only once per run.
-    run_ctx = getattr(session, "_module_run_context", None) or {}
-    if int(run_ctx.get("index", 0) or 0) == 0 or not isinstance(getattr(session, "_enum_iam_org_cache", None), set):
-        session._enum_iam_org_cache = set()
-    org_cache: set = session._enum_iam_org_cache
+    # same across a tree -> list a given org's roles only once per run. The cache is
+    # anchored to the BASE session so enum_all's parallel workers (each a
+    # ProjectScopedSession, whose attribute writes stay local to that view) SHARE one
+    # cache instead of every project's cloud_iam unit re-listing the same org roles.
+    base_session = getattr(session, "_base", session)
+    is_scoped_worker = base_session is not session
+    org_cache = getattr(base_session, "_enum_iam_org_cache", None)
+    if is_scoped_worker:
+        # Parallel worker: run_parallel seeds a fresh per-run cache on the base session;
+        # never reset here (that would drop orgs peer workers already recorded).
+        if not isinstance(org_cache, set):
+            org_cache = set()
+            base_session._enum_iam_org_cache = org_cache
+    else:
+        # Standalone / sequential enum_all: a fresh multi-project loop starts at index 0.
+        run_ctx = getattr(session, "_module_run_context", None) or {}
+        if int(run_ctx.get("index", 0) or 0) == 0 or not isinstance(org_cache, set):
+            org_cache = set()
+            base_session._enum_iam_org_cache = org_cache
 
     role_names = parse_csv_file_args(getattr(args, "role_names", None), getattr(args, "role_names_file", None))
     if role_names:
@@ -231,22 +253,25 @@ def _run_custom_roles(session, args, project_id) -> None:
         for scope in list(dict.fromkeys(requested_scopes)):
             scope = scope if scope.startswith(("projects/", "organizations/")) else _normalize_role_scope_value(scope, "project")
             if scope.startswith("organizations/"):
-                if scope in org_cache:
-                    cached = session.get_data(
-                        custom_roles_resource.TABLE_NAME,
-                        columns=["name", "title", "stage", "included_permissions", "scope_of_custom_role"],
-                        conditions="name LIKE ?", params=[f"{scope}/roles/%"],
-                    ) or []
-                    all_custom_roles[scope] = {HashableCustomRole(_hydrate_cached_custom_role(r), validated=False) for r in cached if r.get("name")}
-                    continue
-                org_cache.add(scope)
-                listed = custom_roles_resource.list(org_id=scope, action_dict=action_dict)
-                if listed and listed not in ("Not Enabled", None):
-                    org_roles = [r for r in listed if r.name and "organizations/" in r.name]
-                    custom_roles_resource.save(org_roles)
-                    all_custom_roles[scope] = {HashableCustomRole(r) for r in org_roles}
-                else:
-                    all_custom_roles.setdefault(scope, set())
+                # Lock so concurrent workers for the same org list its roles once: the
+                # first thread lists+caches, the rest fall into the cache-hit branch.
+                with _ORG_ROLE_CACHE_LOCK:
+                    if scope in org_cache:
+                        cached = session.get_data(
+                            custom_roles_resource.TABLE_NAME,
+                            columns=["name", "title", "stage", "included_permissions", "scope_of_custom_role"],
+                            conditions="name LIKE ?", params=[f"{scope}/roles/%"],
+                        ) or []
+                        all_custom_roles[scope] = {HashableCustomRole(_hydrate_cached_custom_role(r), validated=False) for r in cached if r.get("name")}
+                        continue
+                    org_cache.add(scope)
+                    listed = custom_roles_resource.list(org_id=scope, action_dict=action_dict)
+                    if listed and listed not in ("Not Enabled", None):
+                        org_roles = [r for r in listed if r.name and "organizations/" in r.name]
+                        custom_roles_resource.save(org_roles)
+                        all_custom_roles[scope] = {HashableCustomRole(r) for r in org_roles}
+                    else:
+                        all_custom_roles.setdefault(scope, set())
             else:
                 scope_id = extract_path_tail(scope, default=scope)
                 listed = custom_roles_resource.list(project_id=scope_id, action_dict=action_dict)

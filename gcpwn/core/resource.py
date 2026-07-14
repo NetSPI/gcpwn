@@ -246,20 +246,22 @@ class GcpListResource:
         derived from the resource name) when the table has that column, the
         ID_FIELD (short path tail of the name), and any ``_extra_save_fields``.
         DB write -- MAIN THREAD ONLY (DataController is single-threaded); never
-        call this from a parallel_map worker.
+        call this from a parallel_map worker. All rows persist in ONE transaction
+        (one fsync for the batch instead of one per row).
         """
-        for row in rows or []:
-            name = str(row.get("name", "")).strip()
-            defaults: dict[str, Any] = {"project_id": project_id, **extra_defaults}
-            if "location" in self.COLUMNS:
-                defaults["location"] = location if location and location != "-" else extract_location_from_resource_name(name)
-            save_to_table(
-                self.session,
-                self.TABLE_NAME,
-                row,
-                defaults=defaults,
-                extra_builder=lambda _obj, raw: {self.ID_FIELD: extract_path_tail(raw.get("name", "")), **self._extra_save_fields(raw)},
-            )
+        with self.session.batched_writes():
+            for row in rows or []:
+                name = str(row.get("name", "")).strip()
+                defaults: dict[str, Any] = {"project_id": project_id, **extra_defaults}
+                if "location" in self.COLUMNS:
+                    defaults["location"] = location if location and location != "-" else extract_location_from_resource_name(name)
+                save_to_table(
+                    self.session,
+                    self.TABLE_NAME,
+                    row,
+                    defaults=defaults,
+                    extra_builder=lambda _obj, raw: {self.ID_FIELD: extract_path_tail(raw.get("name", "")), **self._extra_save_fields(raw)},
+                )
 
 
 class DiscoveryListResource:
@@ -383,13 +385,17 @@ class DiscoveryListResource:
             return result if isinstance(result, dict) else None
 
     def save(self, rows: Iterable[dict[str, Any]], *, project_id: str, location: str | None = None, **extra_defaults: Any) -> None:
-        """Upsert rows into TABLE_NAME (workspace-scoped). DB write -- MAIN THREAD ONLY."""
-        for row in rows or []:
-            defaults: dict[str, Any] = {"project_id": project_id, **extra_defaults}
-            if "location" in self.COLUMNS and "location" not in defaults:
-                name = str(row.get("name", "")).strip()
-                defaults["location"] = location if location and location != "-" else extract_location_from_resource_name(name)
-            save_to_table(self.session, self.TABLE_NAME, row, defaults=defaults, extra_builder=self._save_extra_builder)
+        """Upsert rows into TABLE_NAME (workspace-scoped). DB write -- MAIN THREAD ONLY.
+
+        All rows persist in ONE transaction (a single fsync for the batch).
+        """
+        with self.session.batched_writes():
+            for row in rows or []:
+                defaults: dict[str, Any] = {"project_id": project_id, **extra_defaults}
+                if "location" in self.COLUMNS and "location" not in defaults:
+                    name = str(row.get("name", "")).strip()
+                    defaults["location"] = location if location and location != "-" else extract_location_from_resource_name(name)
+                save_to_table(self.session, self.TABLE_NAME, row, defaults=defaults, extra_builder=self._save_extra_builder)
 
     def _save_extra_builder(self, _obj: Any, raw: dict[str, Any]) -> dict[str, Any]:
         extra = dict(self._extra_save_fields(raw))

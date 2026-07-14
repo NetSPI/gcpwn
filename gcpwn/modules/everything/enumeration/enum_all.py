@@ -793,6 +793,12 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
     _dt_args, _ = _dt_parser.parse_known_args(list(user_args or []))
     session.download_time_budget = int(_dt_args.download_timeout or 0)
 
+    # Fresh per-run cache of orgs whose custom roles enum_iam has already listed. Seeded
+    # on the BASE session here (once) so the parallel cloud_iam workers -- each a
+    # ProjectScopedSession whose writes stay local to its own view -- SHARE this one set
+    # and list a tree's org custom roles once per run instead of once per project.
+    session._enum_iam_org_cache = set()
+
     # Phase 1: Resource Manager once (discovers the hierarchy + all projects).
     print(f"{UtilityTools.BOLD}[*] Parallel enum_all | phase 1/3: Resource Manager (discovery){UtilityTools.RESET}")
     run_module([*global_tokens, "--phase", "rm", "--resource-manager"], session)

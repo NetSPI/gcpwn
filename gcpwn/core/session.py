@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import ast
 import json
@@ -695,7 +696,25 @@ class SessionUtility:
     
     ### Database Bindings/Permissions//Ancestry Utility Functions
 
-    # only_if_new ONLY adds entryif columns don't match what is passed in 
+    @contextmanager
+    def batched_writes(self):
+        """Group the enclosed ``insert_data``/save calls into ONE DB transaction.
+
+        Turns per-row commits (one fsync each) into a single fsync for the whole
+        block -- the big win on write-heavy enumeration saves. Use it around a loop
+        that persists a component's rows on the MAIN thread::
+
+            with session.batched_writes():
+                for row in rows:
+                    session.insert_data(table, row)
+
+        Re-entrant (nested blocks join the outer transaction) and rolls the batch back
+        on an exception. Reads inside the block still see the uncommitted rows.
+        """
+        with self.data_master.transaction():
+            yield
+
+    # only_if_new ONLY adds entryif columns don't match what is passed in
     # update_columns will update columns (as opposed to rewriting everyting)
     def insert_data(self, table_name, save_data, only_if_new_columns = None, update_only = False, dont_change = None, if_column_matches  = None):
         """Upsert one row into a workspace-scoped service table (the primary write API).

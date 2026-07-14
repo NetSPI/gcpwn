@@ -437,8 +437,9 @@ class _ResourceManagerBaseResource:
         _persist_metadata_gcp(self.session, row, self.RESOURCE_TYPE)
 
     def save(self, rows: Iterable[Any]) -> None:
-        for row in rows or []:
-            self._save_one(row)
+        with self.session.batched_writes():
+            for row in rows or []:
+                self._save_one(row)
 
     def load_permissions(self, *, all_permissions: bool = False) -> list[str]:
         filename = self.ALL_PERMISSION_FILE if all_permissions else self.GENERAL_PERMISSION_FILE

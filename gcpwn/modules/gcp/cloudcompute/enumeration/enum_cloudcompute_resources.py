@@ -253,7 +253,8 @@ def _process_nested_existing_resource(
         )
 
     if rows and (not use_cache or args.get):
-        resource.save(rows, project_id=project_id)
+        with resource.session.batched_writes():
+            resource.save(rows, project_id=project_id)
 
     if rows and args.iam and getattr(resource, "SUPPORTS_IAM", False):
         for row in rows:
@@ -329,7 +330,8 @@ def _process_existing_resource(
         )
 
     if rows and (not use_cache or args.get):
-        resource.save(rows, project_id=project_id)
+        with resource.session.batched_writes():
+            resource.save(rows, project_id=project_id)
 
     if rows and args.iam and getattr(resource, "SUPPORTS_IAM", False):
         for row in rows:
@@ -510,7 +512,8 @@ def _process_discovery_resource(
         )
 
     if rows and (not use_cache or args.get):
-        resource.save(rows, project_id=project_id)
+        with resource.session.batched_writes():
+            resource.save(rows, project_id=project_id)
 
     if rows and args.iam and getattr(resource, "SUPPORTS_IAM", False):
         for row in rows:
@@ -670,7 +673,8 @@ def run_module(user_args, session):
         print("[*] Enumerating Compute Projects...")
         compute_projects = projects_resource.list(project_id=project_id, action_dict=scope_actions) or []
         if compute_projects:
-            projects_resource.save(compute_projects)
+            with projects_resource.session.batched_writes():
+                projects_resource.save(compute_projects)
         wrapped_projects = [HashableComputeProject(project) for project in compute_projects]
         if wrapped_projects:
             UtilityTools.summary_wrapup(
@@ -764,13 +768,15 @@ def run_module(user_args, session):
                     if listed == "Not Enabled":
                         break
                     if listed:
-                        instances_resource.save(listed, project_id=project_id)
+                        with instances_resource.session.batched_writes():
+                            instances_resource.save(listed, project_id=project_id)
                         for instance in listed:
                             all_instances[project_id].add(HashableInstance(instance))
             else:
                 listed = instances_resource.list(project_id=project_id, action_dict=scope_actions)
                 if listed and listed != "Not Enabled":
-                    instances_resource.save(listed, project_id=project_id)
+                    with instances_resource.session.batched_writes():
+                        instances_resource.save(listed, project_id=project_id)
                     for instance in listed:
                         all_instances[project_id].add(HashableInstance(instance))
 

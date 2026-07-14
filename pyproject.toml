@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=80"]
+requires = ["setuptools>=83"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -27,9 +27,9 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=9.0",
+  "pytest>=9.1.1",
   "ruff==0.15.21",
-  "mypy==2.2.0"
+  "mypy==2.3.0"
 ]
 table = [
   "prettytable==3.18.0"
