@@ -49,8 +49,17 @@ def load_privilege_escalation_rules() -> tuple[dict[str, dict[str, Any]], dict[s
     payload = load_mapping_data(_PRIVILEGE_ESCALATION_RULES_MAPPING_FILE, kind="json")
     if not isinstance(payload, dict):
         return {}, {}, {}
+    # Unified "rules" dict: 1-hop rules have only "permissions"; 2-hop have "requires".
+    # Legacy split keys ("single_permission_rules" / "multi_permission_rules") still work.
+    if "rules" in payload:
+        all_rules = _as_rule_mapping(payload.get("rules"))
+        single_rules = {name: rule for name, rule in all_rules.items() if not rule.get("requires")}
+        multi_rules = {name: rule for name, rule in all_rules.items() if rule.get("requires")}
+    else:
+        single_rules = _as_rule_mapping(payload.get("single_permission_rules"))
+        multi_rules = _as_rule_mapping(payload.get("multi_permission_rules"))
     return (
-        _as_rule_mapping(payload.get("single_permission_rules")),
-        _as_rule_mapping(payload.get("multi_permission_rules")),
+        single_rules,
+        multi_rules,
         _as_collapsed_role_mapping(payload.get("collapsed_role_edges")),
     )

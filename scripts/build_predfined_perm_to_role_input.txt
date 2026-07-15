@@ -53,6 +53,7 @@ binaryauthorization.continuousValidationConfig.setIamPolicy
 binaryauthorization.policy.setIamPolicy
 cloudaicompanion.repositoryGroups.setIamPolicy
 cloudaicompanion.topics.setIamPolicy
+cloudbuild.builds.create
 cloudbuild.connections.setIamPolicy
 cloudbuilds.builds.create
 clouddeploy.customTargetTypes.setIamPolicy

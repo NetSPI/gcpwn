@@ -18,7 +18,14 @@ class OpenGraphBuildOptions:
     include_all: bool = False
     expand_inheritance: bool = False
     conditional_evaluation: bool = False
+    deny_policies: bool = False
     debug: bool = False
+    # cross_project=True disables same-project partitioning for 2-hop combo rules.
+    # cross_project_sa_projects: empty frozenset = allow ALL SA projects cross-project;
+    # non-empty = only SA home-projects listed here (where iam.disableCrossProjectServiceAccountUsage
+    # has been disabled).  cross_project=False ignores the set entirely.
+    cross_project: bool = False
+    cross_project_sa_projects: "frozenset[str]" = frozenset()
 
 
 def _build_hierarchy_data(
@@ -107,6 +114,8 @@ class OpenGraphBuildContext:
         "group_memberships": "workspace_group_memberships",
         "workspace_admin_roles": "workspace_admin_roles",
         "workspace_role_assignments": "workspace_role_assignments",
+        # IAM v2 Deny Policies -> the --deny-policies final filter (allow minus deny).
+        "iam_deny_policies": "iam_deny_policies",
         # SA domain-wide-delegation grants -> DOMAIN_WIDE_DELEG edges (stage 1).
         "workspace_delegations": "workspace_delegations",
         # Group access/posting settings -> CAN_JOIN edges for self-join-open groups.
@@ -230,6 +239,7 @@ class OpenGraphBuildContext:
             hierarchy_data=self.hierarchy_data(),
             flattened_member_rows=(simplified_base.get("flattened_member_rows") or []),
             cloudcompute_instances_rows=self.rows("cloudcompute_instances"),
+            service_account_rows=self.rows("iam_service_accounts"),
         )
         return self._scope_resource_indexes_cache
 

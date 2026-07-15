@@ -1,137 +1,131 @@
 {
-  "single_permission_rules": {
+  "rules": {
     "CAN_MODIFY_PROJECT_IAM": {
-      "permission": "resourcemanager.projects.setIamPolicy",
-      "description": "Can change project IAM bindings/roles. Can add an IAM binding making yourself administrator thus essentially controlling all resources in project.  Warning: This will wipe all previous IAM bindings with a new set of IAM bindings so its sa good idea to run get-iam-policy first and then set-iam-policy with the same policy bindings albeit your modified content\nGCPwn Module: modules run exploit_gcp_setiampolicy Gcloud Commands: gcloud projects get-iam-policy my-project --format=json > policy.json; #edit policy.json like adding yourself as admin;  gcloud projects set-iam-policy my-project policy.json",
-      "resource_scopes_possible": [
-        "project"
-      ]
+      "permissions": ["resourcemanager.projects.setIamPolicy"]
     },
     "CAN_MODIFY_FOLDER_IAM": {
-      "permission": "resourcemanager.folders.setIamPolicy",
-      "description": "Can change folder IAM bindings/roles. This can grant control over all descendant projects/resources via inherited IAM. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud resource-manager folders get-iam-policy <FOLDER_ID> --format=json > policy.json; #edit policy.json; gcloud resource-manager folders set-iam-policy <FOLDER_ID> policy.json",
-      "resource_scopes_possible": [
-        "folder"
-      ]
+      "permissions": ["resourcemanager.folders.setIamPolicy"]
     },
     "CAN_MODIFY_ORG_IAM": {
-      "permission": "resourcemanager.organizations.setIamPolicy",
-      "description": "Can change organization IAM bindings/roles. This can grant broad tenancy-wide control across folders and projects. Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud organizations get-iam-policy <ORG_ID> --format=json > policy.json; #edit policy.json; gcloud organizations set-iam-policy <ORG_ID> policy.json",
-      "resource_scopes_possible": [
-        "org"
-      ]
+      "permissions": ["resourcemanager.organizations.setIamPolicy"]
     },
     "CAN_MODIFY_SA_IAM": {
-      "permission": "iam.serviceAccounts.setIamPolicy",
-      "description": "Can change service account IAM bindings/roles (for example, adding Token Creator or actAs members). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud iam service-accounts get-iam-policy <SA_EMAIL> --format=json > policy.json; #edit policy.json; gcloud iam service-accounts set-iam-policy <SA_EMAIL> policy.json",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "service-account"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "service-account"
-      ]
+      "permissions": ["iam.serviceAccounts.setIamPolicy"],
+      "on": "service-account"
     },
     "CAN_MODIFY_COMPUTE_INSTANCE_IAM": {
-      "permission": "compute.instances.setIamPolicy",
-      "description": "Can change IAM policy on specific Compute Engine VM instances (who can operate/manage that VM). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud compute instances get-iam-policy <INSTANCE_NAME> --zone <ZONE> --format=json > policy.json; #edit policy.json; gcloud compute instances set-iam-policy <INSTANCE_NAME> policy.json --zone <ZONE>",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "computeinstance"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "computeinstance"
-      ]
+      "permissions": ["compute.instances.setIamPolicy"],
+      "on": "computeinstance"
     },
     "CAN_MODIFY_ClOUD_RUN_FUNCTION_IAM": {
-      "permission": "cloudfunctions.functions.setIamPolicy",
-      "description": "Can change IAM policy on Cloud Functions (for example, granting invoker/admin access). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "cloudfunction"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "cloudfunction"
-      ]
+      "permissions": ["cloudfunctions.functions.setIamPolicy"],
+      "on": "cloudfunction"
     },
     "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM": {
-      "permission": "secretmanager.secrets.setIamPolicy",
-      "description": "Can change IAM policy on Secret Manager (for example, granting roles/owner to the caller so you can read the secret). Warning: set-iam-policy replaces the full policy, so fetch first and then re-apply with your intended changes.\nGCPwn Module: modules run exploit_gcp_setiampolicy Commands: gcloud functions get-iam-policy <FUNCTION_NAME> --region <REGION> --format=json > policy.json; #edit policy.json; gcloud functions set-iam-policy <FUNCTION_NAME> policy.json --region <REGION>",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "secrets"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "secrets"
-      ]
+      "permissions": ["secretmanager.secrets.setIamPolicy"],
+      "on": "secrets"
     },
     "CAN_IMPERSONATE_SA": {
-      "permission": "iam.serviceAccounts.implicitDelegation",
-      "description": "Can \"act as\" another Service Account thus getting that destination Service Account permissions. Can be chained across multiple service accounts. Note the \"--impersonate-service-account\" is a flag  supported on the gcloud base binary itself.\nGCPwn Module: Review existing exploit_* modules for --implicit-del flag where you can specify  service accounts you want to chain before final action (ex. modules run exploit_generate_access_token --impliict-del) Commands: gcloud auth print-access-token --impersonate-service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com,DELEGATE_SA@PROJECT_ID.iam.gserviceaccount.com",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "service-account"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "service-account"
-      ]
+      "permissions": ["iam.serviceAccounts.implicitDelegation"],
+      "on": "service-account"
     },
     "CAN_CREATE_SA_ACCESS_TOKEN": {
-      "permission": "iam.serviceAccounts.getAccessToken",
-      "description": "Can mint OAuth access tokens for a service account, enabling direct API actions as that identity. You can then reload these OAuth tokens back into gcpwn to begin calling APIs as that user ([2] oauth2   <credential_name> --token <access_token> [--tokeninfo])\nGCPwn Module: modules run exploit_generate_access_token Commands: gcloud auth print-access-token ",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "service-account"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "service-account"
-      ]
+      "permissions": ["iam.serviceAccounts.getAccessToken"],
+      "on": "service-account"
     },
     "CAN_CREATE_SA_KEY": {
-      "permission": "iam.serviceAccountKeys.create",
-      "description": "Can create long-lasting APIkeys for a service account, enabling direct API actions as that identity. You can then reload this key tokens back into gcpwn to begin calling APIs as that user (3] service-acc-key <credential_name> --service-file <service_account_json_path>)\nGCPwn Module: modules run exploit_service_account_keys Commands: gcloud iam service-accounts keys create <FILE_TO_SAVE_PRIVATE_KEY> --iam-account=SA_NAME@PROJECT_ID.iam.gserviceaccount.com",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "service-account"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "service-account"
-      ]
+      "permissions": ["iam.serviceAccountKeys.create"],
+      "on": "service-account"
+    },
+    "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY": {
+      "permissions": ["cloudbuild.builds.create"]
+    },
+    "CAN_UPDATE_CLOUDBUILD_BUILD": {
+      "permissions": ["cloudbuild.builds.update"]
     },
     "CAN_READ_SECRET_DATA": {
-      "permission": "secretmanager.versions.access",
-      "description": "Can access Secret Manager secret payloads. Prioritize secrets tied to CI/CD, cloud auth, and production apps.\nGCPwn Module: modules run enum_secretsmanager --download Commands: gcloud secrets versions access VERSION_ID (can be 'latest') --secret=SECRET_ID",
-      "target_selector": {
-        "mode": "resource_types",
-        "resource_types": [
-          "secrets"
-        ]
-      },
-      "resource_scopes_possible": [
-        "project",
-        "secrets"
-      ]
+      "permissions": ["secretmanager.versions.access"],
+      "on": "secrets"
+    },
+    "RESET_COMPUTE_STARTUP_SA": {
+      "requires": [
+        {
+          "permissions": ["compute.instances.get", "compute.instances.setMetadata", "compute.instances.reset"],
+          "on": "computeinstance",
+          "status_in": ["RUNNING"]
+        }
+      ],
+      "edge": "CAN_RESET_COMPUTE_WITH_STARTUP_SCRIPT",
+      "via": "resource",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Modify a stopped Compute Engine instance's service account, then start it to execute code as the target SA via the startup script.",
+      "example_command": "gcloud compute instances set-service-account {resource} --service-account {target_sa} --zone ZONE && gcloud compute instances start {resource} --zone ZONE"
+    },
+    "START_COMPUTE_STARTUP_SA": {
+      "requires": [
+        {
+          "permissions": ["compute.instances.get", "compute.instances.setMetadata", "compute.instances.start"],
+          "on": "computeinstance",
+          "status_in": ["STOPPED"]
+        }
+      ],
+      "edge": "CAN_START_COMPUTE_WITH_STARTUP_SCRIPT",
+      "via": "resource",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Start a stopped Compute Engine instance already configured with the target SA to execute its startup script as that SA.",
+      "example_command": "gcloud compute instances start {resource} --zone ZONE  # instance already runs as {target_sa}"
+    },
+    "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "requires": [
+        {"permissions": ["cloudfunctions.functions.create", "cloudfunctions.functions.sourceCodeSet"], "on": "cloudfunction"},
+        {"permissions": ["cloudfunctions.functions.call"], "on": "cloudfunction"}
+      ],
+      "edge": "CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+      "via": "capability",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Create and invoke a Cloud Function that runs as the target SA. Caller needs cloudfunctions.functions.create + iam.serviceAccounts.actAs.",
+      "example_command": "gcloud functions deploy FUNC --service-account {target_sa} --runtime python312 --trigger-http --allow-unauthenticated && gcloud functions call FUNC"
+    },
+    "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "requires": [
+        {"permissions": ["cloudfunctions.functions.update", "cloudfunctions.functions.sourceCodeSet"], "on": "cloudfunction"},
+        {"permissions": ["cloudfunctions.functions.call"], "on": "cloudfunction"}
+      ],
+      "edge": "CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION",
+      "via": "capability",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Update an existing Cloud Function to use the target SA and invoke it. Caller needs cloudfunctions.functions.update + iam.serviceAccounts.actAs.",
+      "example_command": "gcloud functions deploy EXISTING_FUNC --service-account {target_sa} && gcloud functions call EXISTING_FUNC"
+    },
+    "CREATE_CLOUDSCHEDULER_JOB_AS_SA": {
+      "requires": [
+        {"permissions": ["cloudscheduler.jobs.create"]}
+      ],
+      "edge": "CAN_CREATE_CLOUDSCHEDULER_JOB",
+      "via": "capability",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Create a Cloud Scheduler job that calls a googleapis.com REST endpoint as the target SA. Caller needs cloudscheduler.jobs.create + iam.serviceAccounts.actAs on the target SA.",
+      "example_command": "modules exploit_cloudscheduler_job --target-sa {target_sa} --action make-admin --member user:ATTACKER@example.com --run --read-response"
+    },
+    "CREATE_CLOUDBUILD_AS_SA": {
+      "requires": [
+        {"permissions": ["cloudbuild.builds.create"], "on": "cloudbuildbuild"}
+      ],
+      "edge": "CAN_CREATE_CLOUDBUILD_BUILD",
+      "via": "capability",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Create a Cloud Build build pinned to the target SA. Caller needs cloudbuild.builds.create + iam.serviceAccounts.actAs on the target SA.",
+      "example_command": "modules exploit_cloudbuild_as_sa --service-account {target_sa} --exfil-mode logs"
+    },
+    "CREATE_CLOUDRUN_SERVICE_AS_SA": {
+      "requires": [
+        {"permissions": ["run.services.create"], "on": "cloudrunservice"}
+      ],
+      "edge": "CAN_CREATE_CLOUDRUN_SERVICE",
+      "via": "capability",
+      "act_as": {"permissions": ["iam.serviceAccounts.actAs"], "on": "service-account"},
+      "description": "Deploy a Cloud Run service that runs as the target SA and exfiltrates its OAuth token. Caller needs run.services.create + iam.serviceAccounts.actAs on the target SA.",
+      "example_command": "modules exploit_cloudrun_as_sa --target-sa {target_sa} --exfil-mode logs --invoke --cleanup"
     }
   },
   "collapsed_role_edges": {
@@ -142,332 +136,6 @@
     "roles/editor": {
       "edge_type": "ROLE_EDITOR",
       "description": "Collapsed dangerous-path edge for editor role grants (roles/editor). This edge collapses all matched dangerous rule edges for the same grant->target path. See dangerous_rule_names and dangerous_rule_descriptions on the edge for the individual rules that were collapsed."
-    }
-  },
-  "multi_permission_rules": {
-    "RESET_COMPUTE_STARTUP_SA": {
-      "description": "Rewrite startup-script metadata and reset a running compute instance so payload executes, paired with iam.serviceAccounts.actAs on target service accounts for execution-as-SA paths.\nGCPwn Module: modules run exploit_instance_startup_script Commands: gcloud compute instances add-metadata <INSTANCE_NAME> --zone <ZONE> --metadata startup-script='<COMMAND>'; gcloud compute instances reset <INSTANCE_NAME> --zone <ZONE>",
-      "multi_permission_type": "complex",
-      "requires_groups": [
-        {
-          "id": "compute_metadata_reset_group",
-          "permissions": [
-            "compute.instances.get",
-            "compute.instances.setMetadata",
-            "compute.instances.reset"
-          ],
-          "resource_scopes_possible": [
-            "project",
-            "computeinstance"
-          ],
-          "target_selector": {
-            "mode": "resource_types",
-            "resource_types": [
-              "computeinstance"
-            ],
-            "status_in": [
-              "RUNNING"
-            ]
-          }
-        },
-        {
-          "id": "sa_actas_group",
-          "permissions": [
-            "iam.serviceAccounts.actAs"
-          ],
-          "resource_scopes_possible": [
-            "project",
-            "service-account"
-          ],
-          "target_selector": {
-            "mode": "resource_types",
-            "resource_types": [
-              "service-account"
-            ]
-          }
-        }
-      ],
-      "same_scope_required": false,
-      "same_project_required": true,
-      "combo_hop": {
-        "edge_to_target": "RESET_COMPUTE_STARTUP_SA",
-        "target_from_groups": [
-          "sa_actas_group"
-        ],
-        "hops": [
-          {
-            "edge_from_subject": "CAN_RESET_COMPUTE_WITH_STARTUP_SCRIPT",
-            "node_mode": "resource",
-            "from_groups": [
-              "compute_metadata_reset_group"
-            ]
-          }
-        ]
-      }
-    },
-    "START_COMPUTE_STARTUP_SA": {
-      "description": "Rewrite startup-script metadata and start a stopped/terminated compute instance so payload executes, paired with iam.serviceAccounts.actAs on target service accounts for execution-as-SA paths.\nGCPwn Module: modules run exploit_instance_startup_script Commands: gcloud compute instances add-metadata <INSTANCE_NAME> --zone <ZONE> --metadata startup-script='<COMMAND>'; gcloud compute instances start <INSTANCE_NAME> --zone <ZONE>",
-      "multi_permission_type": "complex",
-      "requires_groups": [
-        {
-          "id": "compute_metadata_start_group",
-          "permissions": [
-            "compute.instances.get",
-            "compute.instances.setMetadata",
-            "compute.instances.start"
-          ],
-          "resource_scopes_possible": [
-            "project",
-            "computeinstance"
-          ],
-          "target_selector": {
-            "mode": "resource_types",
-            "resource_types": [
-              "computeinstance"
-            ],
-            "status_in": [
-              "STOPPED"
-            ]
-          }
-        },
-        {
-          "id": "sa_actas_group",
-          "permissions": [
-            "iam.serviceAccounts.actAs"
-          ],
-          "resource_scopes_possible": [
-            "project",
-            "service-account"
-          ],
-          "target_selector": {
-            "mode": "resource_types",
-            "resource_types": [
-              "service-account"
-            ]
-          }
-        }
-      ],
-      "same_scope_required": false,
-      "same_project_required": true,
-      "combo_hop": {
-        "edge_to_target": "START_COMPUTE_STARTUP_SA",
-        "target_from_groups": [
-          "sa_actas_group"
-        ],
-        "hops": [
-          {
-            "edge_from_subject": "CAN_START_COMPUTE_WITH_STARTUP_SCRIPT",
-            "node_mode": "resource",
-            "from_groups": [
-              "compute_metadata_start_group"
-            ]
-          }
-        ]
-      }
-    },
-    "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
-      "description": "Create a Cloud Function and attach a SA to retrieve the SA token.",
-      "multi_permission_type": "complex",
-      "same_scope_required": false,
-      "same_project_required": true,
-      "match_paths": [
-        {
-          "id": "invoke_via_call",
-          "requires_groups": [
-            {
-              "id": "cloudfunction_create_group",
-              "permissions": [
-                "cloudfunctions.functions.create",
-                "cloudfunctions.functions.sourceCodeSet"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "cloudfunction"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "cloudfunction"
-                ]
-              }
-            },
-            {
-              "id": "cloudfunction_call_group",
-              "permissions": [
-                "cloudfunctions.functions.call"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "cloudfunction"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "cloudfunction"
-                ]
-              }
-            },
-            {
-              "id": "sa_actas_group",
-              "permissions": [
-                "iam.serviceAccounts.actAs"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "service-account"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "service-account"
-                ]
-              }
-            }
-          ],
-          "combo_hop": {
-            "edge_to_target": "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-            "target_from_groups": [
-              "sa_actas_group"
-            ],
-            "hops": [
-              {
-                "edge_from_subject": "CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION",
-                "node_mode": "capability",
-                "from_groups": [
-                  "cloudfunction_create_group",
-                  "cloudfunction_call_group"
-                ]
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
-      "description": "Update a Cloud Function with your own source code to retrieve the SA token of the existing SA or optinall leverage iam.serviceAccounts.actAs to attach a new SA to retrieve.",
-      "multi_permission_type": "complex",
-      "same_scope_required": false,
-      "same_project_required": true,
-      "match_paths": [
-        {
-          "id": "invoke_via_call",
-          "requires_groups": [
-            {
-              "id": "cloudfunction_update_group",
-              "permissions": [
-                "cloudfunctions.functions.update",
-                "cloudfunctions.functions.sourceCodeSet"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "cloudfunction"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "cloudfunction"
-                ]
-              }
-            },
-            {
-              "id": "cloudfunction_call_group",
-              "permissions": [
-                "cloudfunctions.functions.call"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "cloudfunction"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "cloudfunction"
-                ]
-              }
-            },
-            {
-              "id": "sa_actas_group",
-              "permissions": [
-                "iam.serviceAccounts.actAs"
-              ],
-              "resource_scopes_possible": [
-                "project",
-                "service-account"
-              ],
-              "target_selector": {
-                "mode": "resource_types",
-                "resource_types": [
-                  "service-account"
-                ]
-              }
-            }
-          ],
-          "combo_hop": {
-            "edge_to_target": "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-            "target_from_groups": [
-              "sa_actas_group"
-            ],
-            "hops": [
-              {
-                "edge_from_subject": "CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION",
-                "node_mode": "capability",
-                "from_groups": [
-                  "cloudfunction_update_group",
-                  "cloudfunction_call_group"
-                ]
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "CREATE_CLOUDSCHEDULER_JOB_AS_SA": {
-      "description": "Create a Cloud Scheduler job and attach a target service account via iam.serviceAccounts.actAs, enabling execution under that service account identity.",
-      "multi_permission_type": "complex",
-      "requires_groups": [
-        {
-          "id": "cloudscheduler_create_group",
-          "permissions": [
-            "cloudscheduler.jobs.create"
-          ],
-          "resource_scopes_possible": [
-            "project"
-          ]
-        },
-        {
-          "id": "sa_actas_group",
-          "permissions": [
-            "iam.serviceAccounts.actAs"
-          ],
-          "resource_scopes_possible": [
-            "project",
-            "service-account"
-          ],
-          "target_selector": {
-            "mode": "resource_types",
-            "resource_types": [
-              "service-account"
-            ]
-          }
-        }
-      ],
-      "same_scope_required": false,
-      "same_project_required": true,
-      "combo_hop": {
-        "edge_to_target": "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
-        "target_from_groups": [
-          "sa_actas_group"
-        ],
-        "hops": [
-          {
-            "edge_from_subject": "CAN_CREATE_CLOUDSCHEDULER_JOB",
-            "node_mode": "capability",
-            "from_groups": [
-              "cloudscheduler_create_group"
-            ]
-          }
-        ]
-      }
     }
   }
 }

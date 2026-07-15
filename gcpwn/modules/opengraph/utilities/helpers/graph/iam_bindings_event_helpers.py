@@ -13,6 +13,7 @@ def collect_rule_events(
     normalized_token_list: Callable[[Any], list[str]],
     progress_callback: Callable[[int, int, int], None] | None = None,
     group_progress_callback: Callable[[int, int, int, int, int, str], None] | None = None,
+    cross_project: bool = False,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     total_rules = len(rules or [])
@@ -20,7 +21,9 @@ def collect_rule_events(
     grouped_entries_by_rule_shape: dict[tuple[bool, bool], list[list[Any]]] = {}
     for rule_index, rule in enumerate(rules, start=1):
         same_scope_required = bool(rule.get("same_scope_required", True))
-        same_project_required = bool(rule.get("same_project_required", False))
+        # cross_project=True disables same-project partitioning so actors with
+        # create perms in proj-A + actAs on a SA in proj-B are grouped together.
+        same_project_required = False if cross_project else bool(rule.get("same_project_required", False))
         group_key = (same_scope_required, same_project_required)
         grouped_entries = grouped_entries_by_rule_shape.get(group_key)
         if grouped_entries is None:
@@ -56,6 +59,7 @@ def collect_rule_events(
                     {
                         "rule_name": str(rule.get("name") or ""),
                         "rule_description": str(rule.get("description") or "").strip(),
+                        "example_command": str(rule.get("example_command") or "").strip(),
                         "edge_type": str(rule.get("edge_type") or "POLICY_BINDINGS"),
                         "target_selector": rule.get("target_selector") or {},
                         "contributors": contributors,

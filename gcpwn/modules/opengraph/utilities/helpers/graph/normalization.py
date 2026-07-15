@@ -45,6 +45,7 @@ RESOURCE_TOKEN_TO_NODE_TYPE: dict[str, str] = {
     "bigqueryroutine": "GCPBigQueryRoutine",
     "cloudtasksqueue": "GCPCloudTasksQueue",
     "secrets": "GCPSecret",
+    "cloudbuildbuild": "GCPCloudBuildBuild",
 }
 
 

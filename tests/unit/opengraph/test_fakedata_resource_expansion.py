@@ -172,7 +172,14 @@ def test_no_compute_rows_means_no_executes_with_or_exists_in_project():
     build_resource_expansion_graph(ctx)
     kinds = _edge_kinds(ctx)
     assert "EXECUTES_WITH" not in kinds
-    assert "EXISTS_IN_PROJECT" not in kinds
+    # The compute instance's project edge disappears with the compute rows, but an
+    # enumerated service account still EXISTS_IN_PROJECT (that edge is SA-driven, not
+    # compute-driven -- SAs are seeded as project resources so combo target selection
+    # can find them). So assert only the COMPUTE-instance project edge is gone.
+    exists_in_project_dests = {
+        e.destination_id for e in ctx.builder.edge_map.values() if e.edge_type == "EXISTS_IN_PROJECT"
+    }
+    assert not any("/instances/" in dest for dest in exists_in_project_dests)
     # The SA-key and WIF edges are independent of compute and still present.
     assert "GCP_SERVICE_ACCOUNT_KEY_FOR" in kinds
     assert "WIF_PRINCIPAL_IN_POOL" in kinds

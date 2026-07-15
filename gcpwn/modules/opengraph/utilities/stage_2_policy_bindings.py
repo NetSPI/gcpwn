@@ -258,8 +258,16 @@ def build_scope_and_resource_indexes(
     hierarchy_data: dict[str, Any] | None,
     flattened_member_rows: Iterable[dict[str, Any]] | None = None,
     cloudcompute_instances_rows: Iterable[dict[str, Any]] | None = None,
+    service_account_rows: Iterable[dict[str, Any]] | None = None,
 ) -> ScopeResourceIndexes:
-    """Build reusable scope/resource indexes from hierarchy + flattened IAM member rows."""
+    """Build reusable scope/resource indexes from hierarchy + flattened IAM member rows.
+
+    ``service_account_rows`` (and, like compute instances, other enumerated inventories)
+    seed the resource index so multi-permission combo rules that select a target by
+    resource type -- e.g. the ``iam.serviceAccounts.actAs`` target of a "create X as SA"
+    combo -- can find every enumerated service account, not only the ones that happen to
+    have their OWN allow-policy binding. Without this, such combos silently never fire.
+    """
     hierarchy = hierarchy_data or {}
     scope_project_by_name = hierarchy["scope_project_by_name"] if hierarchy else {}
     scope_display_by_name = hierarchy["scope_display_by_name"] if hierarchy else {}
@@ -356,6 +364,30 @@ def build_scope_and_resource_indexes(
             status = compute_status_by_resource_name.get(_scope_leaf(resource_name))
         if status:
             resource["status"] = status
+
+    # Ensure every ENUMERATED service account is a selectable combo target (resource_type
+    # "service-account", keyed by email like allow-policy SA rows) even when the SA has no
+    # IAM policy of its own -- otherwise actAs-target combos never fire against it.
+    for row in service_account_rows or []:
+        email = str(row.get("email") or "").strip()
+        if not email:
+            name = str(row.get("name") or "").strip()
+            email = _scope_leaf(name) if name else ""
+        if not email:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_key_tuple = (email, "service-account", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": email,
+                "resource_type": "service-account",
+                "display_name": email,
+                "project_id": project_id,
+            }
+        )
 
     allow_resources_by_project: dict[str, list[dict[str, str]]] = defaultdict(list)
     allow_resources_by_project_type: dict[str, dict[str, list[dict[str, str]]]] = defaultdict(lambda: defaultdict(list))

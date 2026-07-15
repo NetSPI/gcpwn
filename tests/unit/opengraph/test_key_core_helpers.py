@@ -66,12 +66,12 @@ def test_key_opengraph_edge_export_single_permission_shape() -> None:
 
     assert exported["kind"] == "CAN_VIEW_PROJECT"
     props = exported["properties"]
-    assert props["single_permission"] is True
-    assert props["permission"] == "resourcemanager.projects.get"
-    assert props["permissions_required_by_rule"] == ["resourcemanager.projects.get"]
-    assert props["permissions_granted_from_bindings"] == ["resourcemanager.projects.get"]
-    assert "matched_permissions" not in props
-    assert "contributing_permissions" not in props
+    # Moderate de-crowd: two readable permission fields only.
+    assert props["permissions"] == ["resourcemanager.projects.get"]
+    assert props["permission_source_summary"] == ["resourcemanager.projects.get"]
+    for gone in ("single_permission", "permission", "permissions_required_by_rule",
+                 "permissions_granted_from_bindings", "matched_permissions", "contributing_permissions"):
+        assert gone not in props
 
 
 def test_key_opengraph_multi_permission_attribution_is_glanceable() -> None:
@@ -105,22 +105,18 @@ def test_key_opengraph_multi_permission_attribution_is_glanceable() -> None:
     )
 
     props = exported["properties"]
-    assert props["permissions_required_by_rule"] == [
+    # Moderate de-crowd: `permissions` (effective) + readable role@scope attribution lines.
+    assert props["permissions"] == [
         "iam.serviceAccounts.getAccessToken",
         "resourcemanager.projects.getIamPolicy",
     ]
-    assert props["permissions_granted_from_bindings"] == [
-        "iam.serviceAccounts.getAccessToken",
-        "resourcemanager.projects.setIamPolicy",
-    ]
-    assert props["permission_source_bindings"] == [
-        "iambinding:roles/editor@project:demo#1",
-        "iambinding:roles/iam.serviceAccountTokenCreator@project:demo#2",
-    ]
     assert props["permission_source_summary"] == [
-        "iambinding:roles/editor@project:demo#1: resourcemanager.projects.setIamPolicy",
-        "iambinding:roles/iam.serviceAccountTokenCreator@project:demo#2: iam.serviceAccounts.getAccessToken",
+        "roles/editor @ project:demo: resourcemanager.projects.setIamPolicy",
+        "roles/iam.serviceAccountTokenCreator @ project:demo: iam.serviceAccounts.getAccessToken",
     ]
+    for gone in ("permissions_required_by_rule", "permissions_granted_from_bindings",
+                 "permission_source_bindings", "contributing_binding_permission_map"):
+        assert gone not in props
 
 
 def test_key_opengraph_kmskey_resource_type_normalizes_to_crypto_key_node() -> None:

@@ -116,6 +116,8 @@ def _parse(block: str, arity: int) -> set[tuple[str, ...]]:
 
 GOLDEN_NODES = """
 capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	GCPIamCapability
+capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1	GCPIamCapability
+capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1	GCPIamCapability
 capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1	GCPIamCapability
 capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	GCPIamCapability
 external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPExternalIdentitySource
@@ -141,11 +143,15 @@ user:bob@corp.com	GoogleUser
 
 GOLDEN_EDGES = """
 capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1	CREATE_CLOUDBUILD_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1	CREATE_CLOUDRUN_SERVICE_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1	CREATE_CLOUDSCHEDULER_JOB_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCP_FEDERATION_POSSIBLE	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
 group:eng@corp.com	HAS_IAM_BINDING	iambinding:roles/editor@project:proj-a
 iambinding:projects/proj-a/roles/Custom@project:proj-a	CAN_MODIFY_PROJECT_IAM	resource:projects/proj-a
+iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDBUILD_BUILD	capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1
+iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDRUN_SERVICE	capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1
 iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDSCHEDULER_JOB	capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1
 iambinding:roles/editor@project:proj-a	CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
 iambinding:roles/editor@project:proj-a	CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
@@ -157,6 +163,8 @@ iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.g
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_IMPERSONATE_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/owner@folder:222#src:org:111	ROLE_OWNER	resource:folders/222
 iambinding:roles/owner@org:111	ROLE_OWNER	resource:organizations/111
+iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDBUILD_BUILD	capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1
+iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDRUN_SERVICE	capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1
 iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDSCHEDULER_JOB	capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1
 iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
 iambinding:roles/owner@project:proj-a#src:org:111	CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1

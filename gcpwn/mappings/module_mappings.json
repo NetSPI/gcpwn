@@ -117,6 +117,13 @@
             "info_blurb": "Enumerate Cloud Build triggers, builds, and connections across regions for the selected project.",
             "location": "gcpwn.modules.gcp.cloudbuild.enumeration.enum_cloudbuild"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_cloudbuild_as_sa",
+            "info_blurb": "Exploit Cloud Build for lateral movement: create new build or (attempt to) update existing build to run arbitrary code as an attached service account. Recovers token via in-project Cloud Logging (secure) or external URL exfil. REQUIRES cloudbuild.builds.create/update + iam.serviceAccounts.actAs on target SA. Note: .update() permission exists in IAM but Cloud Build REST API does not expose the endpoint.",
+            "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_as_sa"
+          }
         ]
       }
     },
@@ -156,9 +163,9 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_functions_invoke",
+            "module_name": "exploit_functions_as_sa",
             "info_blurb": "Upload or modify function code. Subsequently invoke it to get the OAuth token for an attached service account. Can auto-assume the new identity if desired. Can also be used to standalone call a function.",
-            "location": "gcpwn.modules.gcp.cloudfunctions.exploit.exploit_functions_invoke"
+            "location": "gcpwn.modules.gcp.cloudfunctions.exploit.exploit_functions_as_sa"
           }
         ],
         "Unauthenticated": [
@@ -190,6 +197,13 @@
             "module_name": "enum_cloudrun",
             "info_blurb": "Enumerate Cloud Run services and jobs across locations (defaults to locations/-). Use --get to enrich per-resource metadata.",
             "location": "gcpwn.modules.gcp.cloudrun.enumeration.enum_cloudrun"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_cloudrun_as_sa",
+            "info_blurb": "Deploy Cloud Run service as target SA to extract its OAuth token. Token recovery: --exfil-mode logs (Cloud Logging, in-project) or url (external OAST endpoint). Use --invoke to trigger immediately after deploy. REQUIRES run.services.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudrun.exploit.exploit_cloudrun_as_sa"
           }
         ]
       }
@@ -536,6 +550,13 @@
             "module_name": "enum_cloudscheduler",
             "info_blurb": "Enumerate Cloud Scheduler jobs (schedule, target type/URI, and the service account a job impersonates) across supported locations.",
             "location": "gcpwn.modules.gcp.cloudscheduler.enumeration.enum_cloudscheduler"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_cloudscheduler_job",
+            "info_blurb": "Create Cloud Scheduler job to invoke Google APIs as target SA (cloudscheduler.jobs.create + iam.serviceAccounts.actAs). Pre-packaged payloads: generateAccessToken, createServiceAccountKey (backdoor), makeAdmin (privilege escalation), listSecrets, readSecret, or custom API calls.",
+            "location": "gcpwn.modules.gcp.cloudscheduler.exploit.exploit_cloudscheduler_job"
           }
         ]
       }

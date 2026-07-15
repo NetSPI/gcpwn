@@ -110,6 +110,7 @@ _PERMISSION_RESOURCE_TYPE_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("spanner.instances.", ("spanner.googleapis.com/Instance",)),
     ("spanner.databases.", ("spanner.googleapis.com/Database",)),
     ("cloudtasks.queues.", ("cloudtasks.googleapis.com/Queue",)),
+    ("cloudbuild.builds.", ("cloudbuild.googleapis.com/Build",)),
 )
 
 # Internal resource_type token -> owning Google API service.
@@ -136,6 +137,7 @@ _RESOURCE_TYPE_TO_SERVICE: dict[str, str] = {
     "spannerinstance": "spanner.googleapis.com",
     "spannerdatabase": "spanner.googleapis.com",
     "cloudtasksqueue": "cloudtasks.googleapis.com",
+    "cloudbuildbuild": "cloudbuild.googleapis.com",
 }
 
 # Internal resource_type token -> canonical full resource type(s).
@@ -162,6 +164,7 @@ _RESOURCE_TYPE_TO_FULL_TYPE: dict[str, tuple[str, ...]] = {
     "spannerinstance": ("spanner.googleapis.com/Instance",),
     "spannerdatabase": ("spanner.googleapis.com/Database",),
     "cloudtasksqueue": ("cloudtasks.googleapis.com/Queue",),
+    "cloudbuildbuild": ("cloudbuild.googleapis.com/Build",),
 }
 
 _PREFERRED_RULE_RESOURCE_TOKENS: frozenset[str] = frozenset(
@@ -193,6 +196,7 @@ _PREFERRED_RULE_RESOURCE_TOKENS: frozenset[str] = frozenset(
         "bigquerydataset",
         "bigquerytable",
         "bigqueryroutine",
+        "cloudbuildbuild",
     }
 )
 
@@ -444,17 +448,8 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
         group_target_selector: dict[str, Any] = {}
 
         if isinstance(raw_group, dict):
-            group_id = str(raw_group.get("id") or raw_group.get("group_id") or default_group_id).strip() or default_group_id
-            raw_permissions = (
-                raw_group.get("permissions")
-                or raw_group.get("requires_any")
-                or raw_group.get("requires")
-                or []
-            )
-            permissions = set(_list_or_empty(raw_permissions))
-            single_permission = str(raw_group.get("permission") or "").strip()
-            if single_permission:
-                permissions.add(single_permission)
+            group_id = str(raw_group.get("id") or default_group_id).strip() or default_group_id
+            permissions = set(_list_or_empty(raw_group.get("permissions")))
             group_resource_scopes_possible = {
                 canonical
                 for token in normalized_token_list(raw_group.get("resource_scopes_possible"))
@@ -508,17 +503,10 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
                 edge_from_subject = str(raw_hop.get("edge_from_subject") or "").strip()
                 if not edge_from_subject:
                     continue
-                hop_mode = (
-                    str(raw_hop.get("node_mode") or raw_hop.get("intermediate_node_mode") or "capability").strip().lower()
-                    or "capability"
-                )
+                hop_mode = str(raw_hop.get("node_mode") or "capability").strip().lower() or "capability"
                 if hop_mode not in {"capability", "resource"}:
                     hop_mode = "capability"
                 raw_from_group = raw_hop.get("from_groups")
-                if raw_from_group is None:
-                    raw_from_group = raw_hop.get("from_group")
-                if raw_from_group is None:
-                    raw_from_group = raw_hop.get("intermediate_from_group")
                 from_groups: set[str] = set()
                 if isinstance(raw_from_group, str):
                     if token := str(raw_from_group).strip():
@@ -531,47 +519,13 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
                         "edge_from_subject": edge_from_subject,
                         "node_mode": hop_mode,
                         "from_groups": from_groups,
-                        "selector": _selector_or_empty(
-                            raw_hop.get("selector")
-                            if raw_hop.get("selector") is not None
-                            else raw_hop.get("intermediate_selector")
-                        ),
+                        "selector": _selector_or_empty(raw_hop.get("selector")),
                         "node_type": str(raw_hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability",
                         "node_label": str(raw_hop.get("node_label") or str(name)).strip() or str(name),
                     }
                 )
 
-        if not normalized_hops:
-            edge_from_subject = str(raw_combo_hop.get("edge_from_subject") or "").strip()
-            if edge_from_subject:
-                hop_mode = (
-                    str(raw_combo_hop.get("intermediate_node_mode") or raw_combo_hop.get("node_mode") or "capability").strip().lower()
-                    or "capability"
-                )
-                if hop_mode not in {"capability", "resource"}:
-                    hop_mode = "capability"
-                raw_intermediate_from_group = raw_combo_hop.get("intermediate_from_group")
-                from_groups: set[str] = set()
-                if isinstance(raw_intermediate_from_group, str):
-                    if token := str(raw_intermediate_from_group).strip():
-                        from_groups.add(token)
-                elif isinstance(raw_intermediate_from_group, list):
-                    from_groups = set(_list_or_empty(raw_intermediate_from_group))
-                normalized_hops = [
-                    {
-                        "id": "hop_1",
-                        "edge_from_subject": edge_from_subject,
-                        "node_mode": hop_mode,
-                        "from_groups": from_groups,
-                        "selector": _selector_or_empty(raw_combo_hop.get("intermediate_selector")),
-                        "node_type": str(raw_combo_hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability",
-                        "node_label": str(raw_combo_hop.get("node_label") or str(name)).strip() or str(name),
-                    }
-                ]
-
-        raw_target_from_group = raw_combo_hop.get("target_from_group")
-        if raw_target_from_group is None:
-            raw_target_from_group = raw_combo_hop.get("target_from_groups")
+        raw_target_from_group = raw_combo_hop.get("target_from_groups")
         target_from_groups: set[str] = set()
         if isinstance(raw_target_from_group, str):
             if token := str(raw_target_from_group).strip():
@@ -627,19 +581,138 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
 
 
 def expand_single_permission_rules(raw_rules: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
-    """Translate `permission` shorthand rules into matcher-ready `requires_any` rules."""
+    """Translate `permissions` (or legacy `permission`) shorthand into matcher-ready `requires_any` rules.
+
+    New form:  permissions: [str, ...]   # always a list
+               on: "resource-type"       # optional; expands to target_selector
+    Legacy:    permission: str           # still accepted for backward compat
+    """
     expanded: dict[str, dict[str, Any]] = {}
     for name, raw_rule in (raw_rules or {}).items():
         if not isinstance(raw_rule, dict):
             continue
-        permission = str(raw_rule.get("permission") or "").strip()
-        if not permission:
+        # Resolve permission list: new `permissions` list, or legacy singular `permission`.
+        perms = raw_rule.get("permissions")
+        if isinstance(perms, list):
+            perms = [str(p).strip() for p in perms if str(p).strip()]
+        elif isinstance(perms, str) and perms.strip():
+            perms = [perms.strip()]
+        else:
+            legacy = str(raw_rule.get("permission") or "").strip()
+            perms = [legacy] if legacy else []
+        if not perms:
             continue
-        rule_copy = {key: value for key, value in raw_rule.items() if key != "permission"}
+        rule_copy = {
+            key: value for key, value in raw_rule.items()
+            if key not in {"permission", "permissions", "on",
+                           "description", "resource_scopes_possible"}
+        }
+        # `on: "type"` shorthand -> target_selector (skip if target_selector already present)
+        on_type = str(raw_rule.get("on") or "").strip()
+        if on_type and not rule_copy.get("target_selector"):
+            rule_copy["target_selector"] = {"mode": "resource_types", "resource_types": [on_type]}
         if not rule_copy.get("requires_any"):
-            rule_copy["requires_any"] = [permission]
+            rule_copy["requires_any"] = perms
         rule_copy.setdefault("combine_across_bindings", False)
         expanded[str(name)] = rule_copy
+    return expanded
+
+
+def _desugar_multi_permission_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
+    """Compact authoring form for the common 2-hop shape: N `requires` permission groups
+    + one `act_as` pivot -> capability/resource node -> service-account target.
+
+    New (preferred) form:
+        NAME:
+          requires:
+            - { permissions: [...], on: computeinstance, status_in: [RUNNING] }
+          act_as: { permissions: [iam.serviceAccounts.actAs], on: service-account }
+          edge: CAN_...          # edge emitted from binding -> intermediate node
+          via: resource          # capability|resource (default: capability)
+          # rule key IS the final edge name; no target_edge needed
+
+    Legacy form (still accepted):
+        NAME:
+          subject_groups: [...]  # same as requires
+          act_as: {...}
+          subject_edge: CAN_...  # same as edge
+          subject_node: resource # same as via
+          target_edge: NAME      # redundant with rule key; ignored
+
+    Expands into `requires_groups` + `combo_hop` that the engine consumes.
+    Passes through untouched when verbose keys (requires_groups/combo_hop/match_paths)
+    are already present.
+    """
+    if not isinstance(raw_rule, dict):
+        return raw_rule
+    # Accept both new ("requires") and legacy ("subject_groups") keys.
+    requires = raw_rule.get("requires") or raw_rule.get("subject_groups")
+    act_as = raw_rule.get("act_as")
+    if not isinstance(requires, list) or not isinstance(act_as, dict):
+        return raw_rule
+    if raw_rule.get("requires_groups") or raw_rule.get("combo_hop") or raw_rule.get("match_paths"):
+        return raw_rule  # already in verbose form — leave it to the full parser
+
+    def _group(group_id: str, spec: dict[str, Any]) -> dict[str, Any]:
+        # Accept both "on" (new) and "target" (legacy) for the resource type.
+        target = str(spec.get("on") or spec.get("target") or "").strip()
+        group: dict[str, Any] = {
+            "id": group_id,
+            "permissions": list(spec.get("permissions") or []),
+            "resource_scopes_possible": ["project"] + ([target] if target and target != "project" else []),
+        }
+        if target:
+            selector: dict[str, Any] = {"mode": "resource_types", "resource_types": [target]}
+            status_in = spec.get("status_in")
+            if isinstance(status_in, list) and status_in:
+                selector["status_in"] = list(status_in)
+            group["target_selector"] = selector
+        return group
+
+    subject_ids: list[str] = []
+    groups: list[dict[str, Any]] = []
+    for index, spec in enumerate(requires):
+        spec = spec if isinstance(spec, dict) else {}
+        group_id = str(spec.get("id") or f"subject_{index + 1}").strip() or f"subject_{index + 1}"
+        subject_ids.append(group_id)
+        groups.append(_group(group_id, spec))
+    act_as_id = str(act_as.get("id") or "act_as").strip() or "act_as"
+    groups.append(_group(act_as_id, act_as))
+
+    # Accept "via" (new) or "subject_node" (legacy); default: capability.
+    node_mode = str(raw_rule.get("via") or raw_rule.get("subject_node") or "capability").strip().lower() or "capability"
+    if node_mode not in {"capability", "resource"}:
+        node_mode = "capability"
+    # Final edge: always the rule key (target_edge is redundant in the new form).
+    edge_to = str(raw_rule.get("edge_type") or "").strip() or str(name or "").strip()
+    # Subject edge: "edge" (new) or "subject_edge" (legacy).
+    subject_edge = str(raw_rule.get("edge") or raw_rule.get("subject_edge") or "").strip()
+
+    expanded = {
+        key: value
+        for key, value in raw_rule.items()
+        if key not in {"requires", "subject_groups", "act_as",
+                       "edge", "subject_edge", "via", "subject_node", "target_edge"}
+    }
+    # description and example_command are passed through from raw_rule above
+    expanded.setdefault("multi_permission_type", "complex")
+    expanded.setdefault("same_scope_required", False)
+    # GCP enforces iam.disableCrossProjectServiceAccountUsage by default: Cloud Run/Build/
+    # Scheduler all reject SAs from a different project unless the org policy is explicitly
+    # disabled.  Default True (same-project paths only); --cross-project overrides at runtime.
+    expanded.setdefault("same_project_required", True)
+    expanded["requires_groups"] = groups
+    expanded["combo_hop"] = {
+        "edge_to_target": edge_to,
+        "target_from_groups": [act_as_id],
+        "hops": [
+            {
+                "edge_from_subject": subject_edge,
+                "node_mode": node_mode,
+                "from_groups": list(subject_ids),
+            }
+        ],
+    }
     return expanded
 
 
@@ -667,6 +740,7 @@ def expand_multi_permission_rules(raw_rules: dict[str, dict[str, Any]] | None) -
         base_name = str(raw_name or "").strip()
         if not base_name or not isinstance(raw_rule, dict):
             continue
+        raw_rule = _desugar_multi_permission_rule(base_name, raw_rule)
         raw_paths = raw_rule.get("match_paths")
         if not isinstance(raw_paths, list) or not raw_paths:
             expanded[base_name] = dict(raw_rule)
@@ -1625,6 +1699,7 @@ def _emit_binding_target_edge(
     target: dict[str, str],
     rule_name: str,
     rule_description: str = "",
+    example_command: str = "",
     matched_permissions: Iterable[str],
     matched_roles: Iterable[str],
     evidence_bindings: Iterable[str],
@@ -1710,6 +1785,8 @@ def _emit_binding_target_edge(
             props["dangerous_rule_descriptions"] = normalized_token_list([rule_description])
         if str(collapsed_edge_description or "").strip():
             props["collapsed_edge_description"] = str(collapsed_edge_description).strip()
+    if str(example_command or "").strip():
+        props["example_command"] = str(example_command).strip()
     props["target_resource_id"] = target_name
     props["target_resource_type"] = target_type
     edge_key = (entry.binding_composite_id, actual_edge_type, target_id)
@@ -1737,6 +1814,7 @@ def _emit_combo_target_edge(
     target: dict[str, str],
     rule_name: str,
     rule_description: str = "",
+    example_command: str = "",
     matched_permissions: Iterable[str],
     matched_roles: Iterable[str],
     evidence_bindings: Iterable[str],
@@ -1827,6 +1905,8 @@ def _emit_combo_target_edge(
     }
     if str(rule_description or "").strip():
         props["rule_description"] = str(rule_description).strip()
+    if str(example_command or "").strip():
+        props["example_command"] = str(example_command).strip()
     edge_key = (source_node_id, edge_type, target_id)
     existed = edge_key in builder.edge_map
     builder.add_edge(source_node_id, target_id, edge_type, **props)
@@ -2018,6 +2098,9 @@ def _emit_iam_binding_edges_from_entries(
         )
         _write_inline_progress(message)
 
+    _opts = getattr(context, "options", None)
+    _cross_project = bool(getattr(_opts, "cross_project", False))
+    _cross_project_sa_projects: frozenset[str] = getattr(_opts, "cross_project_sa_projects", frozenset()) or frozenset()
     dangerous_events = collect_rule_events(
         entries=entries,
         rules=rules,
@@ -2026,7 +2109,27 @@ def _emit_iam_binding_edges_from_entries(
         normalized_token_list=normalized_token_list,
         progress_callback=_print_rule_scan_progress,
         group_progress_callback=_print_rule_group_scan_progress,
+        cross_project=_cross_project,
     )
+    # Post-filter cross-project combo events when a specific SA-project allowlist is given.
+    # iam.disableCrossProjectServiceAccountUsage is a project-level policy on the SA's HOME
+    # project; only SA home-projects in the allowlist should yield cross-project edges.
+    if _cross_project and _cross_project_sa_projects:
+        filtered_events = []
+        for _ev in dangerous_events:
+            if _ev.get("emission_mode") != "combo":
+                filtered_events.append(_ev)
+                continue
+            _contribs = _ev.get("contributors") or []
+            _project_ids = {c.project_id for c in _contribs if getattr(c, "project_id", None)}
+            if len(_project_ids) <= 1:
+                # same-project combo event — always keep
+                filtered_events.append(_ev)
+            else:
+                # cross-project: keep only if the minority (SA) project is in the allowlist
+                if _project_ids & _cross_project_sa_projects:
+                    filtered_events.append(_ev)
+        dangerous_events = filtered_events
     if rules:
         _finalize_inline_progress()
     owner_baseline_events = collect_owner_baseline_events(
@@ -2080,6 +2183,7 @@ def _emit_iam_binding_edges_from_entries(
             edge_type = str(event.get("edge_type") or "POLICY_BINDINGS")
             rule_name = str(event.get("rule_name") or "")
             rule_description = str(event.get("rule_description") or "").strip()
+            example_command = str(event.get("example_command") or "").strip()
             selector = event.get("target_selector") or {}
             combo_hop = event.get("combo_hop") or {}
             targets_from_permissions = set(event.get("targets_from_permissions") or ())
@@ -2125,6 +2229,7 @@ def _emit_iam_binding_edges_from_entries(
                     target=target,
                     rule_name=rule_name,
                     rule_description=rule_description,
+                    example_command=example_command,
                     matched_permissions=matched_permissions,
                     matched_roles=matched_roles,
                     evidence_bindings=evidence_bindings,
@@ -2518,6 +2623,7 @@ def _emit_iam_binding_edges_from_entries(
                                     target=hop_target,
                                     rule_name=rule_name,
                                     rule_description=rule_description,
+                                    example_command=example_command,
                                     matched_permissions=matched_permissions,
                                     matched_roles=matched_roles,
                                     evidence_bindings=evidence_bindings,
@@ -2579,6 +2685,7 @@ def _emit_iam_binding_edges_from_entries(
                             target=target,
                             rule_name=rule_name,
                             rule_description=rule_description,
+                            example_command=example_command,
                             matched_permissions=matched_permissions,
                             matched_roles=matched_roles,
                             evidence_bindings=evidence_bindings,
@@ -2721,6 +2828,7 @@ def _emit_iam_binding_edges_from_entries(
                                 target=intermediate_target,
                                 rule_name=rule_name,
                                 rule_description=rule_description,
+                                example_command=example_command,
                                 matched_permissions=matched_permissions,
                                 matched_roles=matched_roles,
                                 evidence_bindings=[contributor.binding_composite_id],
@@ -2760,6 +2868,7 @@ def _emit_iam_binding_edges_from_entries(
                                     target=target,
                                     rule_name=rule_name,
                                     rule_description=rule_description,
+                                    example_command=example_command,
                                     matched_permissions=matched_permissions,
                                     matched_roles=matched_roles,
                                     evidence_bindings=[contributor.binding_composite_id],
@@ -2842,6 +2951,7 @@ def _emit_iam_binding_edges_from_entries(
                             target=target,
                             rule_name=rule_name,
                             rule_description=rule_description,
+                            example_command=example_command,
                             matched_permissions=matched_permissions,
                             matched_roles=matched_roles,
                             evidence_bindings=[contributor.binding_composite_id],

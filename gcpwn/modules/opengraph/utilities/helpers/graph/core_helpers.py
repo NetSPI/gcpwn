@@ -592,6 +592,73 @@ def _normalized_permission_attribution(
     }
 
 
+def _scope_type_from_id(scope_id: str) -> str:
+    """Derive the scope type from a resource-manager id prefix (organizations/111 -> org)."""
+    token = str(scope_id or "").strip().lower()
+    if token.startswith("organizations/"):
+        return "org"
+    if token.startswith("folders/"):
+        return "folder"
+    if token.startswith("projects/"):
+        return "project"
+    return ""
+
+
+def _canonical_scope_type(scope_type: str) -> str:
+    """Normalize scope-type spellings so 'organization' and 'org' compare equal."""
+    token = str(scope_type or "").strip().lower()
+    return "org" if token in {"org", "organization"} else token
+
+
+def _readable_binding_label(binding_id: str) -> str:
+    """Turn a binding composite id into a human label: 'roles/owner @ project:proj-a
+    (inherited from org:111)'. Parses 'iambinding:<role>@<scope>[#src:<src>][#<suffix>]'."""
+    token = str(binding_id or "").strip()
+    for prefix in ("iambinding:", "combo_iambinding:"):
+        if token.startswith(prefix):
+            token = token[len(prefix):]
+            break
+    inherited_from = ""
+    if "#src:" in token:
+        token, src = token.split("#src:", 1)
+        inherited_from = src.strip()
+    elif "#" in token:
+        token = token.split("#", 1)[0]  # drop a dedup suffix (#1, #abc123)
+    role, sep, scope = token.partition("@")
+    label = f"{role.strip()} @ {scope.strip()}" if sep and scope.strip() else role.strip() or token
+    if inherited_from:
+        label = f"{label} (inherited from {inherited_from})"
+    return label
+
+
+def _readable_permission_source_summary(
+    *, trimmed: dict[str, Any], binding_ids: list[str], permission_map: dict[str, list[str]], effective: list[str]
+) -> list[str]:
+    """One readable 'role @ scope (inherited from X): perm1, perm2' line per contributing
+    grant. Multi-binding edges enumerate each binding; single-grant edges attribute to the
+    edge's own role@scope so the user always sees what-permission-from-what-role/resource."""
+    lines: list[str] = []
+    if permission_map:
+        for bid in sorted(set(binding_ids) | set(permission_map.keys())):
+            perms = normalized_token_list(permission_map.get(bid, []))
+            body = ", ".join(perms) if perms else "[permission attribution unavailable]"
+            lines.append(f"{_readable_binding_label(bid)}: {body}")
+        return lines
+    if binding_ids:
+        for bid in sorted(set(binding_ids)):
+            lines.append(f"{_readable_binding_label(bid)}: {', '.join(effective)}")
+        return lines
+    if effective:
+        role = str(trimmed.get("role_name") or "").strip()
+        scope = str(trimmed.get("attached_scope_display") or trimmed.get("attached_scope_id") or "").strip()
+        label = f"{role} @ {scope}" if role and scope else (role or scope)
+        src = str(trimmed.get("source_scope_display") or trimmed.get("source_scope_id") or "").strip()
+        if trimmed.get("inherited") and src and src != scope:
+            label = f"{label} (inherited from {src})"
+        lines.append(f"{label}: {', '.join(effective)}" if label else ", ".join(effective))
+    return lines
+
+
 def _trim_export_properties(props: dict[str, Any], *, node_id: str = "") -> dict[str, Any]:
     """Remove redundant/noisy export properties and preserve high-value attribution fields."""
     trimmed = dict(props or {})
@@ -620,27 +687,29 @@ def _trim_export_properties(props: dict[str, Any], *, node_id: str = "") -> dict
             trimmed["display_name"] = binding_display
         trimmed.pop("binding_display", None)
 
+    # De-crowd (Moderate): collapse the ~6 overlapping permission fields to TWO readable
+    # ones -- `permissions` (the effective permission list) + `permission_source_summary`
+    # ('role @ scope (inherited from X): perm1, perm2' lines). Everything a user needs
+    # (what permission, from what role/scope) without the raw duplicate bags.
     permission_attribution = _normalized_permission_attribution(trimmed)
-    for field_name in (
-        "permissions_required_by_rule",
-        "permissions_granted_from_bindings",
-        "permission_source_bindings",
-        "permission_source_summary",
-    ):
-        values = permission_attribution.get(field_name) or []
-        if values:
-            trimmed[field_name] = values
-
     effective_permissions = permission_attribution.get("effective_permissions") or []
+    source_map = _collect_contributing_binding_permission_map(trimmed)
+    source_bindings = permission_attribution.get("permission_source_bindings") or []
     if isinstance(effective_permissions, list) and effective_permissions:
-        trimmed["single_permission"] = len(effective_permissions) == 1
-        if len(effective_permissions) == 1:
-            permission_value = effective_permissions[0]
-            trimmed["permission"] = permission_value
-    trimmed.pop("matched_permissions", None)
-    trimmed.pop("contributing_permissions", None)
-    trimmed.pop("evidence_bindings", None)
-    trimmed.pop("contributing_binding_ids", None)
+        trimmed["permissions"] = list(effective_permissions)
+    summary = _readable_permission_source_summary(
+        trimmed=trimmed, binding_ids=source_bindings, permission_map=source_map, effective=list(effective_permissions),
+    )
+    if summary:
+        trimmed["permission_source_summary"] = summary
+    # Drop the redundant raw/duplicate permission + role bags now folded into the two above.
+    for redundant in (
+        "matched_permissions", "contributing_permissions", "evidence_bindings", "contributing_binding_ids",
+        "permissions_required_by_rule", "permissions_granted_from_bindings", "permission_source_bindings",
+        "permission", "single_permission", "matched_roles", "contributing_roles",
+    ):
+        trimmed.pop(redundant, None)
+
     if (
         str(trimmed.get("collapsed_edge_description") or "").strip()
         and str(trimmed.get("collapsed_edge_description") or "").strip()
@@ -656,11 +725,95 @@ def _trim_export_properties(props: dict[str, Any], *, node_id: str = "") -> dict
         if trimmed.get("source_scope_display") == trimmed.get("attached_scope_display"):
             trimmed.pop("source_scope_display", None)
 
+    # Drop effective_scope_* when identical to attached_scope_* (the common non-inherited
+    # case) -- the source_scope_* fields already carry any inheritance origin.
+    for suffix in ("id", "type", "display"):
+        if trimmed.get(f"effective_scope_{suffix}") == trimmed.get(f"attached_scope_{suffix}"):
+            trimmed.pop(f"effective_scope_{suffix}", None)
+
+    # Drop pure-noise condition scaffolding when there is no condition.
+    if not bool(trimmed.get("conditional")):
+        for noise in ("condition_services", "condition_resource_types", "condition_name_prefixes",
+                      "condition_name_equals", "condition_option_id", "condition_option_summary",
+                      "condition_expr_raw", "condition_hash", "condition_summary"):
+            trimmed.pop(noise, None)
+    if str(trimmed.get("condition_option_id") or "").strip().lower() == "default":
+        trimmed.pop("condition_option_id", None)
+
+    # dangerous_edge_types duplicates dangerous_rule_names on collapsed-role edges.
+    if list(trimmed.get("dangerous_edge_types") or []) == list(trimmed.get("dangerous_rule_names") or []):
+        trimmed.pop("dangerous_edge_types", None)
+
+    # Further de-crowd: drop fields that duplicate the edge endpoint or are internal build
+    # scaffolding, so the reader is left with who/what-permission/what-role/where.
+    trimmed.pop("target_resource_id", None)     # == the edge's destination node
+    trimmed.pop("target_resource_type", None)
+    trimmed.pop("binding_family_id", None)       # internal grouping id
+    trimmed.pop("collapsed_role_edge", None)     # internal flag
+    if not bool(trimmed.get("combine_across_bindings")):
+        trimmed.pop("combine_across_bindings", None)
+    if str(trimmed.get("collapsed_role_name") or "") == str(trimmed.get("role_name") or ""):
+        trimmed.pop("collapsed_role_name", None)
+    # attached_scope_display just repeats the leaf of attached_scope_id.
+    _asid = str(trimmed.get("attached_scope_id") or "")
+    if _asid and str(trimmed.get("attached_scope_display") or "") == _asid.rstrip("/").rsplit("/", 1)[-1]:
+        trimmed.pop("attached_scope_display", None)
+    # rule_description on a collapsed-role edge is generic boilerplate; the specific
+    # dangerous_rule_descriptions carries the real per-rule detail.
+    if trimmed.get("dangerous_rule_descriptions") and str(trimmed.get("rule_description") or "").startswith(
+        "Collapsed dangerous-path edge"
+    ):
+        trimmed.pop("rule_description", None)
+
+    # De-dup fields that only restate what another field already encodes:
+    #   * binding_origin == "inherited"/"direct" is derivable from the inherited flag
+    #     (keep it only for the distinct "inferred" case that carries extra signal);
+    #   * a *_scope_type just re-states the id prefix (organizations/ -> org, ...);
+    #   * the plural *_scope_ids/_types lists are single-element echoes of the singular
+    #     (or, when they hold >1 scope, the singular is the echo) -- keep exactly one;
+    #   * *_scope_display repeats the leaf of *_scope_id;
+    #   * empty condition_* lists and a False `conditional` flag are just noise.
+    _origin = str(trimmed.get("binding_origin") or "").strip().lower()
+    if _origin in {"inherited", "direct"} and _origin == ("inherited" if trimmed.get("inherited") else "direct"):
+        trimmed.pop("binding_origin", None)
+    for _base in ("attached_scope", "effective_scope", "source_scope"):
+        _ids = trimmed.get(f"{_base}_ids")
+        _types = trimmed.get(f"{_base}_types")
+        if isinstance(_ids, (list, tuple)):
+            if len(_ids) == 1:
+                trimmed.setdefault(f"{_base}_id", _ids[0])
+                if isinstance(_types, (list, tuple)) and len(_types) == 1:
+                    trimmed.setdefault(f"{_base}_type", _types[0])
+                trimmed.pop(f"{_base}_ids", None)
+                trimmed.pop(f"{_base}_types", None)
+            elif not _ids:
+                trimmed.pop(f"{_base}_ids", None)
+                trimmed.pop(f"{_base}_types", None)
+            else:  # multiple scopes -> the list is authoritative, drop the singular echoes
+                trimmed.pop(f"{_base}_id", None)
+                trimmed.pop(f"{_base}_type", None)
+                trimmed.pop(f"{_base}_display", None)
+        _sid = str(trimmed.get(f"{_base}_id") or "")
+        if _sid:
+            if str(trimmed.get(f"{_base}_display") or "") == _sid.rstrip("/").rsplit("/", 1)[-1]:
+                trimmed.pop(f"{_base}_display", None)
+            if _scope_type_from_id(_sid) == _canonical_scope_type(str(trimmed.get(f"{_base}_type") or "")):
+                trimmed.pop(f"{_base}_type", None)
+    for _ck in ("condition_hashes", "condition_summaries"):
+        if not (trimmed.get(_ck) or []):
+            trimmed.pop(_ck, None)
+    if trimmed.get("conditional") is False and not trimmed.get("condition_summaries"):
+        trimmed.pop("conditional", None)
+
     if str(trimmed.get("binding_origin") or "").strip().lower() == "direct" and trimmed.get("inherited") is False:
         trimmed.pop("inherited", None)
     trimmed.pop("direct_attached_scope", None)
     trimmed.pop("is_convenience_member", None)
     trimmed.pop("contributing_binding_permission_map", None)
+    # Also drop the flattened dotted form (contributing_binding_permission_map.<binding_id>)
+    # -- the readable permission_source_summary supersedes it.
+    for key in [k for k in trimmed if str(k).startswith("contributing_binding_permission_map.")]:
+        trimmed.pop(key, None)
     return trimmed
 
 

@@ -874,9 +874,38 @@ def _parse_args(user_args):
     parser.add_argument("--include-all", action="store_true", help="Include generic IAM binding edges (not only dangerous built-in edges)")
     parser.add_argument("--expand-inherited", action="store_true", help="Expand inherited IAM bindings from org/folder down to child folders/projects")
     parser.add_argument(
+        "--cross-sa-project-allowed",
+        dest="cross_sa_project_allowed",
+        nargs="*",
+        metavar="PROJECT_ID",
+        help=(
+            "Model attack paths where the actAs SA is in a DIFFERENT project than the resource "
+            "being created (Cloud Run/Build/Scheduler). Off by default because GCP enforces "
+            "iam.disableCrossProjectServiceAccountUsage at the project level. "
+            "Use 'all' (or pass the flag with no args) to allow cross-project paths for every "
+            "project, or supply a space-separated list of project IDs whose "
+            "iam.disableCrossProjectServiceAccountUsage constraint has been disabled "
+            "(e.g. --cross-sa-project-allowed proj-a proj-b). "
+            "Only project-specific filtering avoids false positives for well-configured projects."
+        ),
+    )
+    parser.add_argument(
         "--cond-eval",
         action="store_true",
         help="Run IAM conditional workflow in pass-through mode (currently no-op filtering)",
+    )
+    parser.add_argument(
+        "--deny-policies",
+        dest="deny_policies",
+        action="store_true",
+        help=(
+            "Factor IAM v2 Deny Policies (iam_deny_policies) into the graph as a FINAL filter: "
+            "rewrite the allow graph to effective access (allow minus deny). A grant fully "
+            "blocked by a deny is DROPPED; a group grant narrowed by an exemption is re-pointed "
+            "to the surviving member(s) (a single survivor becomes a single-user edge); affected "
+            "edges are flagged deny_policy_in_play. Deny inherits downward (org/folder -> "
+            "descendants). Requires enum_gcp_policy_bindings to have collected deny policies."
+        ),
     )
     parser.add_argument(
         "--exclude-service-agents",
@@ -1141,13 +1170,29 @@ def run_module(user_args, session):
             print("[*] No IAM policy data was found in SQLite (iam_allow_policies). Skipping IAM bindings step.")
 
         # Phase 2: build shared context used by all stages.
+        _cross_sa_arg = getattr(args, "cross_sa_project_allowed", None)
+        # None → flag not passed (disabled).  [] or ['all'] → all projects allowed.
+        # ['proj-a', 'proj-b'] → specific SA home-projects where the org policy is disabled.
+        _cross_project = _cross_sa_arg is not None
+        if _cross_project and _cross_sa_arg and "all" not in _cross_sa_arg:
+            _cross_project_sa_projects: frozenset[str] = frozenset(_cross_sa_arg)
+        else:
+            _cross_project_sa_projects = frozenset()
+        if _cross_project:
+            if _cross_project_sa_projects:
+                print(f"[*] --cross-sa-project-allowed: cross-project actAs enabled for SA projects: {', '.join(sorted(_cross_project_sa_projects))}")
+            else:
+                print("[*] --cross-sa-project-allowed: cross-project actAs enabled for ALL projects (ensure iam.disableCrossProjectServiceAccountUsage is disabled where needed)")
         context = OpenGraphBuildContext(
             session=data_source,
             options=OpenGraphBuildOptions(
                 include_all=args.include_all,
                 expand_inheritance=args.expand_inherited,
                 conditional_evaluation=bool(args.cond_eval),
+                deny_policies=bool(args.deny_policies),
                 debug=args.debug,
+                cross_project=_cross_project,
+                cross_project_sa_projects=_cross_project_sa_projects,
             ),
         )
 
@@ -1204,6 +1249,13 @@ def run_module(user_args, session):
                 f"+{max(0, after_edges - before_edges)} edges"
             )
             UtilityTools.dlog(args.debug, "opengraph step stats", step=step, stats=step_stats)
+
+        # Phase 3.5: deny-policy FINAL filter (opt-in) -- rewrite allow graph to effective
+        # access (allow minus deny) before it is snapshotted to node/edge lists.
+        if getattr(args, "deny_policies", False):
+            from gcpwn.modules.opengraph.utilities.stage_6_deny_policies import apply_deny_policies
+            deny_stats = apply_deny_policies(context)
+            context.record_step("deny_policies", deny_stats)
 
         # Phase 4: apply default-mode trim passes.
         nodes = list(context.builder.node_map.values())

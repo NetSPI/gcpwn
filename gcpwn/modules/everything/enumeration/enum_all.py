@@ -210,11 +210,13 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "cloud_compute_network": ("compute.googleapis.com",),
     "cloud_compute_lb": ("compute.googleapis.com",),
     "cloud_functions": ("cloudfunctions.googleapis.com",),
-    "cloud_storage": ("storage.googleapis.com",),
-    "cloud_bigquery": ("bigquery.googleapis.com",),
+    # storage/bigquery/firestore expose legacy/alternate API names in serviceusage; map
+    # them all so a project that enabled only an alias isn't a false negative.
+    "cloud_storage": ("storage.googleapis.com", "storage-component.googleapis.com", "storage-api.googleapis.com"),
+    "cloud_bigquery": ("bigquery.googleapis.com", "bigquery-json.googleapis.com"),
     "cloud_bigtable": ("bigtable.googleapis.com", "bigtableadmin.googleapis.com"),
     "cloud_pubsub": ("pubsub.googleapis.com",),
-    "cloud_firestore": ("firestore.googleapis.com",),
+    "cloud_firestore": ("firestore.googleapis.com", "datastore.googleapis.com"),  # Firestore in Datastore mode
     "cloud_dns": ("dns.googleapis.com",),
     "service_directory": ("servicedirectory.googleapis.com",),
     "app_engine": ("appengine.googleapis.com",),
