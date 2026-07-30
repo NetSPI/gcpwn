@@ -1013,10 +1013,10 @@ def cleanup_apigateway_resources(session, result: dict, *, delay: int = 0) -> No
     apis_r = ApiGatewayApisResource(session)
     if result.get("created_gateway") and result.get("gw_resource"):
         gws_r.delete(name=result["gw_resource"])
-        print(f"    Deleted gateway")
+        print("    Deleted gateway")
     if result.get("config_resource"):
         cfg_r.delete(name=result["config_resource"])
-        print(f"    Deleted config")
+        print("    Deleted config")
     if result.get("created_api") and result.get("api_resource"):
         apis_r.delete(name=result["api_resource"])
-        print(f"    Deleted API")
+        print("    Deleted API")
