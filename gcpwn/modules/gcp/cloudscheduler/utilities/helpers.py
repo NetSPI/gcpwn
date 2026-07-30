@@ -15,15 +15,7 @@ resolve_locations = region_resolver_for("cloudscheduler", ("cloudscheduler", "v1
 
 
 def _target_details(raw: dict[str, Any]) -> tuple[str, str, str]:
-    """Return (target_type, target_uri, target_sa_email) for a scheduler job.
-
-    The service-account email is the offensively interesting field: an HTTP target
-    carrying an OIDC/OAuth token fires *as that SA*, so a principal who can create
-    or update scheduler jobs (``cloudscheduler.jobs.create``) gains an oracle to
-    act as it -- the same primitive OpenGraph models as
-    ``CREATE_CLOUDSCHEDULER_JOB_AS_SA``. Enumerating existing jobs surfaces which
-    SAs are already wired up as targets.
-    """
+    """Return (target_type, target_uri, target_sa_email) for a scheduler job."""
     http_target = raw.get("http_target") if isinstance(raw.get("http_target"), dict) else None
     if http_target:
         sa_email = ""
@@ -43,12 +35,6 @@ def _target_details(raw: dict[str, Any]) -> tuple[str, str, str]:
 
 
 class CloudSchedulerJobsResource(GcpListResource):
-    """List/get Cloud Scheduler jobs via the scheduler_v1 GAPIC client.
-
-    Cloud Scheduler exposes IAM only at the location level (no per-job
-    testIamPermissions on the GAPIC client), so the component runs with
-    ``supports_iam=False``.
-    """
 
     SERVICE_LABEL = "Cloud Scheduler"
     TABLE_NAME = "cloudscheduler_jobs"
@@ -75,3 +61,18 @@ class CloudSchedulerJobsResource(GcpListResource):
             "target_uri": target_uri,
             "target_sa_email": target_sa_email,
         }
+
+    def create(self, *, parent: str, job: Any) -> Any:
+        return self.client.create_job(request=scheduler_v1.CreateJobRequest(parent=parent, job=job))
+
+    def run_job(self, *, name: str) -> Any:
+        return self.client.run_job(request=scheduler_v1.RunJobRequest(name=name))
+
+    def get_by_name(self, *, name: str) -> Any:
+        return self.client.get_job(request=scheduler_v1.GetJobRequest(name=name))
+
+    def delete(self, *, name: str) -> None:
+        try:
+            self.client.delete_job(request=scheduler_v1.DeleteJobRequest(name=name))
+        except Exception:
+            pass
