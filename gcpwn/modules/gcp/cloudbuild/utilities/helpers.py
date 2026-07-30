@@ -25,6 +25,28 @@ from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_erro
 
 resolve_regions = region_resolver_for("cloudbuild")
 
+_CSR_BASE = "https://sourcerepo.googleapis.com/v1"
+
+
+def create_source_repo(session, project_id: str, repo_name: str) -> tuple[str | None, str | None]:
+    """Create a Cloud Source Repository via REST. Returns (full_name, error_str)."""
+    import requests as _requests  # noqa: PLC0415
+    from gcpwn.core.utils.module_helpers import get_bearer_token
+    token = get_bearer_token(session)
+    url = f"{_CSR_BASE}/projects/{project_id}/repos"
+    resp = _requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"name": f"projects/{project_id}/repos/{repo_name}"},
+        timeout=30,
+    )
+    data = resp.json()
+    if "error" in data:
+        if resp.status_code == 409:
+            return f"projects/{project_id}/repos/{repo_name}", None
+        return None, f"CSR create error {resp.status_code}: {data['error'].get('message', str(data['error']))}"
+    return data.get("name", f"projects/{project_id}/repos/{repo_name}"), None
+
 
 def _normalize_connection_row(row: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(row, dict):
@@ -352,6 +374,37 @@ class CloudBuildTriggersResource(GcpListResource):
                 },
             )
 
+    def create(self, *, project_id: str, trigger: Any) -> Any:
+        """Create a Cloud Build trigger. trigger is a cloudbuild_v1.BuildTrigger proto.
+        Returns the created BuildTrigger."""
+        v1 = _cloudbuild_v1_module()
+        client = v1.CloudBuildClient(credentials=self.session.credentials)
+        return client.create_build_trigger(
+            request=v1.CreateBuildTriggerRequest(project_id=project_id, trigger=trigger)
+        )
+
+    def run(self, *, project_id: str, trigger_id: str, source: Any = None) -> Any:
+        """Run a Cloud Build trigger immediately. source is a cloudbuild_v1.RepoSource or None.
+        Returns a Build-like object with .id from the LRO metadata (does not wait for build completion)."""
+        v1 = _cloudbuild_v1_module()
+        client = v1.CloudBuildClient(credentials=self.session.credentials)
+        req = v1.RunBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
+        if source is not None:
+            req.source = source
+        op = client.run_build_trigger(request=req)
+        return op.metadata.build
+
+    def delete(self, *, project_id: str, trigger_id: str) -> None:
+        """Delete a Cloud Build trigger. Best-effort; swallows errors."""
+        v1 = _cloudbuild_v1_module()
+        client = v1.CloudBuildClient(credentials=self.session.credentials)
+        try:
+            client.delete_build_trigger(
+                request=v1.DeleteBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
+            )
+        except Exception:
+            pass
+
 
 class CloudBuildBuildsResource(GcpListResource):
     """List/get Cloud Build builds and export their env/step details to loot files.
@@ -490,3 +543,18 @@ class CloudBuildBuildsResource(GcpListResource):
         )
         destination.write_text(_build_step_arguments_text(normalized_row), encoding="utf-8")
         return destination
+
+    def create_build(self, *, project_id: str, build: Any) -> Any:
+        return self.client.create_build(project_id=project_id, build=build)
+
+    def cancel_build(self, *, project_id: str, build_id: str) -> None:
+        try:
+            self.client.cancel_build(project_id=project_id, id=build_id)
+            print(f"    [cleanup] build {build_id} cancelled")
+        except Exception as e:
+            msg = str(e)
+            if "FAILED_PRECONDITION" in msg or "already" in msg.lower() or "terminal" in msg.lower():
+                print(f"    [cleanup] build {build_id} already in terminal state (cannot cancel)")
+            else:
+                print(f"    [cleanup] cancel attempt for {build_id}: {e}")
+        print("    Note: Cloud Build builds cannot be deleted via API — build remains in history until it expires.")

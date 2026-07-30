@@ -82,3 +82,6 @@ scripts/*.txt
 *service-account*.json
 *-sa-key.json
 scratchpad_live/
+
+# Live privilege-escalation validation results (may contain real token snippets / env details)
+privesc-validation/
