@@ -26,7 +26,7 @@ def _parse_args(user_args):
 
     return parse_component_args(
         user_args,
-        description="Enumerate Dataflow resources",
+        description="Enumerate Dataflow jobs across regions",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
         standard_args=("get", "debug"),
@@ -37,6 +37,6 @@ def run_module(user_args, session):
     args = _parse_args(user_args)
     run_components(
         session, args, components=COMPONENTS, column_name="dataflow_actions_allowed",
-        region_resolver=resolve_locations, module_name="enum_dataflow",
+        region_resolver=resolve_locations, module_name="enum_dataflow_core",
     )
     return 1

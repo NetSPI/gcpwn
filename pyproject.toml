@@ -37,6 +37,9 @@ table = [
 excel = [
   "xlsxwriter==3.2.9"
 ]
+dataflow = [
+  "apache-beam[gcp]>=2.50.0"
+]
 
 [project.scripts]
 gcpwn = "gcpwn.cli.main:main"

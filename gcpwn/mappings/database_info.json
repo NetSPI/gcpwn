@@ -3029,6 +3029,77 @@
       ]
     },
     {
+      "table_name": "datapipelines_pipelines",
+      "columns": [
+        "project_id",
+        "location",
+        "pipeline_id",
+        "name",
+        "display_name",
+        "state",
+        "pipeline_type",
+        "schedule",
+        "worker_service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "pipeline_id"
+      ]
+    },
+    {
+      "table_name": "dataform_repositories",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "service_account",
+        "display_name",
+        "git_remote_url",
+        "workspace_compilation_overrides"
+      ],
+      "primary_keys": [
+        "project_id",
+        "location",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataform_workspaces",
+      "columns": [
+        "project_id",
+        "location",
+        "repository_name",
+        "name"
+      ],
+      "primary_keys": [
+        "project_id",
+        "location",
+        "repository_name",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataform_workflow_configs",
+      "columns": [
+        "project_id",
+        "location",
+        "repository_name",
+        "name",
+        "cron_schedule",
+        "time_zone",
+        "release_config",
+        "invocation_service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "location",
+        "repository_name",
+        "name"
+      ]
+    },
+    {
       "table_name": "notebooks_instances",
       "columns": [
         "project_id",
@@ -3107,6 +3178,23 @@
         "name",
         "service_name",
         "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "connectors_connections",
+      "columns": [
+        "project_id",
+        "location",
+        "connection_id",
+        "name",
+        "connector",
+        "status",
+        "service_account",
         "raw_json"
       ],
       "primary_keys": [
