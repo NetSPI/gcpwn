@@ -37,3 +37,37 @@ class BatchJobsResource(GcpListResource):
         status = raw.get("status")
         state = status.get("state") if isinstance(status, dict) else ""
         return {"status_state": state or raw.get("status_state") or ""}
+
+    def create(self, *, parent: str, job_id: str, job) -> object:
+        from google.cloud import batch_v1
+        return self.client.create_job(
+            request=batch_v1.CreateJobRequest(parent=parent, job_id=job_id, job=job)
+        )
+
+    def delete(self, *, name: str) -> None:
+        from google.cloud import batch_v1
+        self.client.delete_job(request=batch_v1.DeleteJobRequest(name=name))
+
+    def poll(self, *, job_name: str, timeout: int = 600, interval: int = 15):
+        import time
+        from google.cloud import batch_v1
+        terminal = frozenset({
+            batch_v1.JobStatus.State.SUCCEEDED,
+            batch_v1.JobStatus.State.FAILED,
+            batch_v1.JobStatus.State.DELETION_IN_PROGRESS,
+        })
+        deadline = time.time() + timeout
+        last_state = "UNKNOWN"
+        last_job = None
+        while time.time() < deadline:
+            try:
+                job = self.client.get_job(request=batch_v1.GetJobRequest(name=job_name))
+                last_job = job
+                raw = job.status.state
+                last_state = batch_v1.JobStatus.State(raw).name
+                if raw in terminal:
+                    return last_state, last_job
+            except Exception:
+                return "UNKNOWN", None
+            time.sleep(interval)
+        return last_state, last_job

@@ -154,3 +154,13 @@ class ComposerEnvironmentsResource:
         )
         destination.write_text(_software_config_text(normalized_row), encoding="utf-8")
         return destination
+
+    def delete(self, *, name: str) -> None:
+        try:
+            request = self._service_v1.DeleteEnvironmentRequest(name=name)
+            op = self.client.delete_environment(request=request)
+            op_name = getattr(getattr(op, "operation", None), "name", name)
+            print(f"  [cleanup] environment delete requested: {op_name}")
+        except Exception as exc:
+            from gcpwn.core.console import UtilityTools
+            print(f"{UtilityTools.YELLOW}  [cleanup] environment delete error: {exc}{UtilityTools.RESET}")
