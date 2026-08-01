@@ -6,6 +6,7 @@ from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args,
 from gcpwn.core.utils.service_runtime import parse_component_args
 from gcpwn.modules.gcp.clouddeploy.utilities.helpers import (
     CloudDeployDeliveryPipelinesResource,
+    CloudDeployReleasesResource,
     CloudDeployTargetsResource,
     resolve_locations,
 )
@@ -39,14 +40,57 @@ def _parse_args(user_args):
         description="Enumerate Cloud Deploy resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "get", "debug"),
+        standard_args=("download", "iam", "get", "debug"),
+        standard_arg_overrides={
+            "download": {
+                "help": (
+                    "Download user-uploaded Skaffold config archives from each release's "
+                    "skaffold_config_uri (gs:// path) and extract the contained YAML files. "
+                    "Requires storage.objects.get on the source bucket."
+                ),
+            },
+        },
     )
+
+
+def _download_skaffold_configs(session, discovered):
+    project_id = session.project_id
+    pipeline_rows = discovered.get("delivery_pipelines", [])
+    if not pipeline_rows:
+        print("[*] No delivery pipelines found — skipping Skaffold config download.")
+        return
+
+    releases_resource = CloudDeployReleasesResource(session)
+    all_paths = []
+    for row in pipeline_rows:
+        if not isinstance(row, dict):
+            continue
+        pipeline_name = str(row.get("name") or "").strip()
+        if not pipeline_name:
+            continue
+        paths = releases_resource.download_skaffold_configs(
+            pipeline_name=pipeline_name, project_id=project_id
+        )
+        all_paths.extend(paths)
+
+    if all_paths:
+        for path in all_paths:
+            print(f"[*] Wrote Skaffold config to {path}")
+        print(f"[*] Downloaded {len(all_paths)} Skaffold config file(s) for project {project_id}.")
+    else:
+        print(f"[*] No Skaffold config archives found/accessible for project {project_id}.")
 
 
 def run_module(user_args, session):
     args = _parse_args(user_args)
-    run_components(
+    if getattr(args, "download", False):
+        args.delivery_pipelines = True  # need pipeline names to list releases
+
+    discovered = run_components(
         session, args, components=COMPONENTS, column_name="clouddeploy_actions_allowed",
         region_resolver=resolve_locations, module_name="enum_clouddeploy",
     )
+
+    if getattr(args, "download", False):
+        _download_skaffold_configs(session, discovered)
     return 1

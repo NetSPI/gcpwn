@@ -8,6 +8,7 @@ from gcpwn.modules.gcp.cloudrun.utilities.helpers import (
     CloudRunJobsResource,
     CloudRunRevisionsResource,
     CloudRunServicesResource,
+    CloudRunWorkerPoolsResource,
     resolve_regions,
 )
 
@@ -25,6 +26,12 @@ COMPONENTS = [
               manual_template=("projects", "{project_id}", "locations", 0, "jobs", 1),
               manual_error="Invalid job ID format. Use LOCATION/JOB_ID or projects/PROJECT_ID/locations/LOCATION/jobs/JOB_ID.",
               manual_help="Job IDs as LOCATION/JOB_ID or full resource names."),
+    Component("worker_pools", CloudRunWorkerPoolsResource, "Cloud Run Worker Pools", "Worker Pools",
+              help_text="Enumerate Cloud Run Worker Pools (surfaces serviceAccount per pool)", scope=REGION,
+              manual_id_arg="worker_pool_ids",
+              manual_template=("projects", "{project_id}", "locations", 0, "workerPools", 1),
+              manual_error="Invalid worker pool ID format. Use LOCATION/POOL_ID or full resource name.",
+              manual_help="Worker pool IDs as LOCATION/POOL_ID or full resource names."),
 ]
 
 

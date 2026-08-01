@@ -708,26 +708,30 @@ class CloudStorageBlobsResource(_CloudStorageBaseResource):
         remote_path: str,
         local_blob_path: Optional[str] = None,
         data_string: Optional[str] = None,
+        data_bytes: Optional[bytes] = None,
+        content_type: Optional[str] = None,
         debug: Optional[bool] = False,
     ) -> Union[None, bool]:
-        """Upload a local file or an in-memory string to a blob via the JSON API.
+        """Upload a local file, an in-memory string, or raw bytes to a blob via the JSON API.
 
-        Exactly one of local_blob_path/data_string should be supplied. Returns True on success,
-        None on missing file / 403 storage.objects.create / unexpected error.
+        Supply exactly one of local_blob_path / data_string / data_bytes.
+        Returns True on success, None on missing file / permission error / unexpected error.
         """
         if debug:
             if local_blob_path:
                 print(f"[DEBUG] Proceeding to upload {local_blob_path} to {bucket_name}/{remote_path} ...")
-            elif data_string:
-                print(f"[DEBUG] Proceeding to upload {data_string} to {bucket_name}/{remote_path} ...")
+            else:
+                print(f"[DEBUG] Proceeding to upload in-memory data to {bucket_name}/{remote_path} ...")
 
         try:
             uploading_bucket = storage_client.bucket(bucket_name)
             uploading_blob = uploading_bucket.blob(remote_path)
             if local_blob_path:
-                uploading_blob.upload_from_filename(local_blob_path)
+                uploading_blob.upload_from_filename(local_blob_path, content_type=content_type)
+            elif data_bytes is not None:
+                uploading_blob.upload_from_string(data_bytes, content_type=content_type or "application/octet-stream")
             elif data_string is not None:
-                uploading_blob.upload_from_string(data_string)
+                uploading_blob.upload_from_string(data_string, content_type=content_type or "text/plain")
         except FileNotFoundError as e:
             if f"No such file or directory: '{local_blob_path}'" in str(e):
                 print(f"{UtilityTools.RED}[X] File {local_blob_path} does not exist. Exiting...{UtilityTools.RESET}")
@@ -746,6 +750,42 @@ class CloudStorageBlobsResource(_CloudStorageBaseResource):
         if debug:
             print("[DEBUG] Completed upload_with_client")
         return True
+
+    @staticmethod
+    def delete_with_client(
+        storage_client: Client,
+        bucket_name: str,
+        remote_path: str,
+        debug: Optional[bool] = False,
+    ) -> bool:
+        """Delete a GCS object. Returns True on success, False on error (best-effort)."""
+        try:
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(remote_path)
+            blob.delete()
+            if debug:
+                print(f"[DEBUG] Deleted gs://{bucket_name}/{remote_path}")
+            return True
+        except Exception as exc:
+            print(f"{UtilityTools.YELLOW}[!] GCS delete error ({bucket_name}/{remote_path}): {exc}{UtilityTools.RESET}")
+            return False
+
+    @staticmethod
+    def download_bytes_with_client(
+        storage_client: Client,
+        bucket_name: str,
+        remote_path: str,
+        debug: Optional[bool] = False,
+    ) -> Optional[bytes]:
+        """Download a GCS object as bytes. Returns None on error (best-effort)."""
+        try:
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(remote_path)
+            return blob.download_as_bytes()
+        except Exception as exc:
+            if debug:
+                print(f"[DEBUG] GCS download error ({bucket_name}/{remote_path}): {exc}")
+            return None
 
     @staticmethod
     def upload_with_hmac(

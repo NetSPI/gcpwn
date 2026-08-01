@@ -558,3 +558,19 @@ class CloudBuildBuildsResource(GcpListResource):
             else:
                 print(f"    [cleanup] cancel attempt for {build_id}: {e}")
         print("    Note: Cloud Build builds cannot be deleted via API — build remains in history until it expires.")
+
+    def find_recent_build(self, *, project_id: str, filter_str: str = "", page_size: int = 10) -> dict[str, Any] | None:
+        """Return the most recent build matching filter_str (JMES-style Cloud Build filter), or None."""
+        try:
+            results = self.client.list_builds(
+                request=self._v1.ListBuildsRequest(
+                    project_id=project_id,
+                    filter=filter_str,
+                    page_size=page_size,
+                )
+            )
+            for build in results:
+                return _normalize_build_row(resource_to_dict(build))
+        except Exception:
+            pass
+        return None

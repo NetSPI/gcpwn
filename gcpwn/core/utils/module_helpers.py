@@ -1369,3 +1369,19 @@ def export_hierarchy_tree_image(*, db_path: str, out_path: str, workspace_id: in
         "edges": len(layout.get("edges") or []),
         "renderer": "svg-interactive",
     }
+
+
+def get_bearer_token(session) -> str:
+    """Return a refreshed OAuth2 access token from the session credentials."""
+    creds = getattr(session, "credentials", None)
+    if creds is None:
+        return getattr(session, "access_token", "") or ""
+    try:
+        from google.auth.transport.requests import Request as _Req
+        if not getattr(creds, "valid", True):
+            creds.refresh(_Req())
+        return getattr(creds, "token", None) or ""
+    except Exception:
+        return getattr(session, "access_token", "") or ""
+
+

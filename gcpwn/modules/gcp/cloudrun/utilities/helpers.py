@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from gcpwn.core.output_paths import compact_filename_component
-from gcpwn.core.resource import DiscoveryListResource, GcpListResource
+from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
 from gcpwn.core.utils.module_helpers import (
     extract_location_from_resource_name,
@@ -282,8 +282,7 @@ class CloudRunJobsResource(_CloudRunResource):
             pass
 
 
-class CloudRunWorkerPoolsResource(DiscoveryListResource):
-    SERVICE_LABEL = "Cloud Run"
+class CloudRunWorkerPoolsResource(_CloudRunResource):
     TABLE_NAME = "cloudrun_worker_pools"
     COLUMNS = ["location", "worker_pool_id", "name", "service_account", "min_instance_count", "create_time"]
     ACTION_RESOURCE_TYPE = "workerPools"
@@ -291,42 +290,27 @@ class CloudRunWorkerPoolsResource(DiscoveryListResource):
     LIST_API_NAME = "run.projects.locations.workerPools.list"
     GET_PERMISSION = "run.workerPools.get"
     GET_API_NAME = "run.projects.locations.workerPools.get"
-    DISCOVERY_API = "run"
-    DISCOVERY_VERSION = "v2"
+    CLIENT_ATTR = "WorkerPoolsClient"
+    LIST_METHOD = "list_worker_pools"
+    GET_METHOD = "get_worker_pool"
     ID_FIELD = "worker_pool_id"
-    LIST_ITEMS_KEY = "workerPools"
-
-    def _list_request(self, *, project_id: str, parent: str | None, page_token: str | None = None, **kwargs):
-        location = kwargs.get("location", "-")
-        parent = parent or f"projects/{project_id}/locations/{location}"
-        req = self.service.projects().locations().workerPools().list(parent=parent)
-        if page_token:
-            req = self.service.projects().locations().workerPools().list(parent=parent, pageToken=page_token)
-        return req
-
-    def _get_request(self, *, project_id: str, resource_id: str, **kwargs):
-        return self.service.projects().locations().workerPools().get(name=resource_id)
 
     def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
         template = raw.get("template") or {}
         scaling = raw.get("scaling") or {}
         return {
-            "service_account": template.get("serviceAccount") or "",
-            "min_instance_count": scaling.get("minInstanceCount") or 0,
+            "service_account": template.get("serviceAccount") or template.get("service_account") or "",
+            "min_instance_count": scaling.get("minInstanceCount") or scaling.get("manual_instance_count") or 0,
         }
-
-    def _build_wp_client(self):
-        from google.cloud import run_v2  # type: ignore
-        return run_v2.WorkerPoolsClient(credentials=self.session.credentials)
 
     def get_by_name(self, *, name: str) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_wp_client()
+        client = self._build_client(self.session)
         return client.get_worker_pool(request=run_v2.GetWorkerPoolRequest(name=name))
 
     def create(self, *, parent: str, worker_pool_id: str, worker_pool: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_wp_client()
+        client = self._build_client(self.session)
         op = client.create_worker_pool(request=run_v2.CreateWorkerPoolRequest(
             parent=parent, worker_pool_id=worker_pool_id, worker_pool=worker_pool,
         ))
@@ -335,7 +319,7 @@ class CloudRunWorkerPoolsResource(DiscoveryListResource):
     def update(self, *, worker_pool: Any, update_mask: list[str] | None = None) -> Any:
         from google.cloud import run_v2  # type: ignore
         from google.protobuf import field_mask_pb2  # type: ignore
-        client = self._build_wp_client()
+        client = self._build_client(self.session)
         req = run_v2.UpdateWorkerPoolRequest(worker_pool=worker_pool)
         if update_mask:
             req.update_mask = field_mask_pb2.FieldMask(paths=update_mask)
@@ -344,7 +328,7 @@ class CloudRunWorkerPoolsResource(DiscoveryListResource):
 
     def delete(self, *, name: str) -> None:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_wp_client()
+        client = self._build_client(self.session)
         try:
             op = client.delete_worker_pool(request=run_v2.DeleteWorkerPoolRequest(name=name))
             op.result(timeout=120)
