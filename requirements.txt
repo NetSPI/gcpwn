@@ -4,12 +4,12 @@ pandas==3.0.5
 requests==2.34.2
 
 # Google API / auth libraries
-google-api-core==2.32.0
+google-api-core==2.33.0
 google-api-python-client==2.198.0
 google-auth-httplib2==0.4.0
 
 # Google Cloud Python libraries
-google-cloud-aiplatform==1.161.0
+google-cloud-aiplatform==1.163.0
 google-cloud-alloydb==0.11.0
 google-cloud-api-gateway==1.16.0
 google-cloud-api-keys==0.9.0
@@ -17,7 +17,7 @@ google-cloud-appengine-admin==1.18.0
 google-cloud-artifact-registry==1.22.0
 google-cloud-asset==4.4.0
 google-cloud-batch==0.22.1
-google-cloud-bigquery==3.42.2
+google-cloud-bigquery==3.42.3
 google-cloud-bigquery-connection==1.22.0
 google-cloud-bigquery-datatransfer==3.23.0
 google-cloud-bigtable==2.41.0
@@ -62,7 +62,7 @@ google-cloud-workflows==1.23.0
 google-cloud-workstations==0.8.1
 
 # VertexAI
-google-genai==2.12.1
+google-genai==2.16.0
 
 # Notes
 # Google Groups / Docs APIs:
