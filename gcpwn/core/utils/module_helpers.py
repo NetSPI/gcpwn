@@ -1379,6 +1379,13 @@ def get_bearer_token(session) -> str:
     try:
         from google.auth.transport.requests import Request as _Req
         if not getattr(creds, "valid", True):
+            # Service-account credentials loaded without scopes cannot refresh directly.
+            # Add cloud-platform scope before refreshing; use a scoped copy so the
+            # session object's credential is not mutated in place.
+            if hasattr(creds, "with_scopes") and not getattr(creds, "scopes", None):
+                creds = creds.with_scopes(
+                    ["https://www.googleapis.com/auth/cloud-platform"]
+                )
             creds.refresh(_Req())
         return getattr(creds, "token", None) or ""
     except Exception:

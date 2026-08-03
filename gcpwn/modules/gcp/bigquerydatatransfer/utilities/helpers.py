@@ -9,6 +9,7 @@ from gcpwn.core.utils.module_helpers import (
     extract_path_tail,
     region_resolver_for,
 )
+from gcpwn.core.utils.serialization import resource_to_dict
 
 
 resolve_locations = region_resolver_for("bigquerydatatransfer", ("bigquerydatatransfer", "v1"))
@@ -66,3 +67,4 @@ class BigQueryDataTransferConfigsResource(GcpListResource):
             "config_id": extract_path_tail(str(raw.get("name", "") or "")),
             "owner_email": str((owner_info or {}).get("email", "") or "").strip(),
         }
+

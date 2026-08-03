@@ -30,7 +30,10 @@ except Exception:  # pragma: no cover
 
 from google.api_core.exceptions import Forbidden
 from google.api_core.exceptions import NotFound
+import base64
+
 from google.iam.v1 import iam_policy_pb2
+from google.iam.v1 import policy_pb2
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.service_runtime import build_discovery_service
@@ -220,6 +223,30 @@ class IAMPolicyBindingsResource:
         if client is None or not resource_name:
             return None
         try:
+            # If policy is a plain dict (from _policy_to_dict / _policy_for_member_update),
+            # convert it to a proper Policy proto. resource_to_dict encodes the etag field
+            # as a base64 string; SetIamPolicyRequest.policy expects bytes, so we must
+            # decode it back before constructing the proto.
+            if isinstance(policy, dict):
+                policy_proto = policy_pb2.Policy()
+                policy_proto.version = int(policy.get("version") or 1)
+                etag = policy.get("etag")
+                if etag:
+                    if isinstance(etag, str):
+                        try:
+                            policy_proto.etag = base64.b64decode(etag)
+                        except Exception:
+                            pass  # skip malformed etag
+                    elif isinstance(etag, bytes):
+                        policy_proto.etag = etag
+                for binding in policy.get("bindings") or []:
+                    if not isinstance(binding, dict):
+                        continue
+                    b = policy_proto.bindings.add()
+                    b.role = str(binding.get("role") or "")
+                    for m in (binding.get("members") or []):
+                        b.members.append(str(m))
+                policy = policy_proto
             request = iam_policy_pb2.SetIamPolicyRequest(
                 resource=str(resource_name).strip(),
                 policy=policy,
@@ -374,6 +401,10 @@ class IAMPolicyBindingsResource:
         project_id = self._resource_id_to_project_id(bucket_name)
         try:
             bucket_object = self.storage_client.bucket(bucket_name)
+            # set_iam_policy() expects a Policy object; convert from dict if needed.
+            if isinstance(policy, dict):
+                from google.api_core.iam import Policy as _IamPolicy
+                policy = _IamPolicy.from_api_repr(policy)
             return bucket_object.set_iam_policy(policy)
         except NotFound:
             UtilityTools.print_404_resource(bucket_name)

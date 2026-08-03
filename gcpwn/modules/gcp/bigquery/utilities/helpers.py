@@ -267,6 +267,19 @@ class BigQueryDatasetsResource(_BigQueryBaseResource):
                 extras={"full_dataset_id": resource_id},
             )
 
+    def create(self, project_id: str, dataset_id: str, location: str) -> None:
+        from google.api_core.exceptions import Conflict
+        dataset_ref = bigquery.Dataset(f"{project_id}.{dataset_id}")
+        dataset_ref.location = location
+        try:
+            self.client.create_dataset(dataset_ref)
+        except Conflict:
+            pass
+
+    def delete(self, project_id: str, dataset_id: str) -> None:
+        dataset_ref = bigquery.Dataset(f"{project_id}.{dataset_id}")
+        self.client.delete_dataset(dataset_ref, delete_contents=True, not_found_ok=True)
+
 
 class BigQueryTablesResource(_BigQueryBaseResource):
     """Enumerate tables (nested under a dataset) into ``bigquery_tables``; download row data on demand.
@@ -297,6 +310,8 @@ class BigQueryTablesResource(_BigQueryBaseResource):
             "table_type": str(getattr(row, "table_type", "") or ""),
             "num_rows": getattr(row, "num_rows", None) or "",
             "num_bytes": getattr(row, "num_bytes", None) or "",
+            "view_query": getattr(row, "view_query", None) or "",
+            "mview_query": getattr(row, "mview_query", None) or "",
         }
 
     def _iam_resource_name(self, resource_id: str) -> str:
@@ -313,9 +328,10 @@ class BigQueryTablesResource(_BigQueryBaseResource):
 
     def list(self, *, dataset_id: str = "", parent: str = "", location: str | None = None, action_dict=None) -> list[Any]:
         dataset_id = dataset_id or parent
+        project_id = getattr(self.session, "project_id", "")
         try:
             project_id, resolved_dataset_id = split_bigquery_dataset_id(
-                dataset_id, fallback_project=getattr(self.session, "project_id", "")
+                dataset_id, fallback_project=project_id
             )
             # Avoid passing "project:dataset" as dataset_id (client will treat it as the datasetId and error).
             dataset_ref = bigquery.DatasetReference(project_id, resolved_dataset_id)
@@ -413,6 +429,39 @@ class BigQueryTablesResource(_BigQueryBaseResource):
                 extras={"full_table_id": resource_id},
             )
 
+    def delete(self, table_ref: str, *, not_found_ok: bool = True) -> None:
+        self.client.delete_table(table_ref, not_found_ok=not_found_ok)
+
+    def export_to_gcs(
+        self,
+        *,
+        project_id: str,
+        dataset_id: str,
+        table_id: str,
+        bucket: str,
+        uid: str,
+    ) -> str | None:
+        dest_uri = f"gs://{bucket}/gcpwn-pe-proof-{uid}/result_*.json"
+        try:
+            job_config = bigquery.ExtractJobConfig(
+                destination_format=bigquery.DestinationFormat.NEWLINE_DELIMITED_JSON
+            )
+            extract_job = self.client.extract_table(
+                f"{project_id}.{dataset_id}.{table_id}", dest_uri, job_config=job_config
+            )
+            extract_job.result(timeout=120)
+            return dest_uri
+        except Exception as exc:
+            handle_service_error(
+                exc,
+                api_name="bigquery.tables.export",
+                resource_name=f"{project_id}.{dataset_id}.{table_id}",
+                service_label=self.SERVICE_LABEL,
+                project_id=project_id,
+                return_not_enabled=False,
+            )
+        return None
+
     def download_table_data(self, *, row: Any, project_id: str, action_dict=None) -> Path | None:
         """Stream all rows of a table to a JSONL loot file; return its path (or None on failure).
 
@@ -448,7 +497,8 @@ class BigQueryTablesResource(_BigQueryBaseResource):
 
         try:
             with destination.open("w", encoding="utf-8", newline="\n") as handle:
-                row_iter = self.client.list_rows(table)
+                # Use the canonical string ID — list_rows() rejects plain dicts.
+                row_iter = self.client.list_rows(resolved_id)
                 # Record this once per download attempt (also covers empty tables).
                 record_permissions(
                     action_dict,
@@ -492,6 +542,7 @@ class BigQueryRoutinesResource(_BigQueryBaseResource):
             "language": str(getattr(row, "language", "") or ""),
             "creation_time": getattr(row, "created", None) or getattr(row, "creation_time", None) or "",
             "last_modified_time": getattr(row, "modified", None) or getattr(row, "last_modified_time", None) or "",
+            "body": getattr(row, "body", None) or "",
         }
 
     def _iam_resource_name(self, resource_id: str) -> str:
@@ -506,11 +557,12 @@ class BigQueryRoutinesResource(_BigQueryBaseResource):
             fallback_project=getattr(self.session, "project_id", ""),
         )
 
-    def list(self, *, dataset_id: str = "", parent: str = "", location: str | None = None, action_dict=None) -> list[Any] | str | None:
+    def list(self, *, dataset_id: str = "", parent: str = "", location: str | None = None, action_dict=None) -> list[Any]:
         dataset_id = dataset_id or parent
+        project_id = getattr(self.session, "project_id", "")
         try:
             project_id, resolved_dataset_id = split_bigquery_dataset_id(
-                dataset_id, fallback_project=getattr(self.session, "project_id", "")
+                dataset_id, fallback_project=project_id
             )
             dataset_ref = bigquery.DatasetReference(project_id, resolved_dataset_id)
             rows = list(self.client.list_routines(dataset_ref))
@@ -618,3 +670,122 @@ class BigQueryRoutinesResource(_BigQueryBaseResource):
                     )
                 ),
             )
+
+
+class BigQueryConnectionResource:
+    """Create and delete BigQuery connections (SPARK type) for the Spark PE path."""
+
+    SERVICE_LABEL = "BigQuery Connection"
+
+    def __init__(self, session) -> None:
+        self.session = session
+
+    def create_spark(
+        self, *, project_id: str, location: str, connection_name: str
+    ) -> tuple[str, str, str]:
+        """Create a SPARK connection. Returns (conn_id, sa_email, conn_resource)."""
+        try:
+            from google.cloud import bigquery_connection_v1
+            from google.cloud.bigquery_connection_v1.types import connection as _conn_types
+
+            client = bigquery_connection_v1.ConnectionServiceClient(
+                credentials=self.session.credentials
+            )
+            parent = f"projects/{project_id}/locations/{location}"
+            connection = _conn_types.Connection(
+                friendly_name=connection_name,
+                spark=_conn_types.SparkProperties(),
+            )
+            resp = client.create_connection(
+                request=_conn_types.CreateConnectionRequest(
+                    parent=parent, connection=connection
+                )
+            )
+            sa = getattr(getattr(resp, "spark", None), "service_account_id", "") or ""
+            conn_resource = resp.name
+            conn_id = conn_resource.split("/")[-1]
+            return conn_id, sa, conn_resource
+        except ImportError:
+            return self._create_spark_rest(
+                project_id=project_id, location=location, connection_name=connection_name
+            )
+
+    def _create_spark_rest(
+        self, *, project_id: str, location: str, connection_name: str
+    ) -> tuple[str, str, str]:
+        import json as _json
+        import urllib.request as _ur
+        from google.auth.transport.requests import Request
+
+        creds = self.session.credentials
+        if hasattr(creds, "with_scopes") and not getattr(creds, "scopes", None):
+            creds = creds.with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(Request())
+        url = (
+            "https://bigqueryconnection.googleapis.com/v1"
+            f"/projects/{project_id}/locations/{location}/connections"
+        )
+        body = _json.dumps({"friendlyName": connection_name, "spark": {}}).encode()
+        req = _ur.Request(
+            url, data=body, method="POST",
+            headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+        )
+        with _ur.urlopen(req) as resp:
+            result = _json.loads(resp.read())
+        conn_resource = result.get("name", "")
+        conn_id = conn_resource.split("/")[-1] if conn_resource else result.get("connectionId", "")
+        sa_email = result.get("spark", {}).get("serviceAccountId", "")
+        return conn_id, sa_email, conn_resource
+
+    @staticmethod
+    def connection_sql_ref(project_id: str, connection_resource: str) -> str:
+        """Convert API resource path to BQ SQL dotted format for WITH CONNECTION clause."""
+        parts = connection_resource.split("/")
+        if len(parts) == 6 and parts[0] == "projects" and parts[2] == "locations":
+            return f"{project_id}.{parts[3]}.{parts[5]}"
+        return connection_resource
+
+    @staticmethod
+    def build_procedure_sql(
+        project_id: str, dataset_id: str, procedure_name: str,
+        connection_resource: str, python_code: str,
+    ) -> str:
+        """Build the CREATE OR REPLACE PROCEDURE SQL for a Spark stored procedure."""
+        conn_ref = BigQueryConnectionResource.connection_sql_ref(project_id, connection_resource)
+        return (
+            f"CREATE OR REPLACE PROCEDURE `{project_id}.{dataset_id}.{procedure_name}`()\n"
+            f"WITH CONNECTION `{conn_ref}`\n"
+            f"OPTIONS(engine='SPARK', runtime_version='2.2')\n"
+            f"LANGUAGE PYTHON AS R\"\"\"\n"
+            f"{python_code}\n"
+            f"\"\"\""
+        )
+
+    def delete(self, conn_resource: str) -> None:
+        """Delete a connection by resource path (best-effort)."""
+        try:
+            from google.cloud import bigquery_connection_v1
+            client = bigquery_connection_v1.ConnectionServiceClient(
+                credentials=self.session.credentials
+            )
+            client.delete_connection(name=conn_resource)
+        except ImportError:
+            self._delete_rest(conn_resource)
+        except Exception:
+            pass
+
+    def _delete_rest(self, conn_resource: str) -> None:
+        import urllib.request as _ur
+        from google.auth.transport.requests import Request
+
+        creds = self.session.credentials
+        if hasattr(creds, "with_scopes") and not getattr(creds, "scopes", None):
+            creds = creds.with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(Request())
+        url = f"https://bigqueryconnection.googleapis.com/v1/{conn_resource}"
+        req = _ur.Request(url, method="DELETE", headers={"Authorization": f"Bearer {creds.token}"})
+        try:
+            with _ur.urlopen(req):
+                pass
+        except Exception:
+            pass

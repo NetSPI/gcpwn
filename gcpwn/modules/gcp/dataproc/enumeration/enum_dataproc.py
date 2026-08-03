@@ -7,6 +7,7 @@ from gcpwn.core.utils.service_runtime import parse_component_args
 from gcpwn.modules.gcp.dataproc.utilities.helpers import (
     DataprocBatchesResource,
     DataprocClustersResource,
+    DataprocWorkflowTemplatesResource,
     resolve_locations,
 )
 
@@ -17,6 +18,9 @@ COMPONENTS = [
               supports_get=False, supports_iam=False),
     Component("batches", DataprocBatchesResource, "Dataproc Serverless Batches", "Batches",
               help_text="Enumerate Dataproc Serverless batches (and the SA each runs as)", scope=REGION,
+              supports_get=False, supports_iam=False),
+    Component("workflow_templates", DataprocWorkflowTemplatesResource, "Dataproc Workflow Templates", "Workflow Templates",
+              help_text="Enumerate Dataproc Workflow Templates (service_account = PE target)", scope=REGION,
               supports_get=False, supports_iam=False),
 ]
 

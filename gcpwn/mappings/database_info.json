@@ -3201,6 +3201,206 @@
         "project_id",
         "name"
       ]
+    },
+    {
+      "table_name": "appintegration_integrations",
+      "columns": [
+        "project_id",
+        "location",
+        "integration_id",
+        "name",
+        "state",
+        "run_as_service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "firebase_backends",
+      "columns": [
+        "project_id",
+        "location",
+        "backend_id",
+        "name",
+        "state",
+        "service_account",
+        "uri"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "iap_instances",
+      "columns": [
+        "project_id",
+        "location",
+        "instance_id",
+        "name",
+        "zone",
+        "state",
+        "iap_enabled",
+        "service_account"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "deploymentmanager_deployments",
+      "columns": [
+        "project_id",
+        "location",
+        "deployment_id",
+        "name",
+        "state",
+        "service_accounts",
+        "manifest_url",
+        "description"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "tpu_nodes",
+      "columns": [
+        "project_id",
+        "location",
+        "node_id",
+        "name",
+        "state",
+        "service_account",
+        "accelerator_type",
+        "tensorflow_version"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmmigration_image_imports",
+      "columns": [
+        "project_id",
+        "location",
+        "import_id",
+        "name",
+        "state",
+        "service_account"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmmigration_sources",
+      "columns": [
+        "project_id",
+        "location",
+        "source_id",
+        "name",
+        "description",
+        "provider",
+        "create_time",
+        "update_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmmigration_migrating_vms",
+      "columns": [
+        "project_id",
+        "location",
+        "source_id",
+        "vm_id",
+        "name",
+        "display_name",
+        "description",
+        "source_vm_id",
+        "state",
+        "state_time",
+        "group",
+        "target_project",
+        "target_zone",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmmigration_groups",
+      "columns": [
+        "project_id",
+        "location",
+        "group_id",
+        "name",
+        "display_name",
+        "description",
+        "migration_target_type",
+        "create_time",
+        "update_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmmigration_target_projects",
+      "columns": [
+        "project_id",
+        "target_project_id",
+        "name",
+        "target_project",
+        "description",
+        "create_time",
+        "update_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
     }
+  ],
+  "vertex_custom_jobs": [
+    "project_id",
+    "name"
+  ],
+  "vertex_pipeline_jobs": [
+    "project_id",
+    "name"
+  ],
+  "vertex_deployment_resource_pools": [
+    "project_id",
+    "name"
+  ],
+  "vertex_tuning_jobs": [
+    "project_id",
+    "name"
+  ],
+  "vertex_reasoning_engines": [
+    "project_id",
+    "name"
+  ],
+  "vertex_endpoints": [
+    "project_id",
+    "name"
+  ],
+  "vertex_models": [
+    "project_id",
+    "name"
   ]
 }

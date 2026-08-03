@@ -21,7 +21,12 @@ def _project_of(parent: str) -> str:
 
 
 def _region_of(parent: str) -> str:
-    return extract_path_segment(str(parent or ""), "locations") or "global"
+    # Workflow Template paths use /regions/{region}; Batch/Cluster paths use /locations/{region}.
+    return (
+        extract_path_segment(str(parent or ""), "locations")
+        or extract_path_segment(str(parent or ""), "regions")
+        or "global"
+    )
 
 
 class _DataprocRegionalResource(GcpListResource):
@@ -111,3 +116,71 @@ class DataprocBatchesResource(_DataprocRegionalResource):
             "creator": str(raw.get("creator", "") or ""),
             "service_account": str(exec_cfg.get("service_account", "") or ""),
         }
+
+    def create(self, parent: str, batch_id: str, batch: Any) -> None:
+        region = _region_of(parent)
+        self._client_for_region(region).create_batch(
+            request=dataproc_v1.CreateBatchRequest(
+                parent=parent,
+                batch=batch,
+                batch_id=batch_id,
+            )
+        )
+
+    def delete(self, name: str) -> None:
+        try:
+            self._client_for_region(_region_of(name)).delete_batch(name=name)
+        except Exception:
+            pass
+
+
+class DataprocWorkflowTemplatesResource(_DataprocRegionalResource):
+    """List/exploit Dataproc Workflow Templates.
+
+    A Workflow Template bundles a managed cluster spec (with
+    ``gce_cluster_config.service_account``) and PySpark jobs into a single
+    instantiable object.  Requires ``dataproc.workflowTemplates.create`` +
+    ``iam.serviceAccounts.actAs`` on the target SA.
+    """
+
+    SERVICE_LABEL = "Cloud Dataproc Workflow Templates"
+    TABLE_NAME = "dataproc_workflow_templates"
+    COLUMNS = ["location", "template_id", "name", "version", "service_account"]
+    ACTION_RESOURCE_TYPE = "workflowTemplates"
+    LIST_PERMISSION = "dataproc.workflowTemplates.list"
+    GET_PERMISSION = "dataproc.workflowTemplates.get"
+    ID_FIELD = "template_id"
+    CLIENT_CLASS = dataproc_v1.WorkflowTemplateServiceClient
+
+    def _list_items(self, parent, **_):
+        return self._client_for_region(_region_of(parent)).list_workflow_templates(parent=parent)
+
+    def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
+        placement = raw.get("placement") or {}
+        managed = placement.get("managed_cluster") or {}
+        config = managed.get("config") or {}
+        gce = config.get("gce_cluster_config") or {}
+        return {
+            "template_id": extract_path_tail(str(raw.get("name", "") or "")),
+            "version": str(raw.get("version", "") or ""),
+            "service_account": str(gce.get("service_account", "") or ""),
+        }
+
+    def create_template(self, parent: str, template: Any) -> Any:
+        return self._client_for_region(_region_of(parent)).create_workflow_template(
+            request=dataproc_v1.CreateWorkflowTemplateRequest(
+                parent=parent,
+                template=template,
+            )
+        )
+
+    def instantiate(self, name: str) -> Any:
+        return self._client_for_region(_region_of(name)).instantiate_workflow_template(
+            request=dataproc_v1.InstantiateWorkflowTemplateRequest(name=name)
+        )
+
+    def delete(self, name: str) -> None:
+        try:
+            self._client_for_region(_region_of(name)).delete_workflow_template(name=name)
+        except Exception:
+            pass

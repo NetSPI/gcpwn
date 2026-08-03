@@ -49,6 +49,25 @@
       }
     },
     {
+      "service": "Application Integration",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_app_integration_resources",
+            "info_blurb": "Enumerate Application Integration integrations across regions; flags non-default runAsServiceAccount as PE candidates.",
+            "location": "gcpwn.modules.gcp.applicationintegration.enumeration.enum_app_integration_resources"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_app_integration_as_sa",
+            "info_blurb": "Privilege escalation via Application Integration runAsServiceAccount: create an integration whose GenericRestV2Task delivers TARGET_SA's Bearer token to an attacker-controlled URL. Requires integrations.integrations.create/invoke + iam.serviceAccounts.actAs on TARGET_SA.",
+            "location": "gcpwn.modules.gcp.applicationintegration.exploit.exploit_app_integration_as_sa"
+          }
+        ]
+      }
+    },
+    {
       "service": "App Engine",
       "categories": {
         "Enumeration": [
@@ -56,6 +75,13 @@
             "module_name": "enum_appengine",
             "info_blurb": "Enumerate App Engine application, services, versions, and instances.",
             "location": "gcpwn.modules.gcp.appengine.enumeration.enum_appengine"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_appengine_version_as_sa",
+            "info_blurb": "PE via App Engine: deploy a new version of an existing App Engine app running as TARGET_SA; the version handler exfils the SA OAuth token via Cloud Logging.",
+            "location": "gcpwn.modules.gcp.appengine.exploit.exploit_appengine_version_as_sa"
           }
         ]
       }
@@ -81,6 +107,13 @@
             "info_blurb": "Enumerate Batch jobs.",
             "location": "gcpwn.modules.gcp.batch.enumeration.enum_batch"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_batch_job_as_sa",
+            "info_blurb": "PE via Cloud Batch: submit a job with serviceAccount=TARGET_SA; the job queries the GCE metadata server and exfils the OAuth token via Cloud Logging or URL POST.",
+            "location": "gcpwn.modules.gcp.batch.exploit.exploit_batch_job_as_sa"
+          }
         ]
       }
     },
@@ -92,6 +125,13 @@
             "module_name": "enum_bigquery",
             "info_blurb": "Enumerate BigQuery datasets and tables, with optional direct targeting by dataset or table ID.",
             "location": "gcpwn.modules.gcp.bigquery.enumeration.enum_bigquery"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_bq_spark_procedure_as_sa",
+            "info_blurb": "PE via BigQuery Spark stored procedure: create a routine with serviceAccount=TARGET_SA so the Spark executor runs as TARGET_SA and exfils its OAuth token via the metadata server.",
+            "location": "gcpwn.modules.gcp.bigquery.exploit.exploit_bq_spark_procedure_as_sa"
           }
         ]
       }
@@ -120,9 +160,9 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_cloudbuild_as_sa",
+            "module_name": "exploit_cloudbuild_build_as_sa",
             "info_blurb": "Exploit Cloud Build for lateral movement: create new build or (attempt to) update existing build to run arbitrary code as an attached service account. Recovers token via in-project Cloud Logging (secure) or external URL exfil. REQUIRES cloudbuild.builds.create/update + iam.serviceAccounts.actAs on target SA. Note: .update() permission exists in IAM but Cloud Build REST API does not expose the endpoint.",
-            "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_as_sa"
+            "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_build_as_sa"
           }
         ]
       }
@@ -135,6 +175,13 @@
             "module_name": "enum_cloudcomposer",
             "info_blurb": "Enumerate Cloud Composer environments across regions and optionally download software config overrides from retrieved metadata.",
             "location": "gcpwn.modules.gcp.cloudcomposer.enumeration.enum_cloudcomposer"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_composer_env_as_sa",
+            "info_blurb": "PE via Cloud Composer: create a Composer environment with nodeConfig.serviceAccount=TARGET_SA so Airflow worker tasks run as TARGET_SA, then exfil the OAuth token via a DAG that queries the metadata server.",
+            "location": "gcpwn.modules.gcp.cloudcomposer.exploit.exploit_composer_env_as_sa"
           }
         ]
       }
@@ -163,9 +210,9 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_functions_as_sa",
+            "module_name": "exploit_cloudfunctions_function_as_sa",
             "info_blurb": "Upload or modify function code. Subsequently invoke it to get the OAuth token for an attached service account. Can auto-assume the new identity if desired. Can also be used to standalone call a function.",
-            "location": "gcpwn.modules.gcp.cloudfunctions.exploit.exploit_functions_as_sa"
+            "location": "gcpwn.modules.gcp.cloudfunctions.exploit.exploit_cloudfunctions_function_as_sa"
           }
         ],
         "Unauthenticated": [
@@ -201,9 +248,19 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_cloudrun_as_sa",
+            "module_name": "exploit_cloudrun_service_as_sa",
             "info_blurb": "Deploy Cloud Run service as target SA to extract its OAuth token. Token recovery: --exfil-mode logs (Cloud Logging, in-project) or url (external OAST endpoint). Use --invoke to trigger immediately after deploy. REQUIRES run.services.create + iam.serviceAccounts.actAs on target SA.",
-            "location": "gcpwn.modules.gcp.cloudrun.exploit.exploit_cloudrun_as_sa"
+            "location": "gcpwn.modules.gcp.cloudrun.exploit.exploit_cloudrun_service_as_sa"
+          },
+          {
+            "module_name": "exploit_cloudrun_job_as_sa",
+            "info_blurb": "Deploy Cloud Run job as target SA to extract its OAuth token. Token recovery: --exfil-mode logs (Cloud Logging, in-project) or url (external OAST endpoint). REQUIRES run.jobs.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudrun.exploit.exploit_cloudrun_job_as_sa"
+          },
+          {
+            "module_name": "exploit_cloudrun_workerpool_as_sa",
+            "info_blurb": "PE via Cloud Run Worker Pool: create a custom worker pool build that runs as the target SA, extracting its OAuth token via logs or URL callback. REQUIRES cloudbuild.workerPools.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudrun.exploit.exploit_cloudrun_workerpool_as_sa"
           }
         ]
       }
@@ -293,9 +350,9 @@
             "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_instance_ssh_keys"
           },
           {
-            "module_name": "exploit_instance_startup_script",
-            "info_blurb": "Create an instance or edit an existing one (through a restart) and upload a startup script that will exfiltrate the compute metadata to a URL of the caller's choice. These need to be manually added via `creds add` in gcpwn. Note a service account needs to be attached to the compute instance requiring those permissions.",
-            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_instance_startup_script"
+            "module_name": "exploit_compute_instance_as_sa",
+            "info_blurb": "Compute Engine privilege escalation via startup script injection (--method startup_script: create a new instance or update an existing one via shutdown) or SA swap (--method set_sa: stop, setServiceAccount, start). Startup script exfils the OAuth2 token to a pentester-owned URL; set_sa mode polls Cloud Logging or a URL callback. Requires compute.instances.create or compute.instances.update, iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_compute_instance_as_sa"
           }
         ]
       }
@@ -437,6 +494,18 @@
             "module_name": "exploit_service_account_keys",
             "info_blurb": "Generate an account key for a service account and assume it within GCPwn (--assume) to pivot to a different user. Note unlike the access token which usually lasts for around 1 hour, a service key can last for much longer and is a much more permanent pivot.",
             "location": "gcpwn.modules.gcp.iam.exploit.exploit_service_account_keys"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Integration Connectors",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_integration_connectors",
+            "info_blurb": "Enumerate Integration Connector connections across regions; records connector type, state, and service account per connection.",
+            "location": "gcpwn.modules.gcp.integration_connectors.enumeration.enum_integration_connectors"
           }
         ]
       }
@@ -690,6 +759,18 @@
             "info_blurb": "Enumerate Dataproc clusters and Serverless batches across regions, including the service account each runs as (dataproc.jobs.create / batches.create code-exec-as-SA).",
             "location": "gcpwn.modules.gcp.dataproc.enumeration.enum_dataproc"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_dataproc_batch_as_sa",
+            "info_blurb": "PE via Dataproc Serverless: submit a PySpark batch with executionConfig.serviceAccount=TARGET_SA; the batch queries the metadata server and exfils the OAuth token via GCS driveroutput.",
+            "location": "gcpwn.modules.gcp.dataproc.exploit.exploit_dataproc_batch_as_sa"
+          },
+          {
+            "module_name": "exploit_dataproc_workflow_template_as_sa",
+            "info_blurb": "PE via Dataproc Workflow Template: create and instantiate a workflow template with gceClusterConfig.serviceAccount=TARGET_SA; the PySpark job exfils the OAuth token to GCS.",
+            "location": "gcpwn.modules.gcp.dataproc.exploit.exploit_dataproc_workflow_template_as_sa"
+          }
         ]
       }
     },
@@ -698,9 +779,14 @@
       "categories": {
         "Enumeration": [
           {
-            "module_name": "enum_dataflow",
+            "module_name": "enum_dataflow_core",
             "info_blurb": "Enumerate Dataflow jobs across regions, including the worker service account each runs as (Flex Template code-exec-as-SA / data exfil).",
-            "location": "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow"
+            "location": "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow_core"
+          },
+          {
+            "module_name": "enum_dataflow_datapipelines",
+            "info_blurb": "Enumerate Dataflow Data Pipelines (scheduled / streaming pipeline configs).",
+            "location": "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow_datapipelines"
           }
         ]
       }
@@ -726,6 +812,13 @@
             "info_blurb": "Enumerate Cloud Deploy delivery pipelines and targets across regions, including each target's deploy runtime type and the service account rollouts run as. Supports --get and testIamPermissions.",
             "location": "gcpwn.modules.gcp.clouddeploy.enumeration.enum_clouddeploy"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_clouddeploy_target_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Deploy: create a delivery pipeline + target pinned to TARGET_SA, upload a Skaffold archive with a token-exfil deploy hook, and recover the SA OAuth2 token via Cloud Logging or external URL. The deploy hook exits 1 so no Cloud Run service is actually created. REQUIRES clouddeploy.{deliveryPipelines,targets,releases,rollouts}.create + iam.serviceAccounts.actAs on TARGET_SA.",
+            "location": "gcpwn.modules.gcp.clouddeploy.exploit.exploit_clouddeploy_target_as_sa"
+          }
         ]
       }
     },
@@ -749,6 +842,82 @@
             "module_name": "enum_serviceusage",
             "info_blurb": "Enumerate the APIs (services) enabled on a project (serviceusage.services.list, state:ENABLED) -- the enabled-API attack surface and which other enum modules can return data.",
             "location": "gcpwn.modules.gcp.serviceusage.enumeration.enum_serviceusage"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Deployment Manager",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_deploymentmanager",
+            "info_blurb": "Enumerate Deployment Manager deployments including manifest, resources, service account, and operation status.",
+            "location": "gcpwn.modules.gcp.deploymentmanager.enumeration.enum_deploymentmanager"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_deploymentmanager_vm_as_sa",
+            "info_blurb": "PE via Deployment Manager: deploy a GCE VM template with SERVICE_ACCOUNT=TARGET_SA; the startup script queries the metadata server and exfils the OAuth token via Cloud Logging.",
+            "location": "gcpwn.modules.gcp.deploymentmanager.exploit.exploit_deploymentmanager_vm_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Firebase",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_firebase",
+            "info_blurb": "Enumerate Firebase App Hosting backends including build settings, pinned release, traffic split, and the Cloud Run service URL.",
+            "location": "gcpwn.modules.gcp.firebase.enumeration.enum_firebase"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_firebase_app_hosting_backend_as_sa",
+            "info_blurb": "PE via Firebase App Hosting: create or update a backend with serviceAccount=TARGET_SA; the deployed Cloud Run revision queries the metadata server and exfils the OAuth token via Cloud Logging.",
+            "location": "gcpwn.modules.gcp.firebase.exploit.exploit_firebase_app_hosting_backend_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Identity-Aware Proxy",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_iap",
+            "info_blurb": "Enumerate GCE instances accessible via IAP TCP tunnel, checking firewall rules for IAP-specific allow rules (35.235.240.0/20).",
+            "location": "gcpwn.modules.gcp.iap.enumeration.enum_iap"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_iap_tunnel_vm_sa",
+            "info_blurb": "PE via IAP TCP tunnel: open an IAP tunnel to a GCE VM and run a command (e.g. curl metadata server) to recover the VM's service account OAuth token.",
+            "location": "gcpwn.modules.gcp.iap.exploit.exploit_iap_tunnel_vm_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud TPU",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_tpu",
+            "info_blurb": "Enumerate Cloud TPU nodes and the service account each node runs as.",
+            "location": "gcpwn.modules.gcp.tpu.enumeration.enum_tpu"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_tpu_node_as_sa",
+            "info_blurb": "PE via Cloud TPU: create a TPU node with serviceAccount=TARGET_SA; the node's GCE metadata server exposes the target SA token, exfilled via startup-script POST or GCS write.",
+            "location": "gcpwn.modules.gcp.tpu.exploit.exploit_tpu_node_as_sa"
           }
         ]
       }

