@@ -9,7 +9,6 @@ from gcpwn.core.utils.module_helpers import (
     extract_path_tail,
     region_resolver_for,
 )
-from gcpwn.core.utils.serialization import resource_to_dict
 
 
 resolve_locations = region_resolver_for("bigquerydatatransfer", ("bigquerydatatransfer", "v1"))
