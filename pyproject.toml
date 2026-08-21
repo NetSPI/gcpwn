@@ -28,8 +28,8 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
   "pytest>=9.1.1",
-  "ruff==0.16.2",
-  "mypy==2.3.0"
+  "ruff==0.16.3",
+  "mypy==2.3.1"
 ]
 table = [
   "prettytable==3.18.0"
