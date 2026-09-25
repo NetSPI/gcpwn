@@ -1150,3 +1150,149 @@ class IAMWorkloadIdentityProvidersResource(_IAMBaseDiscoveryResource):
                     "pool_id": extract_path_segment(str(raw.get("name", "")), "workloadIdentityPools"),
                 },
             )
+
+
+# ---------------------------------------------------------------------------
+# Delegation chain exploration helpers
+# Used by the ``delegation`` workspace command (workspace_instructions.py).
+# ---------------------------------------------------------------------------
+
+def _delegation_load_role_categories():
+    from gcpwn.core.utils.module_helpers import load_mapping_data
+    permission_to_roles = load_mapping_data("og_permission_to_roles_map.json", kind="json") or {}
+    return {
+        "impersonation": sorted(
+            {
+                str(role or "").strip()
+                for role in (permission_to_roles.get("iam.serviceAccounts.implicitDelegation") or [])
+                if str(role or "").strip()
+            }
+        ),
+        "get_access_token": sorted(
+            {
+                str(role or "").strip()
+                for role in (permission_to_roles.get("iam.serviceAccounts.getAccessToken") or [])
+                if str(role or "").strip()
+            }
+        ),
+    }
+
+
+def _delegation_load_flat_bindings(session, *, type_of_asset=None):
+    from gcpwn.modules.everything.utilities.helpers import flatten_iam_allow_policies
+    return flatten_iam_allow_policies(
+        session.get_data(
+            "iam_allow_policies",
+            columns=["project_id", "resource_type", "resource_name", "policy"],
+        )
+        or [],
+        type_of_asset=type_of_asset,
+    )
+
+
+def _delegation_rows_by_member(session, *, type_of_asset=None):
+    from gcpwn.core.utils.module_helpers import parse_string_list
+    rows_by_member = {}
+    for row in _delegation_load_flat_bindings(session, type_of_asset=type_of_asset) or []:
+        member = str(row.get("member") or "").strip()
+        if member:
+            rows_by_member.setdefault(member, []).append(row)
+    return rows_by_member
+
+
+def _delegation_format_node(node):
+    if node.startswith("projects/"):
+        project_id = extract_project_id_from_resource(node)
+        email = extract_path_tail(node)
+        return {"name": node, "printout_name": f"[{project_id}] - {email}"}
+    return {"name": node, "printout_name": node}
+
+
+def delegation_find_next_hop(session, current_member, *, rows_by_member=None):
+    from gcpwn.core.utils.module_helpers import parse_string_list
+    next_hops = []
+    role_categories = _delegation_load_role_categories()
+    if rows_by_member is None:
+        rows_by_member = _delegation_rows_by_member(session, type_of_asset="saaccounts")
+    for row in rows_by_member.get(str(current_member or "").strip(), []):
+        roles = parse_string_list(row.get("roles"))
+        has_access_token = any(role in role_categories["get_access_token"] for role in roles)
+        has_impersonation = any(role in role_categories["impersonation"] for role in roles)
+        formatted_node = _delegation_format_node(row["name"])
+        if has_access_token:
+            next_hops.append({"name": row["name"], "printout_name": f"(ACCESS TOKEN) -> {formatted_node['printout_name']}"})
+        if has_impersonation:
+            next_hops.append({"name": "serviceAccount:" + extract_path_tail(row["name"]), "printout_name": f"(IMPERSONATE) -> {formatted_node['printout_name']}"})
+    return next_hops
+
+
+def delegation_find_routes(session, start_member, role_categories, final_member=None, *, rows_by_member=None):
+    from gcpwn.core.utils.module_helpers import parse_string_list
+    routes = []
+    visited = set()
+    if rows_by_member is None:
+        rows_by_member = _delegation_rows_by_member(session, type_of_asset="saaccounts")
+
+    def matches_final(node, target):
+        return node == target or node.endswith(":" + target)
+
+    def recurse(current_member, path):
+        if current_member in visited:
+            return
+        visited.add(current_member)
+        rows = rows_by_member.get(str(current_member or "").strip(), [])
+        if not rows:
+            if len(path) > 1:
+                if final_member is None or matches_final(path[-1]["name"], final_member):
+                    routes.append(path)
+            return
+        for row in rows:
+            roles = parse_string_list(row.get("roles"))
+            has_access_token = any(role in role_categories["get_access_token"] for role in roles)
+            has_impersonation = any(role in role_categories["impersonation"] for role in roles)
+            formatted_node = _delegation_format_node(row["name"])
+            if has_access_token:
+                new_path = path + [{"name": row["name"], "printout_name": f"(ACCESS TOKEN) -> {formatted_node['printout_name']}"}]
+                if final_member is None or matches_final(row["name"], final_member):
+                    routes.append(new_path)
+            if has_impersonation:
+                next_step = {"name": row["name"], "printout_name": f"(IMPERSONATE) -> {formatted_node['printout_name']}"}
+                recurse("serviceAccount:" + extract_path_tail(row["name"]), path + [next_step])
+
+    recurse(start_member, [{"name": start_member, "printout_name": start_member}])
+    return routes
+
+
+def delegation_get_all_routes(session, final_member=None):
+    role_categories = _delegation_load_role_categories()
+    rows_by_member = _delegation_rows_by_member(session, type_of_asset="saaccounts")
+    all_unique_members = [m for m in rows_by_member if m.startswith("serviceAccount:")]
+    combined = []
+    for member in all_unique_members:
+        combined.extend(delegation_find_routes(session, member, role_categories, final_member=final_member, rows_by_member=rows_by_member))
+    access_token_routes = sorted([r for r in combined if r[-1]["printout_name"].startswith("(ACCESS TOKEN)")], key=len)
+    impersonation_routes = sorted([r for r in combined if r[-1]["printout_name"].startswith("(IMPERSONATE)")], key=len)
+    return access_token_routes, impersonation_routes
+
+
+def delegation_create_chain(choice):
+    from gcpwn.core.utils.module_helpers import split_path_tokens
+    delegation_chain = []
+    target_account = None
+    for index, node in enumerate(choice["route"]):
+        node_name = node["name"]
+        is_last = index == len(choice["route"]) - 1
+        if node_name.startswith("serviceAccount:"):
+            resource = f"projects/-/serviceAccounts/{node_name.partition(':')[2]}"
+        elif "projects/" in node_name:
+            parts = split_path_tokens(node_name, separator="/", drop_empty=False)
+            if len(parts) > 1:
+                parts[1] = "-"
+            resource = "/".join(parts)
+        else:
+            resource = node_name
+        if is_last:
+            target_account = resource
+        else:
+            delegation_chain.append(resource)
+    return target_account, delegation_chain
