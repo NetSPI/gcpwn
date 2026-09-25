@@ -9,6 +9,24 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_tail
 from gcpwn.core.utils.persistence import save_to_table
 
+
+def _sa_email_from_credentials(credentials) -> str:
+    """Extract the effective service-account email from any credential type.
+
+    service_account.Credentials exposes .service_account_email directly.
+    impersonated_credentials.Credentials uses .target_principal instead (the
+    final SA in the delegation chain is the one whose DWD config matters).
+    Falls back to "" when neither attribute is present.
+    """
+    email = getattr(credentials, "service_account_email", None)
+    if email:
+        return str(email).strip()
+    # Impersonated credentials: the target SA is the effective identity
+    target = getattr(credentials, "target_principal", None)
+    if target:
+        return str(target).strip()
+    return ""
+
 """
 Shared Google Workspace infrastructure used by BOTH the Cloud Identity API
 (``cloudidentity.googleapis.com``) and the Admin SDK Directory API
@@ -41,7 +59,7 @@ def ensure_scoped_credentials(credentials, scopes: Iterable[str]):
             return credentials
 
 
-def apply_workspace_delegation(credentials, subject: str | None):
+def apply_workspace_delegation(credentials, subject: str | None, *, target_scopes=None):
     """Impersonate a Workspace admin via domain-wide delegation (SA path).
 
     GCP credentials do NOT grant Workspace access on their own. A user that is a
@@ -51,10 +69,42 @@ def apply_workspace_delegation(credentials, subject: str | None):
     is ``credentials.with_subject(subject)``. No-op for user/ADC creds (no
     ``with_subject``) or when ``subject`` is empty, so the admin-user path is
     unaffected.
+
+    For implicit-delegation chains (impersonated_credentials.Credentials), the
+    credential has no ``with_subject`` method. Instead, the credential must be
+    reconstructed with ``subject=`` and the Workspace-appropriate ``target_scopes``
+    (replacing the default ``cloud-platform`` scope). Pass ``target_scopes`` from
+    the caller so the reconstructed credential has the scopes the Workspace API needs.
+    DWD must be authorized for target_principal (the final SA in the chain) in the
+    Workspace Admin console.
     """
     subject = str(subject or "").strip()
     if not subject:
         return credentials
+    # Implicit-delegation path: impersonated_credentials.Credentials has no
+    # with_subject(); reconstruct it with the workspace scopes and subject set.
+    if getattr(credentials, "target_principal", None) and not getattr(credentials, "service_account_email", None):
+        effective_sa = str(credentials.target_principal).strip()
+        print(
+            f"{UtilityTools.YELLOW}[!] Workspace DWD via implicit delegation: "
+            f"DWD must be configured for the target SA ({effective_sa}), "
+            f"not the source credential. If DWD is not authorized for that SA in "
+            f"the Workspace Admin console, this will fail.{UtilityTools.RESET}"
+        )
+        if target_scopes:
+            try:
+                from google.auth import impersonated_credentials as _imp_creds
+                return _imp_creds.Credentials(
+                    source_credentials=credentials._source_credentials,
+                    target_principal=credentials.target_principal,
+                    target_scopes=list(target_scopes),
+                    delegates=list(getattr(credentials, "_delegates", []) or []),
+                    subject=subject,
+                )
+            except Exception:
+                pass
+        return credentials
+    # Standard service_account.Credentials path.
     with_subject = getattr(credentials, "with_subject", None)
     if callable(with_subject):
         try:
@@ -87,7 +137,7 @@ def record_workspace_delegation(session, *, customer_id: str | None, subject: st
     source for the OpenGraph ``DOMAIN_WIDE_DELEG`` edge (SA -> every user it can
     impersonate), a GCP->Workspace-takeover path invisible to normal IAM enumeration.
     """
-    sa_email = str(getattr(session.credentials, "service_account_email", "") or "").strip()
+    sa_email = _sa_email_from_credentials(session.credentials)
     customer = str(customer_id or "").strip()
     admin = str(subject or "").strip()
     if not (sa_email and customer and admin):
@@ -113,7 +163,7 @@ def build_cloud_identity_service(credentials, *, subject: str | None = None):
     from googleapiclient.discovery import build  # type: ignore
 
     scoped = ensure_scoped_credentials(credentials, CLOUD_IDENTITY_SCOPES)
-    scoped = apply_workspace_delegation(scoped, subject)
+    scoped = apply_workspace_delegation(scoped, subject, target_scopes=CLOUD_IDENTITY_SCOPES)
     # Cloud Identity API discovery doc:
     # - https://cloudidentity.googleapis.com/$discovery/rest?version=v1
     return build("cloudidentity", "v1", credentials=scoped, cache_discovery=False)
@@ -130,7 +180,7 @@ def build_directory_service(credentials, *, subject: str | None = None):
     from googleapiclient.discovery import build  # type: ignore
 
     scoped = ensure_scoped_credentials(credentials, DIRECTORY_SCOPES)
-    scoped = apply_workspace_delegation(scoped, subject)
+    scoped = apply_workspace_delegation(scoped, subject, target_scopes=DIRECTORY_SCOPES)
     return build("admin", "directory_v1", credentials=scoped, cache_discovery=False)
 
 
@@ -143,8 +193,11 @@ def build_scoped_directory_service(session, scopes, *, subject: str | None = Non
     alone only requests the narrow user/group scopes). Impersonates ``subject`` for SA
     DWD. Consolidates the per-helper ``ensure_scoped_credentials`` + build boilerplate.
     """
+    from googleapiclient.discovery import build  # type: ignore
+
     credentials = ensure_scoped_credentials(session.credentials, scopes)
-    return build_directory_service(credentials, subject=subject)
+    credentials = apply_workspace_delegation(credentials, subject, target_scopes=scopes)
+    return build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
 
 def build_workspace_service(session, api: str, version: str, scopes, *, subject: str | None = None):
@@ -157,7 +210,7 @@ def build_workspace_service(session, api: str, version: str, scopes, *, subject:
     from googleapiclient.discovery import build  # type: ignore
 
     scoped = ensure_scoped_credentials(session.credentials, scopes)
-    scoped = apply_workspace_delegation(scoped, subject)
+    scoped = apply_workspace_delegation(scoped, subject, target_scopes=scopes)
     return build(api, version, credentials=scoped, cache_discovery=False)
 
 
