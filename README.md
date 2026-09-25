@@ -189,36 +189,47 @@ modules run enum_gcp
 # Also runs a condensed list of permissions for org/folder/project resources.
 modules run enum_gcp --iam
 
-# Common first pass + downloads: run testIamPermissions and attempt content downloads where supported.
-# Optional [--download-timeout <seconds>] restricts downloads to that many seconds PER service
-# (per bucket for Cloud Storage, per download type per project elsewhere) -- once the limit is hit
-# it skips the rest of that service's downloads and moves on.
-modules run enum_gcp --iam --download [--download-timeout <seconds>]
+# ---- Speed options ----
+# --filter-enabled-services: probe each project's ENABLED APIs (serviceusage) ONCE, then
+# enumerate ONLY the services whose API is enabled instead of brute-forcing all ~40.
+# Falls back to running everything for a project if the probe is denied/empty.
+modules run enum_gcp --iam --filter-enabled-services
+
+# --parallel-services N: enumerate N services concurrently across projects (default 1 = sequential).
+modules run enum_gcp --iam --parallel-services 4
+
+# Both speed flags together:
+modules run enum_gcp --iam --filter-enabled-services --parallel-services 4
+
+# ---- Download options ----
+# --download (no argument): download everything supported across all services
+# (bucket contents, secret values, function source, Cloud Run revision env, etc.)
+modules run enum_gcp --iam --download
+
+# --download <token>: download only a specific resource type.
+# Common tokens: metadata (lightweight only), buckets, secrets, cloudrun_revision_env
+# See Downloads-to-Disk wiki page for the full token list.
+modules run enum_gcp --iam --download metadata
+modules run enum_gcp --iam --download buckets
+modules run enum_gcp --iam --download cloudrun_revision_env
+
+# --dont-download <tokens>: download everything EXCEPT the listed types (comma-separated).
+modules run enum_gcp --iam --download --dont-download buckets
+modules run enum_gcp --iam --download --dont-download buckets,secrets
+
+# --download-timeout <seconds>: cap download time per unit to avoid getting stuck on large resources.
+# (per bucket for Cloud Storage; per download type per project elsewhere)
+modules run enum_gcp --iam --download --download-timeout 120
 
 # In-depth pass: --all-permissions includes large org/folder/project permission sets (10,000+ perms, executed in batches). Can take some time.
 # See: gcpwn/modules/gcp/resourcemanager/utilities/data/all_*_permissions.txt for the full list or to customize it.
 modules run enum_gcp --iam --all-permissions
 
-# In-depth pass + downloads: enable artifact/content downloads where supported.
-# Use `modules run enum_gcp -h` for token options.
-# Example token: cloudrun_revision_env
+# In-depth pass + downloads
 modules run enum_gcp --iam --all-permissions --download
-
-# ---- Scope + speed ----
-# The commands above run enum_gcp (GCP only). Both enum_gcp and enum_all accept --parallel-services
-# to enumerate GCP services concurrently across projects (default is 1 = sequential; set higher to fan out).
-# enum_google_workspace is tenant-scoped -> it runs once and does NOT take --parallel-services.
-
-# Same GCP sweep, but 3 services concurrently:
-modules run enum_gcp --iam --parallel-services 3
 
 # Pick specific services (comma/space separated tokens; omit to run all). See `-h` / --list-modules.
 modules run enum_gcp --modules storage,iam gke
-
-# --filter-enabled-services: probe each project's ENABLED APIs (serviceusage) ONCE, then
-# enumerate ONLY the services whose API is enabled instead of brute-forcing all ~40.
-# Falls back to running everything for a project if the probe is denied/empty.
-modules run enum_gcp --iam --filter-enabled-services
 
 # Reuse the already-cached project/folder/org hierarchy (skip Resource Manager re-discovery).
 modules run enum_gcp --iam --no-enum-resources
