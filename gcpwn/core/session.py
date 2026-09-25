@@ -361,7 +361,7 @@ class SessionUtility:
             self.project_id = cred["default_project"]
             
             if self.project_id  == "Unknown":
-                print("[*] The project associated with these creds is unknown. Set it with `creds set <credname> --project-id <project_id>`. Otherwise you might have limited functionality with non-global resources.")
+                print("[*] The project associated with these creds is unknown. Set it with `creds update <credname> --project-id <project_id>`. Otherwise you might have limited functionality with non-global resources.")
             
             self.credname = cred["credname"]
             scopes_str = cred.get("scopes", "[]")

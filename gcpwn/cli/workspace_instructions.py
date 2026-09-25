@@ -349,18 +349,20 @@ def help_banner():
         
 
         creds
-            list/info/tokeninfo/set                    Show stored creds / print cred details / query tokeninfo / set email+project
-            add/update                                Add or refresh credentials (adc, oauth2, service)
-            swap [<credname>]                         Swap credentials (interactive if omitted)
+            list/info/tokeninfo                        Show stored creds / print cred details / query tokeninfo
+            add                                        Add a new credential (adc, oauth2, service)
+            update [<credname>]                        Update metadata on an existing credential (email, project-id, delegates)
+            replace [<credname>]                       Replace credential material in place (new token, key, or ADC)
+            swap [<credname>]                          Swap credentials (interactive if omitted)
 
         creds info [<credname>] [--csv]
         creds tokeninfo [<credname>]
-        creds set [<credname>] [--email <email>] [--project-id <project_id>] [--delegates sa1@proj,sa2@proj]
+        creds update [<credname>] [--email <email>] [--project-id <project_id>] [--delegates sa1@proj,sa2@proj]
         creds add <credname> --type adc [--filepath-to-adc <adc_json_path>] [--tokeninfo] [--assume]
         creds add <credname> --type oauth2 --token <access_token> [--tokeninfo] [--assume]
         creds add <credname> --type oauth2 --token-file <token_json_path> [--tokeninfo] [--assume]
         creds add <credname> --type service --service-file <service_account_json_path> [--assume]
-        creds update [<credname>] --type <adc|oauth2|service> [credential flags...] [--assume]
+        creds replace [<credname>] --type <adc|oauth2|service> [credential flags...] [--assume]
 
         
         modules [list]                                              List all Modules
@@ -461,7 +463,7 @@ class CommandProcessor:
         "delegation",
     )
     CONFIG_COMMAND_NAMES = ("configs", "global_configs")
-    CREDS_SUBCOMMANDS = ["list", "info", "tokeninfo", "set", "add", "update", "swap"]
+    CREDS_SUBCOMMANDS = ["list", "info", "tokeninfo", "update", "add", "replace", "swap"]
     PROJECTS_SUBCOMMANDS = ["list", "set", "add", "rm"]
     WORKSPACE_SUBCOMMANDS = ["list", "add", "swap", "remove"]
     TREE_SUBCOMMANDS = ["list"]
@@ -864,9 +866,9 @@ class CommandProcessor:
         tokeninfo = sub.add_parser("tokeninfo")
         tokeninfo.add_argument("credname", nargs="?", help="Specify credential name")
 
-        set_cmd = sub.add_parser("set")
+        update_cmd = sub.add_parser("update")
         apply_argument_specs(
-            set_cmd,
+            update_cmd,
             [
                 (("credname",), {"nargs": "?", "help": "Specify credential name"}),
                 (("--email",), {"help": "Specify email"}),
@@ -876,7 +878,7 @@ class CommandProcessor:
         )
 
         apply_argument_specs(sub.add_parser("add"), credential_mutation_argument_specs(credname_optional=False))
-        apply_argument_specs(sub.add_parser("update"), credential_mutation_argument_specs(credname_optional=True))
+        apply_argument_specs(sub.add_parser("replace"), credential_mutation_argument_specs(credname_optional=True))
 
         swap = sub.add_parser("swap")
         swap.add_argument("credname", nargs="?", help="Specify credential name")
@@ -1316,11 +1318,11 @@ class CommandProcessor:
             {
                 None: self.print_creds_table,
                 "list": self.print_creds_table,
-                "set": lambda: self._set_active_cred(args),
+                "update": lambda: self._set_active_cred(args),
                 "tokeninfo": lambda: self.session.get_and_save_tokeninfo(current_credname),
                 "info": lambda: self.info_printout_save(current_credname, csv=bool(getattr(args, "csv", False))),
                 "add": lambda: self._mutate_credential(args),
-                "update": lambda: self._mutate_credential(args, refresh_attempt=True),
+                "replace": lambda: self._mutate_credential(args, refresh_attempt=True),
                 "swap": lambda: self.swap_cred(args),
             },
         )
