@@ -8,7 +8,7 @@ would cause a TypeError at runtime. This test ensures the method accepts
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 def _resource():

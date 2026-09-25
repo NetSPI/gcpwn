@@ -73,11 +73,6 @@ def _decode_file_contents(contents: Any) -> bytes:
 
 resolve_regions = region_resolver_for("apigateway", ("apigateway", "v1"))
 
-from gcpwn.modules.gcp.apigateway.utilities.exploit_payloads import (
-    build_oidc_spec,
-    build_open_spec,
-    build_proxy_spec,
-)
 
 
 def _fetch_gateway_hostname(client, gateway_name: str) -> str:

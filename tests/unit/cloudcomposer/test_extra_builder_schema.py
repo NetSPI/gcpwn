@@ -15,9 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_INFO = REPO_ROOT / "gcpwn" / "mappings" / "database_info.json"
@@ -113,7 +112,6 @@ def test_save_with_dag_gcs_prefix_does_not_inject_unknown_column():
             "airflow_uri": "https://xyz.composer.googleusercontent.com",
         },
     }
-    captured: list[dict] = []
     with patch("gcpwn.modules.gcp.cloudcomposer.utilities.helpers.save_to_table") as mock_save:
         r.save([row], project_id="proj", location="us-central1")
         assert mock_save.called
