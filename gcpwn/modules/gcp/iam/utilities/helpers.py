@@ -1191,7 +1191,6 @@ def _delegation_load_flat_bindings(session, *, type_of_asset=None):
 
 
 def _delegation_rows_by_member(session, *, type_of_asset=None):
-    from gcpwn.core.utils.module_helpers import parse_string_list
     rows_by_member = {}
     for row in _delegation_load_flat_bindings(session, type_of_asset=type_of_asset) or []:
         member = str(row.get("member") or "").strip()

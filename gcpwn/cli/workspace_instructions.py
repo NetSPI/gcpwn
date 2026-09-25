@@ -1073,10 +1073,8 @@ class CommandProcessor:
     def process_delegation_command(self, args):
         from gcpwn.modules.gcp.iam.utilities.helpers import (
             delegation_find_next_hop,
-            delegation_find_routes,
             delegation_get_all_routes,
             delegation_create_chain,
-            _delegation_load_role_categories,
             _delegation_rows_by_member,
         )
         from gcpwn.modules.gcp.iam.utilities.helpers import (
@@ -1086,7 +1084,6 @@ class CommandProcessor:
         from gcpwn.core.utils.module_helpers import (
             extract_service_account_email,
             extract_service_account_project,
-            extract_path_tail,
         )
         from gcpwn.core.utils.action_recording import record_permissions
         from gcpwn.core.utils.exploit_helpers import print_token_result
