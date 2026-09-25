@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
+import sqlite3
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -551,4 +553,57 @@ def parse_string_list(
             pass
 
     return [token] if fallback_to_single else []
+
+
+def collect_sqlite_export_bundle(
+    *,
+    db_paths: list[str],
+    table_name: str | None,
+) -> dict[str, Any]:
+    """Collect rows from one or more SQLite databases into a flat export bundle.
+
+    Args:
+        db_paths: Paths to SQLite database files. Missing or non-SQLite files are skipped.
+        table_name: When set, only rows from this table are included. When None, all tables.
+
+    Returns:
+        {"summary": {"tables": int, "rows": int}, "records": [{"table_name": str, ...}]}
+    """
+    records: list[dict[str, Any]] = []
+    seen_tables: set[str] = set()
+
+    for db_path in db_paths:
+        try:
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+        except Exception:
+            logging.debug("collect_sqlite_export_bundle: skipping %s (cannot open)", db_path)
+            continue
+
+        try:
+            cursor = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            table_names = [row[0] for row in cursor.fetchall()]
+        except Exception:
+            con.close()
+            continue
+
+        for tbl in table_names:
+            if table_name is not None and tbl != table_name:
+                continue
+            try:
+                rows = con.execute(f"SELECT * FROM \"{tbl}\"").fetchall()  # noqa: S608
+            except Exception:
+                continue
+            seen_tables.add(tbl)
+            for row in rows:
+                rec = dict(row)
+                rec["table_name"] = tbl
+                records.append(rec)
+
+        con.close()
+
+    return {
+        "summary": {"tables": len(seen_tables), "rows": len(records)},
+        "records": records,
+    }
 
