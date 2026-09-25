@@ -778,8 +778,8 @@ class CommandProcessor:
         token = getattr(args, "token", None)
         token_file = getattr(args, "token_file", None)
         adc_filepath = getattr(args, "filepath_to_adc", None)
-        if args.type == "oauth2" and not token and not token_file:
-            print("[X] Cannot proceed with adding Oauth2 credentials. Supply a bare access token via --token, or a token.json via --token-file.")
+        if args.type == "oauth2" and not token and not token_file and not adc_filepath:
+            print("[X] Cannot proceed with adding Oauth2 credentials. Supply a bare access token via --token, a token.json via --token-file, or an ADC file via --filepath-to-adc.")
             return False
         if token_file and not os.path.exists(token_file):
             print(f"[X] File {token_file} does not exist...")
@@ -796,11 +796,10 @@ class CommandProcessor:
             credname,
             project_id=self.session.project_id,
             token=getattr(args, "token", None),
-            token_file=getattr(args, "token_file", None),
             tokeninfo=args.tokeninfo,
             scopes=scopes,
             email=email,
-            adc_filepath=getattr(args, "filepath_to_adc", None),
+            adc_filepath=getattr(args, "token_file", None) or getattr(args, "filepath_to_adc", None),
             assume=args.assume if not refresh_attempt else True,
             refresh_attempt=refresh_attempt,
         )

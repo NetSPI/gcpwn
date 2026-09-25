@@ -154,20 +154,18 @@ class SessionUtility:
         print("   d) Launch the tool again via 'python3 main.py'")
         print("   e) At the screen to add creds, try 'adc <credname>' again and it should work")
 
-    def _load_new_oauth_credentials(self, *, token=None, token_file=None, authorized_info=None, adc_filepath=None):
+    def _load_new_oauth_credentials(self, *, token=None, authorized_info=None, adc_filepath=None):
         """Build google-auth Credentials from a raw token, ADC file, or ambient ADC.
 
         Precedence: `authorized_info` (dict from an OAuth login flow) >
-        `token_file` (a token.json authorized-user file, incl. refresh token) >
-        `token` (a bare access token string) > `adc_filepath` (adc-file) > the
-        ambient gcloud Application Default Credentials (adc). On a missing-ADC
+        `token` (a bare access token string) > `adc_filepath` (any credential file:
+        authorized_user, service_account, external_account) > the ambient gcloud
+        Application Default Credentials (adc). On a missing-ADC
         DefaultCredentialsError, prints setup instructions and returns
         (None, None, None) rather than raising.
 
-        The `authorized_info`/`token_file` paths carry a refresh token, so the
-        stored credential auto-renews (see refresh_credentials_if_needed); a bare
-        `token` cannot be refreshed and expires in ~1 hour. All three are stored
-        as the same "oauth2" credtype (the load path uses from_authorized_user_info).
+        `authorized_info` and `adc_filepath` carry a refresh token so the credential
+        auto-renews; a bare `token` cannot be refreshed and expires in ~1 hour.
 
         Returns:
             (credentials, type_of_cred, detected_project_id) tuple; type_of_cred
@@ -176,8 +174,6 @@ class SessionUtility:
         """
         if authorized_info:
             return Credentials.from_authorized_user_info(authorized_info), "oauth2", None
-        if token_file:
-            return Credentials.from_authorized_user_file(token_file), "oauth2", None
         if token:
             return Credentials(token=token), "oauth2", None
         if adc_filepath:
@@ -476,7 +472,7 @@ class SessionUtility:
             return None, ""
         return None, ""
 
-    def add_oauth2_account(self, credname, token=None, token_file=None, authorized_info=None, project_id=None,adc_filepath = None, tokeninfo = False, scopes = None, email = None, assume = False, refresh_attempt = False):
+    def add_oauth2_account(self, credname, token=None, authorized_info=None, project_id=None,adc_filepath = None, tokeninfo = False, scopes = None, email = None, assume = False, refresh_attempt = False):
         """Register a new OAuth2/ADC credential under credname and store it in the DB.
 
         Builds credentials from a raw token, an ADC file, or ambient gcloud ADC
@@ -502,7 +498,6 @@ class SessionUtility:
         try:
             credentials, type_of_cred, detected_project_id = self._load_new_oauth_credentials(
                 token=token,
-                token_file=token_file,
                 authorized_info=authorized_info,
                 adc_filepath=adc_filepath,
             )

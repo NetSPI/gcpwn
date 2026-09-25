@@ -75,14 +75,14 @@ def test_load_from_authorized_info_carries_refresh_token():
     assert credentials.refresh_token == "1//test-refresh-token"
 
 
-def test_load_from_token_file_carries_refresh_token(tmp_path):
+def test_load_from_adc_filepath_carries_refresh_token(tmp_path):
     token_path = tmp_path / "token.json"
     token_path.write_text(json.dumps(_authorized_user_info()))
 
     credentials, credtype, _project_id = SessionUtility._load_new_oauth_credentials(
-        None, token_file=str(token_path)
+        None, adc_filepath=str(token_path)
     )
-    assert credtype == "oauth2"
+    assert credtype == "adc-file"
     assert credentials.refresh_token == "1//test-refresh-token"
 
 
@@ -93,14 +93,14 @@ def test_load_from_bare_token_has_no_refresh_material():
     assert credentials.refresh_token is None
 
 
-def test_authorized_info_takes_precedence_over_token_file_and_token(tmp_path):
+def test_authorized_info_takes_precedence_over_adc_filepath_and_token(tmp_path):
     token_path = tmp_path / "token.json"
     token_path.write_text(json.dumps(_authorized_user_info(refresh_token="1//from-file")))
 
     credentials, _credtype, _project_id = SessionUtility._load_new_oauth_credentials(
         None,
         authorized_info=_authorized_user_info(refresh_token="1//from-authorized-info"),
-        token_file=str(token_path),
+        adc_filepath=str(token_path),
         token="ya29.ignored",
     )
     assert credentials.refresh_token == "1//from-authorized-info"
