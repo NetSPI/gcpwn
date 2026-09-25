@@ -330,7 +330,7 @@ def _parse_args(user_args, components):
         description="Enumerate Artifact Registry resources",
         components=[(c.key, c.help_text) for c in components if c.key in CORE_KEYS],
         add_extra_args=build_extra_args(components, extra=_add_extra_args),
-        standard_args=("iam", "get", "debug", "threads"),
+        standard_args=("iam", "get", "threads"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on repositories"}},
     )
 
@@ -418,9 +418,17 @@ def _run_downloads(session, args, project_id, download_scopes, index, repositori
 
     def _list_packages(parents):
         rows: list[dict[str, Any]] = []
-        for parent, listed in parallel_map(
-            parents, lambda p: (p, packages_resource.list(parent=p, limit=limit, action_dict=scope_actions)), threads=threads
-        ):
+
+        def _safe_pkg(p):
+            try:
+                return (p, packages_resource.list(parent=p, limit=limit, action_dict=scope_actions))
+            except Exception:
+                return (p, None)
+
+        for item in parallel_map(parents, _safe_pkg, threads=threads):
+            if item is None:
+                continue
+            parent, listed = item
             if listed in ("Not Enabled", None) or not listed:
                 continue
             for row in listed:
@@ -433,9 +441,17 @@ def _run_downloads(session, args, project_id, download_scopes, index, repositori
     def _list_versions(package_rows):
         package_parents = [str(r.get("name") or "").strip() for r in package_rows if isinstance(r, dict) and r.get("name")]
         rows: list[dict[str, Any]] = []
-        for parent, listed in parallel_map(
-            package_parents, lambda p: (p, versions_resource.list(parent=p, limit=limit, action_dict=scope_actions)), threads=threads
-        ):
+
+        def _safe_ver(p):
+            try:
+                return (p, versions_resource.list(parent=p, limit=limit, action_dict=scope_actions))
+            except Exception:
+                return (p, None)
+
+        for item in parallel_map(package_parents, _safe_ver, threads=threads):
+            if item is None:
+                continue
+            parent, listed = item
             if listed in ("Not Enabled", None) or not listed:
                 continue
             for row in listed:
@@ -458,9 +474,17 @@ def _run_downloads(session, args, project_id, download_scopes, index, repositori
             if isinstance(row, dict) and str(row.get("name") or "").strip()
             and ("/packages/" in str(row.get("name") or "") or "/versions/" in str(row.get("name") or ""))
         ]
-        for _target, listed in parallel_map(
-            owners, lambda t: (t, files_resource.list_by_owner(parent=t[0], owner=t[1], limit=limit, action_dict=scope_actions)), threads=threads
-        ):
+
+        def _safe_files(t):
+            try:
+                return (t, files_resource.list_by_owner(parent=t[0], owner=t[1], limit=limit, action_dict=scope_actions))
+            except Exception:
+                return (t, None)
+
+        for item in parallel_map(owners, _safe_files, threads=threads):
+            if item is None:
+                continue
+            _target, listed = item
             if listed in ("Not Enabled", None) or not listed:
                 continue
             for file_row in listed:

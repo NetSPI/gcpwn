@@ -70,6 +70,11 @@ class ServiceDirectoryServicesResource(_ServiceDirectoryResource):
     def _get_item(self, resource_id, **_):
         return self.client.get_service(request={"name": resource_id})
 
+    def _extra_save_fields(self, raw) -> dict:
+        # name = projects/P/locations/L/namespaces/NS/services/SVC
+        name = str(raw.get("name", "") or "")
+        return {"namespace_name": name.partition("/services/")[0]}
+
 
 class ServiceDirectoryEndpointsResource(_ServiceDirectoryResource):
     TABLE_NAME = "servicedirectory_endpoints"
@@ -81,3 +86,8 @@ class ServiceDirectoryEndpointsResource(_ServiceDirectoryResource):
 
     def _list_items(self, parent, **_):
         return list(self.client.list_endpoints(request={"parent": parent}))
+
+    def _extra_save_fields(self, raw) -> dict:
+        # name = projects/P/locations/L/namespaces/NS/services/SVC/endpoints/EP
+        name = str(raw.get("name", "") or "")
+        return {"service_name": name.partition("/endpoints/")[0]}

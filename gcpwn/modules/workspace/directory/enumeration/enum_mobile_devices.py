@@ -47,7 +47,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace mobile devices (Admin SDK Directory API)",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 
@@ -83,7 +83,7 @@ def run_module(user_args, session):
     workspace_actions: dict[str, dict[str, set[str]]] = {"workspace_permissions": {}}
 
     devices = devices_resource.list(
-        customer=str(args.directory_customer or customer_id or "my_customer"),
+        customer=str(args.directory_customer or customer_id),
         max_results=int(args.page_size),
         order_by=getattr(args, "order_by", None),
         projection=str(args.projection),

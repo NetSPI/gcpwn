@@ -28,10 +28,10 @@ resolve_regions = region_resolver_for("cloudbuild")
 _CSR_BASE = "https://sourcerepo.googleapis.com/v1"
 
 
-def create_source_repo(session, project_id: str, repo_name: str) -> tuple[str | None, str | None]:
+def _create_source_repo(session, project_id: str, repo_name: str) -> tuple[str | None, str | None]:
     """Create a Cloud Source Repository via REST. Returns (full_name, error_str)."""
     import requests as _requests  # noqa: PLC0415
-    from gcpwn.core.utils.module_helpers import get_bearer_token
+    from gcpwn.core.utils.service_runtime import get_bearer_token
     token = get_bearer_token(session)
     url = f"{_CSR_BASE}/projects/{project_id}/repos"
     resp = _requests.post(
@@ -266,6 +266,23 @@ class CloudBuildConnectionsResource(GcpListResource):
         self._v2 = _cloudbuild_v2_module()
         return self._v2.RepositoryManagerClient(credentials=session.credentials)
 
+    def create_source_repo(self, project_id: str, repo_name: str) -> tuple[str | None, str | None]:
+        return _create_source_repo(self.session, project_id, repo_name)
+
+    def delete_source_repo(self, project_id: str, repo_name: str) -> tuple[bool, str | None]:
+        """Delete a Cloud Source Repository via REST. Returns (ok, error_str)."""
+        import requests as _requests  # noqa: PLC0415
+        from gcpwn.core.utils.service_runtime import get_bearer_token
+        token = get_bearer_token(self.session)
+        resp = _requests.delete(
+            f"{_CSR_BASE}/projects/{project_id}/repos/{repo_name}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if resp.status_code in (200, 204, 404):
+            return True, None
+        return False, f"CSR delete {resp.status_code}: {resp.text[:200]}"
+
     def _list_items(self, parent, **_):
         return self.client.list_connections(request=self._v2.ListConnectionsRequest(parent=parent))
 
@@ -377,33 +394,27 @@ class CloudBuildTriggersResource(GcpListResource):
     def create(self, *, project_id: str, trigger: Any) -> Any:
         """Create a Cloud Build trigger. trigger is a cloudbuild_v1.BuildTrigger proto.
         Returns the created BuildTrigger."""
-        v1 = _cloudbuild_v1_module()
-        client = v1.CloudBuildClient(credentials=self.session.credentials)
-        return client.create_build_trigger(
-            request=v1.CreateBuildTriggerRequest(project_id=project_id, trigger=trigger)
+        return self.client.create_build_trigger(
+            request=self._v1.CreateBuildTriggerRequest(project_id=project_id, trigger=trigger)
         )
 
     def run(self, *, project_id: str, trigger_id: str, source: Any = None) -> Any:
         """Run a Cloud Build trigger immediately. source is a cloudbuild_v1.RepoSource or None.
         Returns a Build-like object with .id from the LRO metadata (does not wait for build completion)."""
-        v1 = _cloudbuild_v1_module()
-        client = v1.CloudBuildClient(credentials=self.session.credentials)
-        req = v1.RunBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
+        req = self._v1.RunBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
         if source is not None:
             req.source = source
-        op = client.run_build_trigger(request=req)
+        op = self.client.run_build_trigger(request=req)
         return op.metadata.build
 
     def delete(self, *, project_id: str, trigger_id: str) -> None:
         """Delete a Cloud Build trigger. Best-effort; swallows errors."""
-        v1 = _cloudbuild_v1_module()
-        client = v1.CloudBuildClient(credentials=self.session.credentials)
         try:
-            client.delete_build_trigger(
-                request=v1.DeleteBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
+            self.client.delete_build_trigger(
+                request=self._v1.DeleteBuildTriggerRequest(project_id=project_id, trigger_id=trigger_id)
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_build_trigger({trigger_id}): {e}")
 
 
 class CloudBuildBuildsResource(GcpListResource):

@@ -66,9 +66,10 @@ def run_module(user_args, session):
         if not targets:
             print("[*] No logs available to download entries from.")
             return 1
-        print(f"[*] Downloading up to {max(1, int(args.download_limit))} entries/log for {len(targets)} log(s)...")
+        limit = max(1, int(args.download_limit))
+        print(f"[*] Downloading up to {limit} entries/log for {len(targets)} log(s)...")
         written = download_log_entries(
-            session, project_id, log_names=targets, per_log_limit=args.download_limit, output=args.output
+            session, project_id, log_names=targets, per_log_limit=limit, output=args.output
         )
         for path in written:
             print(f"[*] Wrote {path}")

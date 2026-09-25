@@ -46,33 +46,66 @@ ACTION_SCOPE_SPECS = (
 )
 
 ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
+    # ── core ──────────────────────────────────────────────────────────────────
     "apikeys_actions_allowed": "apikeys",
     "apigateway_actions_allowed": "apigateway",
     "appengine_actions_allowed": "appengine",
+    "appintegration_actions_allowed": "appintegration",
     "artifactregistry_actions_allowed": "artifactregistry",
     "batch_actions_allowed": "batch",
     "bigquery_actions_allowed": "bigquery",
+    "bigquerydatatransfer_actions_allowed": "bigquerydatatransfer",
     "bigtable_actions_allowed": "bigtable",
+    # ── cloud* ────────────────────────────────────────────────────────────────
     "cloudbuild_actions_allowed": "cloudbuild",
     "cloudcomposer_actions_allowed": "composer",
-    "cloudsql_actions_allowed": "cloudsql",
+    "clouddeploy_actions_allowed": "clouddeploy",
     "clouddns_actions_allowed": "clouddns",
-    "firestore_actions_allowed": "firestore",
-    "gke_actions_allowed": "gke",
     "cloudrun_actions_allowed": "cloudrun",
+    "cloudscheduler_actions_allowed": "cloudscheduler",
+    "cloudsql_actions_allowed": "cloudsql",
     "cloudtasks_actions_allowed": "cloudtasks",
-    "kms_actions_allowed": "kms",
-    "memorystore_actions_allowed": "redis",
-    "loadbalancing_actions_allowed": "loadbalancing",
-    "pubsub_actions_allowed": "pubsub",
-    "servicedirectory_actions_allowed": "servicedirectory",
-    "storage_actions_allowed": "bucket",
-    "function_actions_allowed": "cloudfunction",
+    "cloudworkflows_actions_allowed": "cloudworkflows",
+    # ── compute / storage ─────────────────────────────────────────────────────
     "compute_actions_allowed": "computeinstance",
-    "service_account_actions_allowed": "saaccounts",
+    "connectors_actions_allowed": "connectors",
+    "datafusion_actions_allowed": "datafusion",
+    "dataflow_actions_allowed": "dataflow",
+    "dataform_actions_allowed": "dataform",
+    "dataplex_actions_allowed": "dataplex",
+    "dataproc_actions_allowed": "dataproc",
+    "deploymentmanager_actions_allowed": "deploymentmanager",
+    # ── E-F ───────────────────────────────────────────────────────────────────
+    "eventarc_actions_allowed": "eventarc",
+    "firebaseapphosting_actions_allowed": "firebaseapphosting",
+    "firestore_actions_allowed": "firestore",
+    "function_actions_allowed": "cloudfunction",
+    # ── G-M ───────────────────────────────────────────────────────────────────
+    "gke_actions_allowed": "gke",
+    "iap_actions_allowed": "iap",
+    "inframanager_actions_allowed": "inframanager",
+    "kms_actions_allowed": "kms",
+    "loadbalancing_actions_allowed": "loadbalancing",
+    "memorystore_actions_allowed": "redis",
+    # ── N-R ───────────────────────────────────────────────────────────────────
+    "notebooks_actions_allowed": "notebooks",
+    "orgpolicy_actions_allowed": "orgpolicy",
+    "pubsub_actions_allowed": "pubsub",
+    # ── S ─────────────────────────────────────────────────────────────────────
     "secret_actions_allowed": "secrets",
+    "service_account_actions_allowed": "saaccounts",
+    "servicedirectory_actions_allowed": "servicedirectory",
+    "serviceusage_actions_allowed": "serviceusage",
+    "spanner_actions_allowed": "spanner",
+    "storage_actions_allowed": "bucket",
+    # ── T-Z ───────────────────────────────────────────────────────────────────
     "agentplatform_actions_allowed": "aiplatform",
+    "alloydb_actions_allowed": "alloydb",
+    "tpu_actions_allowed": "tpu",
+    "vertex_actions_allowed": "vertex",
+    "vmmigration_actions_allowed": "vmmigration",
     "vpc_actions_allowed": "vpc",
+    "workstations_actions_allowed": "workstations",
 }
 
 ACTION_SCOPE_COLUMNS = tuple(
@@ -83,17 +116,15 @@ ACTION_SCOPE_KEY_TO_SCOPE_TYPE = {
     str(spec["scope_key"]): str(spec["scope_type"])
     for spec in ACTION_SCOPE_SPECS
 }
-ACTION_SCOPE_COLUMN_TO_RESOURCE_TYPE = {
+_ACTION_SCOPE_COLUMN_TO_RESOURCE_TYPE = {
     str(spec["action_column"]): str(spec["resource_type"])
     for spec in ACTION_SCOPE_SPECS
 }
 
 ACTION_COLUMN_TO_RESOURCE_TYPE = {
-    **ACTION_SCOPE_COLUMN_TO_RESOURCE_TYPE,
+    **_ACTION_SCOPE_COLUMN_TO_RESOURCE_TYPE,
     **ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE,
 }
-
-RESOURCE_TYPE_TO_ACTION_COLUMN = {value: key for key, value in ACTION_COLUMN_TO_RESOURCE_TYPE.items()}
 
 ACTION_PROVENANCE_COLUMN = "action_provenance"
 ACTION_SCOPE_KEYS = {scope_key for scope_key, _ in ACTION_SCOPE_COLUMNS}

@@ -31,6 +31,7 @@ class _TestContext:
             allow_resources=resources,
             allow_resources_by_project=by_project,
             allow_resources_by_project_type=by_project_type,
+            resource_sa_by_name={},
         )
 
     def hierarchy_data(self) -> dict[str, dict[str, str]]:

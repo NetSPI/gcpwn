@@ -7,16 +7,13 @@ import requests as _rlib
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
+from gcpwn.core.utils.service_runtime import get_bearer_token
 from gcpwn.core.utils.module_helpers import (
     extract_project_id_from_resource,
-    get_bearer_token,
     static_locations,
 )
 
 _FAH_BASE = "https://firebaseapphosting.googleapis.com/v1beta"
-_CB_BASE = "https://cloudbuild.googleapis.com/v1"
-_GCS_BASE = "https://storage.googleapis.com"
-_CR_BASE = "https://run.googleapis.com/v2"
 
 _FAH_LOCATIONS = static_locations("firebaseapphosting")
 _FAH_DEFAULT_LOCATIONS = ["us-central1", "us-east1", "us-west1", "europe-west1"]
@@ -245,108 +242,98 @@ class FirebaseAppHostingBackendResource(GcpListResource):
 
     def ensure_bucket(self, project_id: str, bucket_name: str, location: str) -> str | None:
         """Create a GCS bucket if it doesn't exist. Returns None on success, error string on failure."""
-        tok = get_bearer_token(self.session)
-        r = _rlib.post(
-            f"{_GCS_BASE}/storage/v1/b",
-            params={"project": project_id},
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
-            json={"name": bucket_name, "location": location or "US", "storageClass": "STANDARD"},
-            timeout=20,
-        )
-        if r.status_code in (200, 409):
-            return None
-        return f"Bucket create failed {r.status_code}: {r.text[:200]}"
+        from google.cloud import storage as _gcs
+        from google.api_core import exceptions as gax_exceptions
+        client = _gcs.Client(credentials=self.session.credentials, project=project_id)
+        try:
+            client.create_bucket(bucket_name, location=location or "US")
+        except gax_exceptions.Conflict:
+            pass  # already exists
+        except Exception as e:
+            return f"Bucket create failed: {e}"
+        return None
 
     def upload_source(self, bucket_name: str, blob_name: str, content: bytes) -> str | None:
         """Upload bytes to a GCS object. Returns None on success, error string on failure."""
-        tok = get_bearer_token(self.session)
-        r = _rlib.post(
-            f"{_GCS_BASE}/upload/storage/v1/b/{bucket_name}/o",
-            params={"uploadType": "media", "name": blob_name},
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/gzip"},
-            data=content,
-            timeout=30,
-        )
-        if r.status_code == 200:
-            return None
-        return f"GCS upload failed {r.status_code}: {r.text[:200]}"
+        from google.cloud import storage as _gcs
+        client = _gcs.Client(credentials=self.session.credentials)
+        try:
+            client.bucket(bucket_name).blob(blob_name).upload_from_string(
+                content, content_type="application/gzip"
+            )
+        except Exception as e:
+            return f"GCS upload failed: {e}"
+        return None
 
     def run_cloud_build(self, project_id: str, build_config: dict) -> str:
-        """Submit a Cloud Build job and poll to completion. Returns built image URI. Raises RuntimeError on failure."""
-        tok = get_bearer_token(self.session)
-        r = _rlib.post(
-            f"{_CB_BASE}/projects/{project_id}/builds",
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
-            json=build_config,
-            timeout=30,
+        """Submit a Cloud Build job and wait for completion. Returns built image URI. Raises RuntimeError on failure."""
+        from google.cloud.devtools import cloudbuild_v1
+        cb = cloudbuild_v1.CloudBuildClient(credentials=self.session.credentials)
+        steps = [
+            cloudbuild_v1.BuildStep(name=s["name"], args=s.get("args", []))
+            for s in build_config.get("steps", [])
+        ]
+        src = build_config.get("source", {})
+        ss = src.get("storageSource", {})
+        build = cloudbuild_v1.Build(
+            source=cloudbuild_v1.Source(
+                storage_source=cloudbuild_v1.StorageSource(
+                    bucket=ss.get("bucket", ""), object_=ss.get("object", "")
+                )
+            ),
+            steps=steps,
+            images=build_config.get("images", []),
         )
-        data = r.json()
-        if "error" in data:
-            raise RuntimeError(f"Cloud Build create failed: {data['error'].get('message', str(data['error']))}")
-        build_id = data.get("metadata", {}).get("build", {}).get("id")
-        if not build_id:
-            raise RuntimeError("Could not find Cloud Build ID in response")
+        operation = cb.create_build(project_id=project_id, build=build)
+        build_id = operation.metadata.build.id if operation.metadata else ""
         print(f"  [+] Cloud Build started: {build_id}", flush=True)
-        deadline = time.time() + 600
-        while time.time() < deadline:
-            time.sleep(15)
-            tok = get_bearer_token(self.session)
-            sr = _rlib.get(
-                f"{_CB_BASE}/projects/{project_id}/builds/{build_id}",
-                headers={"Authorization": f"Bearer {tok}"},
-                timeout=15,
-            )
-            status = sr.json().get("status", "?")
-            print(f"    [cb] {status}", flush=True)
-            if status == "SUCCESS":
-                images = sr.json().get("results", {}).get("images", [])
-                if images:
-                    name = images[0].get("name", "")
-                    digest = images[0].get("digest", "")
-                    return f"{name}@{digest}" if digest else name
-                return ""
-            if status in ("FAILURE", "CANCELLED", "TIMEOUT", "EXPIRED"):
-                raise RuntimeError(f"Cloud Build {status}")
-        raise RuntimeError("Cloud Build timed out")
+        try:
+            result = operation.result(timeout=600)
+        except Exception as e:
+            raise RuntimeError(f"Cloud Build failed: {e}") from e
+        status = result.status.name if hasattr(result.status, "name") else str(result.status)
+        print(f"    [cb] {status}", flush=True)
+        if status == "SUCCESS":
+            images = list(result.results.images) if result.results else []
+            if images:
+                name = images[0].name
+                digest = images[0].digest
+                return f"{name}@{digest}" if digest else name
+            return ""
+        raise RuntimeError(f"Cloud Build {status}")
 
     def get_cloud_run_url(self, project_id: str, location: str, service_id: str) -> str:
         """Return the public URI of a Cloud Run service."""
-        tok = get_bearer_token(self.session)
-        r = _rlib.get(
-            f"{_CR_BASE}/projects/{project_id}/locations/{location}/services/{service_id}",
-            headers={"Authorization": f"Bearer {tok}"},
-            timeout=15,
-        )
-        return r.json().get("uri", "")
+        from google.cloud import run_v2
+        try:
+            client = run_v2.ServicesClient(credentials=self.session.credentials)
+            svc = client.get_service(
+                name=f"projects/{project_id}/locations/{location}/services/{service_id}"
+            )
+            return svc.uri
+        except Exception:
+            return ""
 
     def ensure_ar_repo(self, project_id: str, location: str, ar_repo_uri: str) -> None:
         """Create an Artifact Registry Docker repo if it does not exist."""
+        from google.cloud import artifactregistry_v1
+        from google.api_core import exceptions as gax_exceptions
         repo_id = ar_repo_uri.split("/")[-1]
-        tok = get_bearer_token(self.session)
-        url = f"https://artifactregistry.googleapis.com/v1/projects/{project_id}/locations/{location}/repositories"
-        resp = _rlib.get(
-            url,
-            headers={"Authorization": f"Bearer {tok}"},
-            params={"filter": f'name="{location}-docker.pkg.dev/{project_id}/{repo_id}"'},
-            timeout=20,
-        )
-        repos = (resp.json().get("repositories") or []) if resp.ok else []
-        if any(r.get("name", "").endswith(f"/{repo_id}") for r in repos):
-            return
-        body = {"format": "DOCKER", "description": "gcpwn Firebase App Hosting staging"}
-        create_resp = _rlib.post(
-            url,
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
-            json=body,
-            params={"repositoryId": repo_id},
-            timeout=30,
-        )
-        if create_resp.status_code in (200, 201):
+        ar = artifactregistry_v1.ArtifactRegistryClient(credentials=self.session.credentials)
+        try:
+            ar.create_repository(
+                parent=f"projects/{project_id}/locations/{location}",
+                repository_id=repo_id,
+                repository=artifactregistry_v1.Repository(
+                    format_=artifactregistry_v1.Repository.Format.DOCKER,
+                    description="gcpwn Firebase App Hosting staging",
+                ),
+            )
             print(f"  [+] Created AR repo: {ar_repo_uri}")
-        elif create_resp.status_code == 409:
+        except gax_exceptions.AlreadyExists:
             pass
-        else:
-            print(f"  [!] AR repo create returned {create_resp.status_code}: {create_resp.text[:200]}")
+        except Exception as e:
+            print(f"  [!] AR repo create failed: {e}")
             print(f"      Run manually: gcloud artifacts repositories create {repo_id} "
                   f"--repository-format=docker --location={location} --project={project_id}")
 

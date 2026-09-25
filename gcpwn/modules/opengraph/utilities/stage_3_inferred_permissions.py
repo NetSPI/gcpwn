@@ -487,6 +487,7 @@ def augment_scope_resource_indexes(
         allow_resources=allow_resources,
         allow_resources_by_project=allow_resources_by_project,
         allow_resources_by_project_type=allow_resources_by_project_type,
+        resource_sa_by_name=dict(base_indexes.resource_sa_by_name or {}),
     )
 
 def implied_scope_for_event(
@@ -778,7 +779,7 @@ def emit_inferred_permission_edges(
             crednames=contributing_crednames,
             contributing_resource_keys=contributing_resource_keys,
         )
-        subject_binding_key = (principal_entry.principal_id, "HAS_IMPLIED_PERMISSIONS", binding_id)
+        subject_binding_key = (principal_entry.principal_id, "HasImpliedPermissions", binding_id)
         if (
             (principal_entry.principal_id, binding_id) not in emitted_subject_bindings
             and subject_binding_key not in context.builder.edge_map
@@ -821,7 +822,7 @@ def emit_inferred_permission_edges(
             context.builder.add_edge(
                 principal_entry.principal_id,
                 binding_id,
-                "HAS_IMPLIED_PERMISSIONS",
+                "HasImpliedPermissions",
                 source="credential_permission_summary",
                 role_name=implied_role_name,
                 binding_origin="inferred",
@@ -1009,7 +1010,8 @@ def build_iam_inferred_permissions_graph(context) -> dict[str, int | bool]:
       principal -> HAS_IMPLIED_PERMISSIONS -> implied grant -> INFERRED_<RULE_EDGE> -> resource
     """
     before_nodes, before_edges = context.counts()
-    inferred_single_rules, inferred_multi_rules = load_normalized_dangerous_rules_by_family()
+    cats = getattr(getattr(context, "options", None), "edge_categories", None)
+    inferred_single_rules, inferred_multi_rules = load_normalized_dangerous_rules_by_family(categories=cats or None)
     entries, entry_metadata = build_inferred_entries(context)
     print(
         "[*] Stage 3 tally: "

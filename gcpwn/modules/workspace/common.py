@@ -178,9 +178,10 @@ def handle_directory_error(exc: Exception, *, skipping: str) -> int | None:
     # A SA domain-wide-delegation token whose grant lacks the requested scope fails at
     # token-mint with `unauthorized_client` (a RefreshError, not an HTTP 403); treat it
     # as a denial so per-item loops break early instead of repeating it for every item.
-    if status == 403 or "unauthorized_client" in text or "insufficient authentication scopes" in text:
+    # HTTP 401 "Login Required" means the SA has no Workspace identity (needs DWD).
+    if status in (401, 403) or "unauthorized_client" in text or "insufficient authentication scopes" in text or "login required" in text:
         print(f"[*] Admin SDK access denied (check the credential's scopes / DWD authorization); skipping {skipping}.")
-        return 403
+        return status or 403
     if status == 404:
         print(f"[*] Admin SDK Directory API not enabled or no Google Workspace org; skipping {skipping}.")
         return 404
@@ -218,7 +219,14 @@ def _http_error_details(exc: Exception) -> tuple[int | None, str]:
 
 def _handle_cloudidentity_error(session, api_name: str, resource_name: str, exc: Exception) -> None:
     status = _http_error_status(exc)
-    if status == 403:
+    text = str(exc).lower()
+    # A SA domain-wide-delegation token whose grant lacks the requested scope fails at
+    # token-mint with `unauthorized_client` (a RefreshError, not an HTTP 403/401); treat
+    # it as a denial so the caller sees a clean scope/auth message rather than a 500.
+    if status == 403 or "unauthorized_client" in text or "insufficient authentication scopes" in text:
+        UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
+        return
+    if status == 401 or "login required" in text:
         UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
         return
     if status == 404:

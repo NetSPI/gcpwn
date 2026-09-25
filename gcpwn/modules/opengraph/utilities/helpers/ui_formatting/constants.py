@@ -65,6 +65,65 @@ CUSTOM_NODE_TYPES = {
     "GCPKmsCryptoKey": _fa_icon("key", "#00796B"),
     "GCPKmsCryptoKeyVersion": _fa_icon("code-branch", "#00796B"),
 
+    # App Engine
+    "GCPAppEngineApp": _fa_icon("layer-group", "#1A73E8"),
+    "GCPAppEngineVersion": _fa_icon("code-branch", "#1565C0"),
+
+    # Cloud Build
+    "GCPCloudBuildBuild": _fa_icon("hammer", "#E65100"),
+    "GCPCloudBuildTrigger": _fa_icon("play-circle", "#BF360C"),
+
+    # Cloud Deploy / Infra Manager
+    "GCPCloudDeployRelease": _fa_icon("rocket", "#1976D2"),
+    "GCPInfraManagerDeployment": _fa_icon("cube", "#546E7A"),
+
+    # Cloud Scheduler / Tasks / Workflows
+    "GCPCloudSchedulerJob": _fa_icon("clock", "#2E7D32"),
+    "GCPCloudWorkflowsExecution": _fa_icon("project-diagram", "#6A1B9A"),
+
+    # Data processing
+    "GCPDataflowJob": _fa_icon("stream", "#0277BD"),
+    "GCPDataflowDataPipeline": _fa_icon("stream", "#01579B"),
+    "GCPDataprocBatch": _fa_icon("layer-group", "#E65100"),
+    "GCPDataprocWorkflowTemplate": _fa_icon("clipboard-list", "#BF360C"),
+    "GCPDataplexTask": _fa_icon("wave-square", "#00695C"),
+    "GCPDataFusionInstance": _fa_icon("random", "#6A1B9A"),
+    "GCPBQSparkProcedure": _fa_icon("fire", "#E65100"),
+    "GCPComposerEnv": _fa_icon("wind", "#0288D1"),
+
+    # Vertex AI / ML
+    "GCPVertexCustomJob": _fa_icon("robot", "#4527A0"),
+    "GCPVertexEndpoint": _fa_icon("plug", "#512DA8"),
+    "GCPVertexPipelineJob": _fa_icon("code-branch", "#4527A0"),
+    "GCPVertexReasoningEngine": _fa_icon("brain", "#311B92"),
+
+    # Notebooks / Workbench
+    "GCPNotebooksExecution": _fa_icon("book-open", "#388E3C"),
+    "GCPNotebooksWorkbench": _fa_icon("laptop-code", "#2E7D32"),
+
+    # Compute / TPU / Migration
+    "GCPTpuNode": _fa_icon("microchip", "#4527A0"),
+    "GCPVMMigrationMigratingVm": _fa_icon("truck-moving", "#546E7A"),
+    "GCPInstances": _fa_icon("server", "#1565C0"),
+
+    # Firebase
+    "GCPFirebaseBackend": _fa_icon("fire-alt", "#F57C00"),
+
+    # Deployment Manager
+    "GCPDeploymentManagerDeployment": _fa_icon("boxes", "#546E7A"),
+
+    # App Integration
+    "GCPAppIntegration": _fa_icon("project-diagram", "#7B1FA2"),
+
+    # Batch
+    "GCPBatchJob": _fa_icon("list-ol", "#00695C"),
+
+    # Cloud Workstations
+    "GCPWorkstation": _fa_icon("desktop", "#0097A7"),
+
+    # API Gateway
+    "GCPApiGateway": _fa_icon("network-wired", "#F57C00"),
+
     # Expansion helpers
     "GCPServiceAccountKey": _fa_icon("file-signature", "#F9A825"),
 }

@@ -150,7 +150,10 @@ def _print_inline_progress(label: str, processed: int, total: int, *, force: boo
         if force:
             print("")
         return
-    print(message)
+    # Non-TTY: force=True after a loop that already emitted at processed==total would
+    # print the same line twice. Skip when the regular emit would already cover it.
+    if not (force and _should_emit_progress(processed, total)):
+        print(message)
 
 
 def _parse_split_sections(raw_value: str | None) -> list[str]:
@@ -872,6 +875,20 @@ def _parse_args(user_args):
 
     # IAM graph behavior
     parser.add_argument("--include-all", action="store_true", help="Include generic IAM binding edges (not only dangerous built-in edges)")
+    parser.add_argument(
+        "--edge-categories",
+        dest="edge_categories",
+        metavar="CATEGORIES",
+        default=None,
+        help=(
+            "Comma-separated edge categories to include from og_defined_edges.json "
+            "(default: priv_escalation,sensitive_resource_access). "
+            "Categories: priv_escalation (PE paths), sensitive_resource_access (secret read), "
+            "storage_read_access (CAN_READ_STORAGE_OBJECT — opt-in, adds significant edge volume). "
+            "Pass 'all' to include every category. "
+            "Example: --edge-categories priv_escalation,sensitive_resource_access,storage_read_access"
+        ),
+    )
     parser.add_argument("--expand-inherited", action="store_true", help="Expand inherited IAM bindings from org/folder down to child folders/projects")
     parser.add_argument(
         "--cross-sa-project-allowed",
@@ -1096,6 +1113,27 @@ def _exclude_service_agent_nodes(
         if str(edge.source_id or "").strip() not in service_agent_node_ids
         and str(edge.destination_id or "").strip() not in service_agent_node_ids
     ]
+
+    # Cascade: iambinding nodes whose only principals were service agents now have
+    # zero incoming edges.  They form disconnected floating sub-graphs in BloodHound
+    # (no principal can reach them).  Remove them and their outgoing edges too.
+    incoming_dsts = {str(e.destination_id or "").strip() for e in filtered_edges}
+    orphaned_iambinding_ids = {
+        str(n.node_id or "").strip()
+        for n in filtered_nodes
+        if str(n.node_id or "").startswith("iambinding:")
+        and str(n.node_id or "").strip() not in incoming_dsts
+    }
+    if orphaned_iambinding_ids:
+        filtered_nodes = [
+            n for n in filtered_nodes
+            if str(n.node_id or "").strip() not in orphaned_iambinding_ids
+        ]
+        filtered_edges = [
+            e for e in filtered_edges
+            if str(e.source_id or "").strip() not in orphaned_iambinding_ids
+        ]
+
     return (
         filtered_nodes,
         filtered_edges,
@@ -1183,6 +1221,13 @@ def run_module(user_args, session):
                 print(f"[*] --cross-sa-project-allowed: cross-project actAs enabled for SA projects: {', '.join(sorted(_cross_project_sa_projects))}")
             else:
                 print("[*] --cross-sa-project-allowed: cross-project actAs enabled for ALL projects (ensure iam.disableCrossProjectServiceAccountUsage is disabled where needed)")
+        _raw_cats = getattr(args, "edge_categories", None)
+        if not _raw_cats:
+            _edge_categories: frozenset[str] = frozenset({"priv_escalation", "sensitive_resource_access"})
+        elif _raw_cats.strip().lower() == "all":
+            _edge_categories = frozenset()  # empty = all categories
+        else:
+            _edge_categories = frozenset(c.strip() for c in _raw_cats.split(",") if c.strip())
         context = OpenGraphBuildContext(
             session=data_source,
             options=OpenGraphBuildOptions(
@@ -1193,6 +1238,7 @@ def run_module(user_args, session):
                 debug=args.debug,
                 cross_project=_cross_project,
                 cross_project_sa_projects=_cross_project_sa_projects,
+                edge_categories=_edge_categories,
             ),
         )
 
@@ -1256,6 +1302,14 @@ def run_module(user_args, session):
             from gcpwn.modules.opengraph.utilities.stage_6_deny_policies import apply_deny_policies
             deny_stats = apply_deny_policies(context)
             context.record_step("deny_policies", deny_stats)
+
+        # Phase 3.7: deduplicate CAP nodes with identical outgoing edge sets.
+        dedup_nodes_removed, dedup_edges_removed = context.builder.dedup_cap_nodes()
+        if dedup_nodes_removed or dedup_edges_removed:
+            print(
+                f"[*] CAP node dedup: merged {dedup_nodes_removed} redundant CAP nodes, "
+                f"removed {dedup_edges_removed} duplicate edges."
+            )
 
         # Phase 4: apply default-mode trim passes.
         nodes = list(context.builder.node_map.values())

@@ -1,6 +1,6 @@
 """Fake-data tests for principal/resource NODE TYPES that the golden snapshot
 doesn't exercise: allUsers / allAuthenticatedUsers pseudo-principals, domain
-principals (+ DOMAIN_MEMBER_OF), WIF principalSet members (+ WIF_PRINCIPAL_IN_POOL),
+principals (+ DOMAIN_MEMBER_OF), WIF principalSet members (+ FederatedPrincipalInPool),
 and the GCPCloudFunction / GCPSecret resource node types from the priv-esc rules.
 All shapes verified empirically against the pipeline.
 """
@@ -62,7 +62,7 @@ def test_wif_principalset_member_and_in_pool_edge():
         stage4=True,
     )
     assert nodes.get(pset) == "GCPPrincipalSet"
-    assert (pset, "WIF_PRINCIPAL_IN_POOL", f"resource:{pool}") in edges
+    assert (pset, "FederatedPrincipalInPool", f"resource:{pool}") in edges
 
 
 def _privesc(permission, resource_type, resource_name):
@@ -80,11 +80,24 @@ def test_cloudfunction_resource_node_type():
     fn = "projects/proj-a/locations/us-central1/functions/fn1"
     nodes, edges = _run(_privesc("cloudfunctions.functions.setIamPolicy", "cloudfunction", fn))
     assert nodes.get(f"resource:{fn}") == "GCPCloudFunction"
-    assert any(k == "CAN_MODIFY_ClOUD_RUN_FUNCTION_IAM" and d == f"resource:{fn}" for _, k, d in edges)
+    assert any(k == "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM" and d == f"resource:{fn}" for _, k, d in edges)
 
 
 def test_secret_resource_node_type():
     secret = "projects/proj-a/secrets/db-password"
-    nodes, edges = _run(_privesc("secretmanager.versions.access", "secrets", secret))
+    tables = {k: [] for k in _TABLE_KEYS}
+    tables["abstract_tree_hierarchy"] = _HIER
+    tables.update(_privesc("secretmanager.versions.access", "secrets", secret))
+    ctx = OpenGraphBuildContext(
+        session=FakeSession(tables),
+        options=OpenGraphBuildOptions(
+            include_all=True,
+            edge_categories=frozenset({"priv_escalation", "sensitive_resource_access"}),
+        ),
+    )
+    build_users_groups_graph(ctx)
+    _run_iam_bindings_stage(ctx)
+    nodes = {n.node_id: n.node_type for n in ctx.builder.node_map.values()}
+    edges = {(e.source_id, e.edge_type, e.destination_id) for e in ctx.builder.edge_map.values()}
     assert nodes.get(f"resource:{secret}") == "GCPSecret"
     assert any(k == "CAN_READ_SECRET_DATA" and d == f"resource:{secret}" for _, k, d in edges)

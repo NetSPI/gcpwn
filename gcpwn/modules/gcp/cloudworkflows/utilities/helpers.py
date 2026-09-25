@@ -48,3 +48,58 @@ class CloudWorkflowsWorkflowsResource(GcpListResource):
             "service_account": str(raw.get("service_account", "") or "").strip(),
             "crypto_key_name": str(raw.get("crypto_key_name", "") or "").strip(),
         }
+
+    def create(self, *, parent: str, workflow_id: str, body: dict) -> dict:
+        """Create a workflow via REST (avoids auto-polling the LRO which needs workflows.operations.get)."""
+        from googleapiclient.discovery import build as _disco_build
+        wf_rest = _disco_build("workflows", "v1", credentials=self.session.credentials, cache_discovery=False)
+        return wf_rest.projects().locations().workflows().create(
+            parent=parent, workflowId=workflow_id, body=body,
+        ).execute()
+
+    def poll_active(self, *, name: str, deadline: float, debug: bool = False) -> bool:
+        """Poll until the workflow reaches ACTIVE state or deadline passes. Returns True if ACTIVE."""
+        import time
+        from google.cloud import workflows_v1
+        client = workflows_v1.WorkflowsClient(credentials=self.session.credentials)
+        while time.time() < deadline:
+            try:
+                wf = client.get_workflow(request=workflows_v1.GetWorkflowRequest(name=name))
+                if wf.state == workflows_v1.Workflow.State.ACTIVE:
+                    return True
+            except Exception as e:
+                if debug:
+                    print(f"  [poll-workflow] GET error: {e}")
+            time.sleep(5)
+        return False
+
+    def delete(self, *, name: str) -> None:
+        """Delete a workflow via REST."""
+        from googleapiclient.discovery import build as _disco_build
+        wf_rest = _disco_build("workflows", "v1", credentials=self.session.credentials, cache_discovery=False)
+        try:
+            wf_rest.projects().locations().workflows().delete(name=name).execute()
+        except Exception:
+            pass
+
+
+class CloudWorkflowsExecutionsResource:
+    """Thin wrapper around the Cloud Workflows Executions API."""
+
+    def __init__(self, session):
+        self.session = session
+
+    def create(self, *, workflow_name: str):
+        """Start a new execution of the given workflow."""
+        from google.cloud.workflows import executions_v1
+        client = executions_v1.ExecutionsClient(credentials=self.session.credentials)
+        return client.create_execution(request=executions_v1.CreateExecutionRequest(
+            parent=workflow_name,
+            execution=executions_v1.Execution(),
+        ))
+
+    def get(self, *, exec_name: str):
+        """Fetch the current state of an execution."""
+        from google.cloud.workflows import executions_v1
+        client = executions_v1.ExecutionsClient(credentials=self.session.credentials)
+        return client.get_execution(request=executions_v1.GetExecutionRequest(name=exec_name))

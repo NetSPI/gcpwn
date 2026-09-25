@@ -75,5 +75,6 @@ def get_project_billing_info(session, project_id: str) -> dict[str, Any] | None:
             api_name="cloudbilling.projects.getBillingInfo",
             resource_name=f"projects/{project_id}",
             service_label="Cloud Billing",
+            project_id=project_id,
         )
         return None

@@ -89,10 +89,6 @@ def _prefixed_models(section: str, *, prefix: str) -> tuple[str, ...]:
     )
 
 
-def get_shared_generative_model_names() -> tuple[str, ...]:
-    return _section_models("shared_generative_models")
-
-
 def get_gemini_model_list() -> tuple[str, ...]:
     return _prefixed_models("shared_generative_models", prefix="models/")
 
@@ -217,10 +213,13 @@ def select_model_candidate(
 
 
 def _prompt_text(session: Any, prompt: str) -> str:
-    if session is not None and hasattr(session, "choice_prompt"):
-        answer = session.choice_prompt(prompt)
-    else:
-        answer = input(prompt)
+    try:
+        if session is not None and hasattr(session, "choice_prompt"):
+            answer = session.choice_prompt(prompt)
+        else:
+            answer = input(prompt)
+    except EOFError:
+        return ""
     return str(answer or "").strip()
 
 
@@ -382,14 +381,6 @@ def _key_name(*, project_id: str, key_id: str, location: str = "global") -> str:
         return text
     return f"projects/{project_id}/locations/{location}/keys/{text}"
 
-
-def get_key_rows(resource, names: list[str], action_dict=None) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for name in names:
-        row = resource.get(name=name, action_dict=action_dict)
-        if isinstance(row, dict) and row:
-            rows.append(row)
-    return rows
 
 
 def key_row_names(resource, rows: list[dict[str, Any]]) -> list[str]:
@@ -597,3 +588,36 @@ class ApiKeysKeysResource:
                     "key_id": extract_path_tail(resource_name_from_value(raw, "name")),
                 },
             )
+
+
+# ---------------------------------------------------------------------------
+# TLS verification state (shared across unauthenticated API key modules)
+# ---------------------------------------------------------------------------
+
+import warnings as _warnings
+
+_VERIFY_TLS = True
+
+
+def set_tls_verification(*, insecure: bool) -> None:
+    global _VERIFY_TLS
+    _VERIFY_TLS = not insecure
+    if insecure:
+        import urllib3
+        _warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def tls_verify() -> bool:
+    return _VERIFY_TLS
+
+
+def prompt_yes_no(session: Any, prompt: str) -> bool:
+    try:
+        if session is not None and hasattr(session, "choice_prompt"):
+            answer = session.choice_prompt(prompt, regex=r"^[yYnN]$")
+        else:
+            answer = input("> " + prompt).strip()
+    except EOFError:
+        return False
+    return str(answer or "").strip().lower() == "y"

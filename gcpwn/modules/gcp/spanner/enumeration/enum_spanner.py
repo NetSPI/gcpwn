@@ -32,7 +32,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Spanner resources (read-only)",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS),
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on Cloud Spanner instances and databases"}},
     )
 

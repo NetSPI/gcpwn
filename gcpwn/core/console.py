@@ -74,9 +74,10 @@ class UtilityTools:
 
     @staticmethod
     def print_403_api_disabled(service_type, project_id):
+        project_part = f"project {project_id}" if project_id else "this project"
         print(
             f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 403:{UtilityTools.RESET}"
-            f"{UtilityTools.RED} {service_type} API does not appear to be enabled for project {project_id}"
+            f"{UtilityTools.RED} {service_type} API does not appear to be enabled for {project_part}"
             f"{UtilityTools.RESET}"
         )
 
@@ -262,6 +263,7 @@ class UtilityTools:
         divider_after_row_indices: set[int] | None = None,
         highlight_prefix: str = "",
         highlight_suffix: str = "",
+        filter_display_fields: bool = True,
     ) -> None:
         indexed_rows = [(index, dict(row)) for index, row in enumerate(data)]
         if sort_key:
@@ -306,7 +308,7 @@ class UtilityTools:
         filtered_fields = [
             field
             for field in fields
-            if str(field or "").strip().lower() not in hidden_path_fields
+            if not filter_display_fields or str(field or "").strip().lower() not in hidden_path_fields
         ]
         if rows:
             def has_value(value: Any) -> bool:
@@ -315,11 +317,17 @@ class UtilityTools:
                 if isinstance(value, str):
                     return bool(value.strip())
                 return True
-            non_empty_fields = [
-                field for field in filtered_fields
-                if any(has_value(row.get(field)) for row in rows)
-            ]
-            fields = non_empty_fields or filtered_fields
+            # Only suppress all-null columns when display filtering is active. In raw SQL
+            # mode (filter_display_fields=False) show every column the query returned,
+            # including all-NULL ones — the user asked for those columns explicitly.
+            if filter_display_fields:
+                non_empty_fields = [
+                    field for field in filtered_fields
+                    if any(has_value(row.get(field)) for row in rows)
+                ]
+                fields = non_empty_fields or filtered_fields
+            else:
+                fields = filtered_fields
         else:
             fields = filtered_fields
         output_format = str(getattr(UtilityTools, "TABLE_OUTPUT_FORMAT", "text") or "text").strip().lower()

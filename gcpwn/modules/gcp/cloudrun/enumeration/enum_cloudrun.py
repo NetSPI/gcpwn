@@ -28,6 +28,7 @@ COMPONENTS = [
               manual_help="Job IDs as LOCATION/JOB_ID or full resource names."),
     Component("worker_pools", CloudRunWorkerPoolsResource, "Cloud Run Worker Pools", "Worker Pools",
               help_text="Enumerate Cloud Run Worker Pools (surfaces serviceAccount per pool)", scope=REGION,
+              supports_iam=False,
               manual_id_arg="worker_pool_ids",
               manual_template=("projects", "{project_id}", "locations", 0, "workerPools", 1),
               manual_error="Invalid worker pool ID format. Use LOCATION/POOL_ID or full resource name.",
@@ -47,7 +48,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Run resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("download", "iam", "get", "debug"),
+        standard_args=("download", "iam", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on Cloud Run services and jobs"},
             "download": {"help": "Download Cloud Run service revision ENV YAML (run.revisions.list + run.revisions.get)."},
@@ -60,13 +61,22 @@ def _download_revision_env(session, args, service_rows):
     revisions_resource = CloudRunRevisionsResource(session)
     service_names = [str(row.get("name") or "").strip() for row in service_rows if isinstance(row, dict) and row.get("name")]
     paths = []
+    def _safe_revisions(service_name):
+        try:
+            return (service_name, revisions_resource.list(parent=service_name))
+        except Exception:
+            return (service_name, None)
+
     listed_by_service = parallel_map(
         service_names,
-        lambda service_name: (service_name, revisions_resource.list(parent=service_name)),
+        _safe_revisions,
         threads=getattr(args, "threads", 3),
         progress_label="Cloud Run Revisions",
     ) if service_names else []
-    for _service_name, revisions in listed_by_service:
+    for item in listed_by_service:
+        if item is None:
+            continue
+        _service_name, revisions = item
         if revisions in ("Not Enabled", None) or not revisions:
             continue
         for revision in revisions:

@@ -43,7 +43,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Tasks resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("download", "iam", "get", "debug"),
+        standard_args=("download", "iam", "get"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on Cloud Tasks queues"}},
     )
 

@@ -58,6 +58,22 @@ def run_module(user_args, session):
     and reported so one failure doesn't abort the rest.
     """
     user_args = list(user_args or [])
+
+    # Intercept --help/-h before any API calls or ledger writes.
+    if "-h" in user_args or "--help" in user_args:
+        print(
+            "enum_google_workspace — orchestrate Google Workspace / Cloud Identity enumeration.\n\n"
+            "Options:\n"
+            "  --resume TOKEN          Resume a previous run (skips already-completed sub-modules)\n"
+            "  --impersonate EMAIL     Admin email to impersonate (overrides workspace_admin_subject config)\n"
+            "  --download-google-drive Download Google Drive contents for each user (opt-in, heavyweight)\n"
+            "  -v / --debug            Verbose output (passed through to sub-modules)\n\n"
+            "Sub-modules run in order (each accepts the same flags via passthrough):\n"
+            "  enum_cloud_identity, enum_admin_roles, enum_org_units, enum_domains,\n"
+            "  enum_mobile_devices, enum_oauth_tokens, enum_group_settings, enum_data_transfers"
+        )
+        return 0
+
     run_id, is_resume = resolve_run_token(user_args)
     sub_args = strip_resume_flag(user_args)  # sub-enumerators' strict parsers reject --resume
     # Google Drive is heavy (per-user content download) -> OFF unless explicitly requested,
@@ -114,6 +130,7 @@ def run_module(user_args, session):
                 f"{UtilityTools.YELLOW}[*] Workspace enumerator {short} failed: "
                 f"{type(exc).__name__}: {exc}{UtilityTools.RESET}"
             )
+            overall = -1  # exception counts as failure; match the result == -1 branch
             had_failure = True
             ledger.mark(short, "failed", error=f"{type(exc).__name__}: {exc}")  # re-runs on resume
     if download_drive:

@@ -97,7 +97,10 @@ class WorkspaceAdminRolesResource:
             status, detail = _http_error_details(exc)
             self.last_error_status = status
             self.last_error_message = detail
-            if status == 403:
+            text = str(exc).lower()
+            # A SA DWD token lacking the requested scope raises RefreshError with
+            # 'unauthorized_client' -- no HTTP status code, but it is a denial.
+            if status in (401, 403) or "unauthorized_client" in text or "login required" in text:
                 print("[*] Admin SDK Directory rolemanagement access denied; skipping admin roles enumeration.")
                 return []
             if status == 404:
@@ -176,7 +179,10 @@ class WorkspaceRoleAssignmentsResource:
             status, detail = _http_error_details(exc)
             self.last_error_status = status
             self.last_error_message = detail
-            if status == 403:
+            text = str(exc).lower()
+            # A SA DWD token lacking the requested scope raises RefreshError with
+            # 'unauthorized_client' -- no HTTP status code, but it is a denial.
+            if status in (401, 403) or "unauthorized_client" in text or "login required" in text:
                 print("[*] Admin SDK Directory rolemanagement access denied; skipping role assignment enumeration.")
                 return []
             if status == 404:

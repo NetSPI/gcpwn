@@ -75,13 +75,21 @@ def _build_hmac_s3_client(access_id: str, secret_key: str):
         )
         return None
 
+    # GCS S3-interop API uses "us" as the SigV4 signing region.
+    # Disable boto3 1.35+ automatic checksum trailers (X-Amz-Trailer + aws-chunked
+    # encoding) which GCS rejects with SignatureDoesNotMatch; use "when_required"
+    # so only explicit checksum-algorithm calls trigger that path.
     return boto3.client(
         "s3",
-        region_name="auto",
+        region_name="us",
         endpoint_url="https://storage.googleapis.com",
         aws_access_key_id=access_id,
         aws_secret_access_key=secret_key,
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            request_checksum_calculation="when_required",
+        ),
     )
      
 class HashableCloudStorageBucket(HashableResourceProxy):
@@ -267,9 +275,17 @@ class CloudStorageHmacKeysResource(_CloudStorageBaseResource):
     @staticmethod
     def save_key(key: HMACKeyMetadata, session: SessionUtility, secret: Optional[str] = None) -> None:
         """Attach a freshly-created secret to the key metadata and persist the row (main thread)."""
-        if key and secret is not None:
-            setattr(key, "secret", secret)
-        CloudStorageHmacKeysResource(session).save([key] if key else [])
+        if not key:
+            return
+        # Convert via _to_dict first: HMACKeyMetadata stores its API fields in
+        # _properties, which resource_to_dict reads.  The `secret` returned by
+        # create_hmac_key is NOT in _properties (one-time return only), so
+        # setattr + save(obj) silently drops it.  Convert to a plain dict here
+        # so the secret column makes it into the INSERT.
+        row = CloudStorageHmacKeysResource._to_dict(key)
+        if secret is not None:
+            row["secret"] = secret
+        CloudStorageHmacKeysResource(session).save([row])
 
     def list_saved_secrets(self):
         """Return previously-captured HMAC keys that have a non-empty secret (usable for XML mode)."""

@@ -92,7 +92,7 @@ def _parse_args(user_args):
         description="Enumerate Google Drive files/sharing and optionally download content",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 

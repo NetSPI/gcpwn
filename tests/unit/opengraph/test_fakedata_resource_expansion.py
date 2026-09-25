@@ -7,14 +7,14 @@ a future refactor silently dropping a whole edge family (e.g. a table dropping
 out of context._ROW_TABLES, or a section being skipped in stage 4).
 
 Edge kinds covered here:
-  - EXISTS_IN_PROJECT          (project -> compute instance topology)
-  - EXECUTES_WITH              (compute instance -> attached service account)
-  - GCP_SERVICE_ACCOUNT_KEY_FOR(iam_sa_keys key node -> service account)
-  - GCP_PRINCIPAL_SET          (serviceAccount -> CRM ServiceAccount principalSet)
-  - WIF_PRINCIPAL_IN_POOL      (WIF principal member -> workload identity pool)
+  - ExistsInProject          (project -> compute instance topology)
+  - RunsAs              (compute instance -> attached service account)
+  - ServiceAccountKeyFor(iam_sa_keys key node -> service account)
+  - MemberOfPrincipalSet          (serviceAccount -> CRM ServiceAccount principalSet)
+  - FederatedPrincipalInPool      (WIF principal member -> workload identity pool)
 
 Not covered (see module docstring blockers / report): WIF_PROVIDER_IN_POOL,
-GCP_FEDERATION_POSSIBLE, and EXISTS_IN_PROJECT for WIF pools/providers. Those
+GCP_FEDERATION_POSSIBLE, and ExistsInProject for WIF pools/providers. Those
 read `workload_identity_pools` / `workload_identity_providers` exclusively
 through context.rows(), whose key->table map (_ROW_TABLES) has no entry for
 those tables, so the rows always come back empty regardless of get_data data.
@@ -57,9 +57,9 @@ def _resource_expansion_tables() -> dict[str, list[dict]]:
     """Representative fake data exercising every supported resource-expansion edge.
 
     A single project-scope IAM binding carries three member kinds:
-      - serviceAccount:<email>   (drives GCP_PRINCIPAL_SET via the CRM principalSet member)
+      - serviceAccount:<email>   (drives MemberOfPrincipalSet via the CRM principalSet member)
       - the CRM ServiceAccount principalSet (creates the CRM target node)
-      - a WIF subject principal    (drives WIF_PRINCIPAL_IN_POOL)
+      - a WIF subject principal    (drives FederatedPrincipalInPool)
     plus cached service tables for the SA key, the SA inventory, and a compute
     instance attached to the SA.
     """
@@ -116,7 +116,7 @@ def _resource_expansion_tables() -> dict[str, list[dict]]:
 def expansion_context():
     tables = _resource_expansion_tables()
     ctx = OpenGraphBuildContext(session=FakeSession(tables), options=OpenGraphBuildOptions())
-    build_users_groups_graph(ctx)   # stage 1: principals + GCP_PRINCIPAL_SET
+    build_users_groups_graph(ctx)   # stage 1: principals + MemberOfPrincipalSet
     _run_iam_bindings_stage(ctx)     # stage 2: IAM bindings (seeds member index)
     build_resource_expansion_graph(ctx)  # stage 4: resource expansion edges
     return ctx
@@ -126,7 +126,7 @@ def test_exists_in_project_edge_for_compute_instance(expansion_context):
     edges = _edges(expansion_context)
     project_node = "resource:projects/proj-a"
     instance_node = f"resource:{_INSTANCE_RESOURCE}"
-    assert (project_node, "EXISTS_IN_PROJECT", instance_node) in edges
+    assert (project_node, "ExistsInProject", instance_node) in edges
     types = _node_types(expansion_context)
     assert types.get(instance_node) == "GCPComputeInstance"
     assert types.get(project_node) == "GCPProject"
@@ -136,7 +136,7 @@ def test_executes_with_edge_instance_to_attached_service_account(expansion_conte
     edges = _edges(expansion_context)
     instance_node = f"resource:{_INSTANCE_RESOURCE}"
     sa_node = f"serviceAccount:{_SA_EMAIL}"
-    assert (instance_node, "EXECUTES_WITH", sa_node) in edges
+    assert (instance_node, "RunsAs", sa_node) in edges
     assert _node_types(expansion_context).get(sa_node) == "GCPServiceAccount"
 
 
@@ -144,20 +144,20 @@ def test_service_account_key_for_edge(expansion_context):
     edges = _edges(expansion_context)
     key_node = f"service_account_key:{_SA_KEY_NAME}"
     sa_node = f"serviceAccount:{_SA_EMAIL}"
-    assert (key_node, "GCP_SERVICE_ACCOUNT_KEY_FOR", sa_node) in edges
+    assert (key_node, "ServiceAccountKeyFor", sa_node) in edges
     assert _node_types(expansion_context).get(key_node) == "GCPServiceAccountKey"
 
 
 def test_gcp_principal_set_edge_service_account_to_crm_set(expansion_context):
     edges = _edges(expansion_context)
     sa_node = f"serviceAccount:{_SA_EMAIL}"
-    assert (sa_node, "GCP_PRINCIPAL_SET", _CRM_PRINCIPAL_SET) in edges
+    assert (sa_node, "MemberOfPrincipalSet", _CRM_PRINCIPAL_SET) in edges
 
 
 def test_wif_principal_in_pool_edge(expansion_context):
     edges = _edges(expansion_context)
     pool_node = f"resource:{_WIF_POOL_RESOURCE}"
-    assert (_WIF_SUBJECT_MEMBER, "WIF_PRINCIPAL_IN_POOL", pool_node) in edges
+    assert (_WIF_SUBJECT_MEMBER, "FederatedPrincipalInPool", pool_node) in edges
     assert _node_types(expansion_context).get(pool_node) == "GCPWorkloadIdentityPool"
 
 
@@ -171,15 +171,15 @@ def test_no_compute_rows_means_no_executes_with_or_exists_in_project():
     _run_iam_bindings_stage(ctx)
     build_resource_expansion_graph(ctx)
     kinds = _edge_kinds(ctx)
-    assert "EXECUTES_WITH" not in kinds
+    assert "RunsAs" not in kinds
     # The compute instance's project edge disappears with the compute rows, but an
-    # enumerated service account still EXISTS_IN_PROJECT (that edge is SA-driven, not
+    # enumerated service account still ExistsInProject (that edge is SA-driven, not
     # compute-driven -- SAs are seeded as project resources so combo target selection
     # can find them). So assert only the COMPUTE-instance project edge is gone.
     exists_in_project_dests = {
-        e.destination_id for e in ctx.builder.edge_map.values() if e.edge_type == "EXISTS_IN_PROJECT"
+        e.destination_id for e in ctx.builder.edge_map.values() if e.edge_type == "ExistsInProject"
     }
     assert not any("/instances/" in dest for dest in exists_in_project_dests)
     # The SA-key and WIF edges are independent of compute and still present.
-    assert "GCP_SERVICE_ACCOUNT_KEY_FOR" in kinds
-    assert "WIF_PRINCIPAL_IN_POOL" in kinds
+    assert "ServiceAccountKeyFor" in kinds
+    assert "FederatedPrincipalInPool" in kinds

@@ -170,7 +170,7 @@ def _group_members(context) -> dict[str, set[str]]:
     """group node id -> set of member principal node ids (from GOOGLE_MEMBER_OF edges)."""
     members: dict[str, set[str]] = {}
     for e in context.builder.edge_map.values():
-        if e.edge_type == "GOOGLE_MEMBER_OF":
+        if e.edge_type == "MemberOf":
             members.setdefault(e.destination_id, set()).add(e.source_id)
     return members
 

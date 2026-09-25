@@ -39,7 +39,7 @@ from gcpwn.modules.gcp.cloudcompute.utilities.helpers import (
 
 _DISCOVERY_SPECS_BY_KEY = {spec.component_key: spec for spec in CLOUDCOMPUTE_DISCOVERY_RESOURCE_SPECS}
 
-_TYPED_COMPONENTS = [
+COMPONENTS = [
     ("projects", "Enumerate Compute project metadata"),
     ("instances", "Enumerate Compute instances"),
     ("instant_snapshots", "Enumerate Compute instant snapshots"),
@@ -59,10 +59,6 @@ _TYPED_COMPONENTS = [
     ("snapshots", "Enumerate Compute snapshots"),
     ("instance_groups", "Enumerate Compute instance groups (zonal + regional)"),
     ("instance_group_managers", "Enumerate Compute instance group managers (zonal + regional)"),
-]
-
-COMPONENTS = [
-    *_TYPED_COMPONENTS,
 ]
 
 
@@ -91,7 +87,7 @@ def _parse_args(user_args):
         description="Enumerate Compute Engine resource-plane objects",
         components=COMPONENTS,
         add_extra_args=_add_extra_args,
-        standard_args=("iam", "get", "download", "debug"),
+        standard_args=("iam", "get", "download"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on supported Compute resources"},
         },
@@ -195,8 +191,8 @@ def _process_nested_existing_resource(
     if not selected.get(selected_key, False):
         return []
 
-    use_cache = not args.get and not args.iam
-    rows = (
+    use_cache = not args.get and not args.iam and not getattr(args, "download", False)
+    cached_rows = (
         get_cached_rows(
             session,
             resource.TABLE_NAME,
@@ -204,6 +200,7 @@ def _process_nested_existing_resource(
             columns=resource.COLUMNS,
         ) or []
     ) if use_cache else []
+    rows = list(cached_rows)
 
     if not rows:
         parent_rows = discovery_rows_by_key.get(parent_component_key) or []
@@ -252,7 +249,7 @@ def _process_nested_existing_resource(
             ),
         )
 
-    if rows and (not use_cache or args.get):
+    if rows and not cached_rows:
         with resource.session.batched_writes():
             resource.save(rows, project_id=project_id)
 
@@ -304,7 +301,7 @@ def _process_existing_resource(
         return []
 
     use_cache = not args.get and not args.iam and not getattr(args, "download", False)
-    rows = (
+    cached_rows = (
         get_cached_rows(
             session,
             resource.TABLE_NAME,
@@ -312,6 +309,7 @@ def _process_existing_resource(
             columns=resource.COLUMNS,
         ) or []
     ) if use_cache else []
+    rows = list(cached_rows)
 
     if not rows:
         print(f"[*] Enumerating {enumeration_label or title}...")
@@ -329,7 +327,7 @@ def _process_existing_resource(
             ),
         )
 
-    if rows and (not use_cache or args.get):
+    if rows and not cached_rows:
         with resource.session.batched_writes():
             resource.save(rows, project_id=project_id)
 
@@ -478,7 +476,7 @@ def _process_discovery_resource(
         return []
 
     use_cache = not args.get and not args.iam and not getattr(args, "download", False)
-    rows = (
+    cached_rows = (
         get_cached_rows(
             session,
             spec.table_name,
@@ -486,6 +484,7 @@ def _process_discovery_resource(
             columns=list(spec.summary_columns),
         ) or []
     ) if use_cache else []
+    rows = list(cached_rows)
 
     if not rows:
         print(f"[*] Enumerating {spec.summary_title}...")
@@ -511,7 +510,7 @@ def _process_discovery_resource(
             ),
         )
 
-    if rows and (not use_cache or args.get):
+    if rows and not cached_rows:
         with resource.session.batched_writes():
             resource.save(rows, project_id=project_id)
 
@@ -965,7 +964,7 @@ def run_module(user_args, session):
                 ),
                 threads=getattr(args, "threads", 3),
                 progress_label="Compute Region Disks",
-            ) if explicit_region_scope and regions else region_disks_resource.list(project_id=project_id, action_dict=action_dict)
+            ) if regions else region_disks_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
         selected=selected,
@@ -1019,7 +1018,7 @@ def run_module(user_args, session):
                 ),
                 threads=getattr(args, "threads", 3),
                 progress_label="Compute Region Instant Snapshots",
-            ) if explicit_region_scope and regions else region_instant_snapshots_resource.list(project_id=project_id, action_dict=action_dict)
+            ) if regions else region_instant_snapshots_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
         selected=selected,
@@ -1111,7 +1110,7 @@ def run_module(user_args, session):
                 ),
                 threads=getattr(args, "threads", 3),
                 progress_label="Compute Resource Policies",
-            ) if explicit_region_scope and regions else resource_policies_resource.list(project_id=project_id, action_dict=action_dict)
+            ) if regions else resource_policies_resource.list(project_id=project_id, action_dict=action_dict)
         ),
         args=args,
         selected=selected,

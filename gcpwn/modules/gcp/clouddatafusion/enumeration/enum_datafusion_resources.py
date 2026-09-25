@@ -38,7 +38,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Data Fusion resources",
         components=component_args(COMPONENTS),
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get"),
     )
 
 

@@ -40,7 +40,7 @@ def _parse_args(user_args):
         description="Enumerate Service Directory resources",
         components=component_args(COMPONENTS),
         add_extra_args=_add_extra_args,
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on namespaces and services"}},
     )
 

@@ -8,10 +8,10 @@ from google.cloud import dataflow_v1beta3
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
 from gcpwn.core.utils.action_recording import record_permissions
+from gcpwn.core.utils.service_runtime import get_bearer_token
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     extract_project_id_from_resource,
-    get_bearer_token,
     region_resolver_for,
 )
 

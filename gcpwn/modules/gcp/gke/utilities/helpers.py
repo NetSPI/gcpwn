@@ -142,5 +142,6 @@ class GkeNodePoolsResource(GcpListResource):
                     "node_pool_id": extract_path_tail(raw.get("name", ""), default=str(raw.get("name", "") or "")),
                     "version": raw.get("version") or "",
                     "initial_node_count": raw.get("initial_node_count") or "",
+                    "config_machine_type": (raw.get("config") or {}).get("machine_type") or "",
                 },
             )

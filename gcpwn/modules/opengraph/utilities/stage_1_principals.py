@@ -178,7 +178,7 @@ def _add_group_membership_edges(
             builder.add_edge(
                 member,
                 group,
-                "GOOGLE_MEMBER_OF",
+                "MemberOf",
                 source=source,
             )
         _print_progress_inline("Group memberships processed", index, total_rows)
@@ -251,8 +251,8 @@ def _add_admin_role_edges(
             if target == admin:
                 continue
             _ensure_principal_node(builder, target)
-            builder.add_edge(admin, target, "CAN_IMPERSONATE", source="workspace_role_assignments")
-            builder.add_edge(admin, target, "CAN_RESET_PASSWORD", source="workspace_role_assignments")
+            builder.add_edge(admin, target, "CanImpersonate", source="workspace_role_assignments")
+            builder.add_edge(admin, target, "CanResetPassword", source="workspace_role_assignments")
 
 
 def _add_domain_wide_delegation_edges(
@@ -302,7 +302,7 @@ def _add_domain_wide_delegation_edges(
         )
         for target in users_by_customer.get(customer, []):
             _ensure_principal_node(builder, target)
-            builder.add_edge(target, tenant_node, "WORKSPACE_MEMBER", source="workspace_users")
+            builder.add_edge(target, tenant_node, "WorkspaceMember", source="workspace_users")
 
     # SA -> DELEGATES_INTO -> tenant, and SA -> DOMAIN_WIDE_DELEG -> every user in it.
     for row in delegation_rows:
@@ -318,13 +318,13 @@ def _add_domain_wide_delegation_edges(
         builder.add_edge(
             sa_node,
             tenant_node,
-            "DELEGATES_INTO",
+            "DelegatesInto",
             source="workspace_delegations",
             admin_subject=str(row.get("admin_subject") or ""),
         )
         for target in users_by_customer.get(customer, []):
             _ensure_principal_node(builder, target)
-            builder.add_edge(sa_node, target, "DOMAIN_WIDE_DELEG", source="workspace_delegations", customer_id=customer)
+            builder.add_edge(sa_node, target, "DomainWideDelegateTo", source="workspace_delegations", customer_id=customer)
 
 
 def _add_group_join_edges(
@@ -378,7 +378,7 @@ def _add_group_join_edges(
         builder.add_edge(
             origin,
             group_node,
-            "CAN_JOIN",
+            "CanJoin",
             source="workspace_group_settings",
             who_can_join=who_can_join,
             allow_external_members=str(allow_external).lower(),
@@ -429,7 +429,7 @@ def _add_drive_share_edges(
         builder.add_edge(
             origin,
             file_node,
-            "CAN_READ",
+            "CanRead",
             source="workspace_drive_files",
             exposure=exposure,
             role=role,
@@ -523,7 +523,7 @@ def _add_domain_wide_membership_edges(builder: OpenGraphBuilder) -> None:
         builder.add_edge(
             src_id,
             dst_id,
-            "DOMAIN_MEMBER_OF",
+            "InDomain",
             source="domain_wide_memberships",
             membership_scope="domain",
         )
@@ -577,13 +577,13 @@ def _add_crm_service_account_principal_set_edges(
             if principal_set_id not in crm_principal_set_nodes:
                 continue
 
-            edge_key = (service_account_id, "GCP_PRINCIPAL_SET", principal_set_id)
+            edge_key = (service_account_id, "MemberOfPrincipalSet", principal_set_id)
             if edge_key in builder.edge_map:
                 continue
             builder.add_edge(
                 service_account_id,
                 principal_set_id,
-                "GCP_PRINCIPAL_SET",
+                "MemberOfPrincipalSet",
                 source="stage_1_principals",
                 principal_set_kind="crm_service_accounts",
                 principal_set_scope_name=scope_name,

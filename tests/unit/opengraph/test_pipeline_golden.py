@@ -67,7 +67,11 @@ def _comprehensive_tables() -> dict[str, list[dict]]:
         ],
         "cloudcompute_instances": [
             {"name": "projects/proj-a/zones/us-central1-a/instances/vm1", "project_id": "proj-a",
-             "service_account_emails": json.dumps(["svc@proj-a.iam.gserviceaccount.com"])},
+             "status": "RUNNING",
+             "service_accounts": json.dumps([{"email": "svc@proj-a.iam.gserviceaccount.com"}])},
+            {"name": "projects/proj-a/zones/us-central1-a/instances/vm2", "project_id": "proj-a",
+             "status": "STOPPED",
+             "service_accounts": json.dumps([{"email": "svc@proj-a.iam.gserviceaccount.com"}])},
         ],
         "cloudfunctions_functions": [],
         "cloudrun_services": [],
@@ -115,11 +119,6 @@ def _parse(block: str, arity: int) -> set[tuple[str, ...]]:
 
 
 GOLDEN_NODES = """
-capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	GCPIamCapability
-capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1	GCPIamCapability
-capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1	GCPIamCapability
-capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1	GCPIamCapability
-capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	GCPIamCapability
 external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPExternalIdentitySource
 group:eng@corp.com	GoogleGroup
 iambinding:projects/proj-a/roles/Custom@project:proj-a	GCPIamSimpleBinding
@@ -134,6 +133,7 @@ resource:projects/123/locations/global/workloadIdentityPools/pool1	GCPWorkloadId
 resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPWorkloadIdentityProvider
 resource:projects/proj-a	GCPProject
 resource:projects/proj-a/zones/us-central1-a/instances/vm1	GCPComputeInstance
+resource:projects/proj-a/zones/us-central1-a/instances/vm2	GCPComputeInstance
 serviceAccount:svc@proj-a.iam.gserviceaccount.com	GCPServiceAccount
 service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	GCPServiceAccountKey
 user:admin@corp.com	GoogleUser
@@ -142,56 +142,43 @@ user:bob@corp.com	GoogleUser
 """
 
 GOLDEN_EDGES = """
-capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1	CREATE_CLOUDBUILD_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1	CREATE_CLOUDRUN_SERVICE_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1	CREATE_CLOUDSCHEDULER_JOB_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1	UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCP_FEDERATION_POSSIBLE	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
+external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	CanFederateWith	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
 group:eng@corp.com	HAS_IAM_BINDING	iambinding:roles/editor@project:proj-a
 iambinding:projects/proj-a/roles/Custom@project:proj-a	CAN_MODIFY_PROJECT_IAM	resource:projects/proj-a
-iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDBUILD_BUILD	capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1
-iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDRUN_SERVICE	capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1
-iambinding:roles/editor@project:proj-a	CAN_CREATE_CLOUDSCHEDULER_JOB	capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1
-iambinding:roles/editor@project:proj-a	CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
-iambinding:roles/editor@project:proj-a	CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
-iambinding:roles/editor@project:proj-a	RESET_COMPUTE_STARTUP_SA	resource:projects/proj-a
 iambinding:roles/editor@project:proj-a	ROLE_EDITOR	resource:projects/proj-a
 iambinding:roles/editor@project:proj-a	ROLE_EDITOR	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-iambinding:roles/editor@project:proj-a	START_COMPUTE_STARTUP_SA	resource:projects/proj-a
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_CREATE_SA_ACCESS_TOKEN	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_CREATE_SA_OIDC_TOKEN	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_IMPERSONATE_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_SIGN_BLOB_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_SIGN_JWT_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/owner@folder:222#src:org:111	ROLE_OWNER	resource:folders/222
 iambinding:roles/owner@org:111	ROLE_OWNER	resource:organizations/111
-iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDBUILD_BUILD	capability:CREATE_CLOUDBUILD_AS_SA@project:proj-a:hop_1
-iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDRUN_SERVICE	capability:CREATE_CLOUDRUN_SERVICE_AS_SA@project:proj-a:hop_1
-iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_CLOUDSCHEDULER_JOB	capability:CREATE_CLOUDSCHEDULER_JOB_AS_SA@project:proj-a:hop_1
-iambinding:roles/owner@project:proj-a#src:org:111	CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
-iambinding:roles/owner@project:proj-a#src:org:111	CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION	capability:UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA@project:proj-a:hop_1
-iambinding:roles/owner@project:proj-a#src:org:111	RESET_COMPUTE_STARTUP_SA	resource:projects/proj-a
 iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a
 iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a/zones/us-central1-a/instances/vm1
+iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a/zones/us-central1-a/instances/vm2
 iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-iambinding:roles/owner@project:proj-a#src:org:111	START_COMPUTE_STARTUP_SA	resource:projects/proj-a
-resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	WIF_PROVIDER_IN_POOL	resource:projects/123/locations/global/workloadIdentityPools/pool1
-resource:projects/proj-a	EXISTS_IN_PROJECT	resource:projects/123/locations/global/workloadIdentityPools/pool1
-resource:projects/proj-a	EXISTS_IN_PROJECT	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
-resource:projects/proj-a	EXISTS_IN_PROJECT	resource:projects/proj-a/zones/us-central1-a/instances/vm1
-resource:projects/proj-a	EXISTS_IN_PROJECT	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-resource:projects/proj-a	RESET_COMPUTE_STARTUP_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-resource:projects/proj-a	START_COMPUTE_STARTUP_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	IdentityProviderInPool	resource:projects/123/locations/global/workloadIdentityPools/pool1
+resource:projects/proj-a	ExistsInProject	resource:projects/123/locations/global/workloadIdentityPools/pool1
+resource:projects/proj-a	ExistsInProject	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
+resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm1
+resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm2
+resource:projects/proj-a	ExistsInProject	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+resource:projects/proj-a/zones/us-central1-a/instances/vm1	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+resource:projects/proj-a/zones/us-central1-a/instances/vm2	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 serviceAccount:svc@proj-a.iam.gserviceaccount.com	HAS_IAM_BINDING	iambinding:projects/proj-a/roles/Custom@project:proj-a
-service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	GCP_SERVICE_ACCOUNT_KEY_FOR	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-user:admin@corp.com	CAN_IMPERSONATE	user:alice@corp.com
-user:admin@corp.com	CAN_IMPERSONATE	user:bob@corp.com
-user:admin@corp.com	CAN_RESET_PASSWORD	user:alice@corp.com
-user:admin@corp.com	CAN_RESET_PASSWORD	user:bob@corp.com
-user:alice@corp.com	GOOGLE_MEMBER_OF	group:eng@corp.com
+service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	ServiceAccountKeyFor	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+user:admin@corp.com	CanImpersonate	user:alice@corp.com
+user:admin@corp.com	CanImpersonate	user:bob@corp.com
+user:admin@corp.com	CanResetPassword	user:alice@corp.com
+user:admin@corp.com	CanResetPassword	user:bob@corp.com
 user:alice@corp.com	HAS_IAM_BINDING	iambinding:roles/owner@folder:222#src:org:111
 user:alice@corp.com	HAS_IAM_BINDING	iambinding:roles/owner@org:111
 user:alice@corp.com	HAS_IAM_BINDING	iambinding:roles/owner@project:proj-a#src:org:111
+user:alice@corp.com	MemberOf	group:eng@corp.com
 user:bob@corp.com	HAS_IAM_BINDING	iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com
 """
+
 
 
 def test_full_pipeline_node_set_is_golden():

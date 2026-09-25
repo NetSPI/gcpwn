@@ -9,21 +9,12 @@ from typing import Any, Iterable
 from google.cloud import resourcemanager_v3
 from google.iam.v1 import iam_policy_pb2
 
-from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.iam_permissions import call_test_iam_permissions
-from gcpwn.core.utils.action_recording import record_permissions as record_action_permissions
+from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.module_helpers import extract_path_tail, module_data_file, read_lines
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
-from gcpwn.modules.gcp.iam.utilities.helpers import (
-    folder_get_iam_policy,
-    folder_set_iam_policy,
-    organization_get_iam_policy,
-    organization_set_iam_policy,
-    project_get_iam_policy,
-    project_set_iam_policy,
-)
 
 
 DEFAULT_TEST_IAM_BATCH_SIZE = 100
@@ -287,131 +278,6 @@ def write_failed_permission_reports(
     return written_paths
 
 
-def _add_iam_member(
-    *,
-    resource_client,
-    resource_name: str,
-    member: str,
-    action_dict: dict[str, Any],
-    brute: bool,
-    role: str | None,
-    debug: bool,
-    get_policy,
-    set_policy,
-    action_scope_key: str,
-    get_permission: str,
-    set_permission: str,
-    resource_label: str,
-):
-    policy_dict: dict[str, Any] = {}
-    additional_binding = {"role": role, "members": [member]}
-
-    if brute:
-        print(f"[*] Overwriting {resource_name} to just be {member}")
-        policy_dict["bindings"] = [additional_binding]
-        policy_dict["version"] = 1
-        policy = policy_dict
-    else:
-        print(f"[*] Fetching current policy for {resource_name}...")
-        policy = get_policy(resource_client, resource_name, debug=debug)
-        if not policy:
-            print(
-                f"{UtilityTools.RED}[X] Exiting because the current policy could not be retrieved. "
-                f"Supply --overwrite to replace the entire {resource_label} IAM policy if needed."
-                f"{UtilityTools.RESET}"
-            )
-            return -1
-        if policy == 404:
-            print(
-                f"{UtilityTools.RED}[X] Exiting because {resource_name} does not exist. Double check the name."
-                f"{UtilityTools.RESET}"
-            )
-            return -1
-
-        action_dict.setdefault(action_scope_key, {}).setdefault(resource_name, set()).add(get_permission)
-        policy_dict["bindings"] = list(policy.bindings)
-        policy_dict["bindings"].append(additional_binding)
-        policy_dict["etag"] = policy.etag
-        policy_dict["version"] = policy.version
-        policy = policy_dict
-
-    print(f"[*] New policy below being added to {resource_name}\n{policy_dict.get('bindings', [])}")
-    status = set_policy(resource_client, resource_name, policy, debug=debug)
-    if not status:
-        return status
-    if status == 404:
-        print(
-            f"{UtilityTools.RED}[X] Exiting because {resource_name} does not exist. Double check the name."
-            f"{UtilityTools.RESET}"
-        )
-        return -1
-
-    action_dict.setdefault(action_scope_key, {}).setdefault(resource_name, set()).add(set_permission)
-    return status
-
-
-def add_project_iam_member(project_client, project_name, member, action_dict, brute=False, role=None, debug=False):
-    return _add_iam_member(
-        resource_client=project_client,
-        resource_name=project_name,
-        member=member,
-        action_dict=action_dict,
-        brute=bool(brute),
-        role=role,
-        debug=bool(debug),
-        get_policy=project_get_iam_policy,
-        set_policy=project_set_iam_policy,
-        action_scope_key="project_permissions",
-        get_permission="resourcemanager.projects.getIamPolicy",
-        set_permission="resourcemanager.projects.setIamPolicy",
-        resource_label="project",
-    )
-
-
-def add_folder_iam_member(folder_client, folder_name, member, action_dict, brute=False, role=None, debug=False):
-    return _add_iam_member(
-        resource_client=folder_client,
-        resource_name=folder_name,
-        member=member,
-        action_dict=action_dict,
-        brute=bool(brute),
-        role=role,
-        debug=bool(debug),
-        get_policy=folder_get_iam_policy,
-        set_policy=folder_set_iam_policy,
-        action_scope_key="folder_permissions",
-        get_permission="resourcemanager.folders.getIamPolicy",
-        set_permission="resourcemanager.folders.setIamPolicy",
-        resource_label="folder",
-    )
-
-
-def add_organization_iam_member(
-    organization_client,
-    organization_name,
-    member,
-    action_dict,
-    brute=False,
-    role=None,
-    debug=False,
-):
-    return _add_iam_member(
-        resource_client=organization_client,
-        resource_name=organization_name,
-        member=member,
-        action_dict=action_dict,
-        brute=bool(brute),
-        role=role,
-        debug=bool(debug),
-        get_policy=organization_get_iam_policy,
-        set_policy=organization_set_iam_policy,
-        action_scope_key="organization_permissions",
-        get_permission="resourcemanager.organizations.getIamPolicy",
-        set_permission="resourcemanager.organizations.setIamPolicy",
-        resource_label="organization",
-    )
-
-
 class _ResourceManagerBaseResource:
     TABLE_NAME = "abstract_tree_hierarchy"
     SERVICE_LABEL = "Resource Manager"
@@ -502,7 +368,7 @@ class _ResourceManagerBaseResource:
 
     def record_permissions(self, action_dict: dict[str, Any], row: dict[str, Any] | Any, permissions: Iterable[str]) -> None:
         key = self.action_key(row)
-        record_action_permissions(
+        record_permissions(
             action_dict,
             permissions=permissions,
             scope_key=self.ACTION_SCOPE_KEY,

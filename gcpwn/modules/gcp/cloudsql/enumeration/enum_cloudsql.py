@@ -43,7 +43,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud SQL resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get"),
     )
 
 
@@ -75,15 +75,17 @@ def run_module(user_args, session):
             print_missing_dependency(component_name="Cloud SQL connections", dependency_name="Instances",
                                      module_name="enum_cloudsql", manual_flags=["--instance-names", "--instance-names-file"])
         else:
-            rows = CloudSqlConnectionsResource(session).list(project_id=project_id, instance_names=targets)
+            conn_resource = CloudSqlConnectionsResource(session)
+            rows = conn_resource.list(project_id=project_id, instance_names=targets)
             UtilityTools.summary_wrapup(project_id, "Cloud SQL Connections", rows,
-                                        CloudSqlConnectionsResource(session).COLUMNS, primary_resource="Connections", primary_sort_key="region")
+                                        conn_resource.COLUMNS, primary_resource="Connections", primary_sort_key="region")
     if sel["configs"]:
         if not targets:
             print_missing_dependency(component_name="Cloud SQL configs", dependency_name="Instances",
                                      module_name="enum_cloudsql", manual_flags=["--instance-names", "--instance-names-file"])
         else:
-            rows = CloudSqlConfigsResource(session).list(project_id=project_id, instance_names=targets)
+            configs_resource = CloudSqlConfigsResource(session)
+            rows = configs_resource.list(project_id=project_id, instance_names=targets)
             UtilityTools.summary_wrapup(project_id, "Cloud SQL Instance Configs", rows,
-                                        CloudSqlConfigsResource(session).COLUMNS, primary_resource="Instances", primary_sort_key="region")
+                                        configs_resource.COLUMNS, primary_resource="Instances", primary_sort_key="region")
     return 1

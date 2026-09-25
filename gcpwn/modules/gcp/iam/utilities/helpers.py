@@ -11,7 +11,6 @@ Two layers live here:
 """
 
 from google.cloud import (
-    compute_v1,
     iam_admin_v1,
     iam_credentials_v1,
 )
@@ -194,6 +193,32 @@ def iam_enable_service_account_key(iam_client, sa_name, debug=False):
         print("[DEBUG] Successfully completed IAM enable_service_account_key ..")
 
     return status
+
+
+def iam_delete_service_account_key(iam_client, key_name, debug=False):
+    """Delete a service account key by its full resource name.
+
+    Returns True on success (the API returns empty). Prints specific errors for
+    403 denials and unexpected failures.
+    """
+    if debug:
+        print(f"[DEBUG] Deleting IAM service account key {key_name} ..")
+    try:
+        request = iam_admin_v1.DeleteServiceAccountKeyRequest(name=key_name)
+        iam_client.delete_service_account_key(request=request)
+    except Forbidden as e:
+        if "does not have iam.serviceAccountKeys.delete" in str(e):
+            UtilityTools.print_403_api_denied("iam.serviceAccountKeys.delete", resource_name=key_name)
+        else:
+            UtilityTools.print_500(key_name, "iam.serviceAccountKeys.delete", e)
+        return None
+    except Exception as e:
+        UtilityTools.print_500(key_name, "iam.serviceAccountKeys.delete", e)
+        return None
+    if debug:
+        print("[DEBUG] Successfully completed IAM delete_service_account_key ..")
+    return True
+
 
 # private_key_data only provided in this APi call so store and use for later
 def iam_generate_service_account_key(iam_client, sa_name, debug=False):
@@ -424,95 +449,6 @@ def iam_generate_id_token(iam_client, sa_name: str, audience: str, include_email
     return None
 
 
-def organization_set_iam_policy(organization_client, organization_name, policy, debug = False):
-    return _set_iam_policy_generic(
-        organization_client,
-        organization_name,
-        policy,
-        permission="resourcemanager.organizations.setIamPolicy",
-        not_found_message=f"[X] 404: Organization {organization_name} does not exist.",
-        debug_label="organizations",
-    )
-
-def folder_set_iam_policy(folder_client, folder_name, policy, debug = False):
-    return _set_iam_policy_generic(
-        folder_client,
-        folder_name,
-        policy,
-        permission="resourcemanager.folders.setIamPolicy",
-        not_found_message=f"[X] 404: Folder {folder_name} does not exist.",
-        debug_label="folders",
-    )
-
-
-def project_set_iam_policy(project_client, project_name, policy, debug = False):
-    return _set_iam_policy_generic(
-        project_client,
-        project_name,
-        policy,
-        permission="resourcemanager.projects.setIamPolicy",
-        not_found_message=f"[X] 404: Project {project_name} does not exist.",
-        debug_label="projects",
-    )
-
-def project_get_iam_policy(project_client, project_name, debug = False):
-    return _get_iam_policy_generic(
-        project_client,
-        project_name,
-        permission="resourcemanager.projects.getIamPolicy",
-        not_found_message=f"[X] 404: Project {project_name} does not exist.",
-        debug_label="projects",
-    )
-
-
-def folder_get_iam_policy(folder_client, folder_name, debug = False):
-    return _get_iam_policy_generic(
-        folder_client,
-        folder_name,
-        permission="resourcemanager.folders.getIamPolicy",
-        not_found_message=f"[X] 404: Folder {folder_name} does not exist.",
-        debug_label="folders",
-    )
-
-
-def organization_get_iam_policy(organization_client, organization_name, debug = False):
-    return _get_iam_policy_generic(
-        organization_client,
-        organization_name,
-        permission="resourcemanager.organizations.getIamPolicy",
-        not_found_message=f"[X] 404: Organization {organization_name} does not exist.",
-        debug_label="organizations",
-    )
-
-
-def instance_set_iam_policy(instance_client, instance_name, project_id, zone_id, policy, debug = False):
-    """setIamPolicy on a Compute instance (zone-scoped request); returns policy / ``404`` / None."""
-    if debug:
-        print(f"[DEBUG] Setting IAM bindings for {instance_name} ...")
-
-    try:
-        zone_set_policy_request_resource = {"policy": policy}
-        request = compute_v1.SetIamPolicyInstanceRequest(
-            project=project_id,
-            resource=instance_name,
-            zone=zone_id,
-            zone_set_policy_request_resource=zone_set_policy_request_resource,
-        )
-        return instance_client.set_iam_policy(request=request)
-    except NotFound as e:
-        if "404" in str(e) and "does not exist" in str(e):
-            print(f"[X] 404: Instance {instance_name} does not exist.")
-        return 404
-    except Forbidden as e:
-        if "does not have compute.instances.setIamPolicy" in str(e):
-            print("[X] 403: The user does not have compute.instances.setIamPolicy permissions")
-    except Exception as e:
-        print("The compute.instances.setIamPolicy operation failed for unexpected reasons. See below:")
-        print(str(e))
-    if debug:
-        print("[DEBUG] Successfully completed instances setIamPolicy ..")
-    return None
-
 def bucket_set_iam_policy(storage_client, bucket_name, policy, debug = False):
     """setIamPolicy on a GCS bucket via the storage client; returns policy / ``404`` / None."""
     if debug:
@@ -569,50 +505,6 @@ def bucket_get_iam_policy(storage_client, bucket_name, debug = False):
 
 
 
-
-
-
-
-def compute_instance_get_iam_policy(instance_client, project_id, instance_name, zone_id, debug = False):
-    """getIamPolicy on a Compute instance (zone-scoped request); returns policy / ``404`` / None."""
-    if debug:
-        print(f"[DEBUG] Getting IAM bindings for {instance_name} ...")
-   
-    instances_iam_policy = None
-
-    try:
-        request = compute_v1.GetIamPolicyInstanceRequest(
-            project=project_id,
-            resource=instance_name,
-            zone=zone_id,
-        )
-
-        # Make the request
-        instances_iam_policy = instance_client.get_iam_policy(request=request)
-
-
-    except NotFound as e:
-        if "404" in str(e) and "does not exist" in str(e):
-            print(f"[X] 404: Instance {instance_name} does not exist.")
-
-        return 404
-
-    except Forbidden as e:
-        if "does not have compute.instances.getIamPolicy" in str(e):
-            print("[X] 403: The user does not have compute.instances.getIamPolicy permissions")
-
-    except Exception as e:
-        print("The compute.instances.getIamPolicy operation failed for unexpected reasons. See below:")
-        print(str(e))
-
-    if debug:
-        print("[DEBUG] Successfully completed instances getIamPolicy ..")
-
-    return instances_iam_policy
-
-
-
-
 class HashableCustomRole(HashableResourceProxy):
     """Hashable wrapper for a custom role that normalizes its launch ``stage`` to a label.
 
@@ -664,8 +556,8 @@ class HashableCustomRole(HashableResourceProxy):
         try:
             if self.role_stage:
                 setattr(self._custom_role, "stage", self.role_stage)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Could not set stage attribute on role: {e}")
 
 
 class IAMServiceAccountsResource:
@@ -709,10 +601,14 @@ class IAMServiceAccountsResource:
             )
             service_account_list = list(self.client.list_service_accounts(request=request))
         except Forbidden as e:
-            if "does not have iam.serviceAccounts.list" in str(e):
-                print("[X] 403: The user does not have iam.serviceAccounts.list permissions")
-            elif is_api_disabled_error(e):
+            if is_api_disabled_error(e):
                 print("[X] 403: Identity and Access Management (IAM) API has not been used or enabled")
+            else:
+                # GCP error message format: "Permission 'iam.serviceAccounts.list' denied on resource '...'"
+                UtilityTools.print_403_api_denied("iam.serviceAccounts.list", resource_name=f"projects/{project_id}")
+            return None
+        except NotFound:
+            print(f"[X] 404: Project '{project_id}' was not found.")
             return None
         except Exception as e:
             print("The iam.serviceAccounts.list operation failed for unexpected reasons. See below:")
@@ -740,6 +636,8 @@ class IAMServiceAccountsResource:
                 print("[X] 403: The user does not have iam.serviceAccounts.get permissions")
             elif is_api_disabled_error(e):
                 print("[X] 403: Identity and Access Management (IAM) API has not been used or enabled")
+        except NotFound:
+            print(f"[X] 404: Service account '{email}' was not found.")
         except Exception as e:
             print("The iam.serviceAccounts.get operation failed for unexpected reasons. See below:")
             print(str(e))
@@ -762,6 +660,8 @@ class IAMServiceAccountsResource:
         except Forbidden as e:
             if "does not have iam.serviceAccounts.list" in str(e):
                 print("[X] 403: The user does not have iam.serviceAccounts.list permissions")
+        except NotFound:
+            print(f"[X] 404: Service account '{name}' was not found.")
         except Exception as e:
             print("The iam.serviceAccounts.list operation failed for unexpected reasons. See below:")
             print(str(e))
@@ -781,6 +681,8 @@ class IAMServiceAccountsResource:
         except Forbidden as e:
             if "does not have iam.serviceAccounts.get" in str(e):
                 print("[X] 403: The user does not have iam.serviceAccounts.get permissions")
+        except NotFound:
+            print(f"[X] 404: Service account key '{key_name}' was not found.")
         except Exception as e:
             print("The iam.serviceAccounts.get operation failed for unexpected reasons. See below:")
             print(str(e))
@@ -939,6 +841,8 @@ class IAMCustomRolesResource:
                 print(f"{UtilityTools.RED}[X] 403: iam.roles.list was not permitted for {parent}{UtilityTools.RESET}")
             else:
                 print(f"{UtilityTools.RED}[X] 403: iam.roles.list failed for {parent}{UtilityTools.RESET}")
+        except NotFound:
+            print(f"[X] 404: Resource '{parent}' was not found.")
         except Exception as e:
             print("The iam.roles.list operation failed for unexpected reasons. See below:")
             print(str(e))

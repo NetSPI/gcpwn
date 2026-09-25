@@ -124,7 +124,7 @@ class StorageTransferJobsResource:
                 project_id=self.project_id,
             )
 
-    def save(self, rows: Iterable[dict[str, Any]], *, project_id: str) -> None:
+    def save(self, rows: Iterable[dict[str, Any]], *, project_id: str, location: str | None = None, **_) -> None:
         for row in rows or []:
             payload = row if isinstance(row, dict) else resource_to_dict(row)
             save_to_table(

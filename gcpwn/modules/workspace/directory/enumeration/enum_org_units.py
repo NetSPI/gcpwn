@@ -47,7 +47,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace organizational units (Admin SDK Directory API)",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 
@@ -83,8 +83,8 @@ def run_module(user_args, session):
     # The Directory selector (`--directory-customer`, default `my_customer`) is used
     # for the API call; the resolved directoryCustomerId is used to scope storage.
     org_units = org_units_resource.list(
-        customer=str(args.directory_customer or customer_id or "my_customer"),
-        org_unit_type=str(getattr(args, "org_unit_type", "all") or "all"),
+        customer=str(args.directory_customer or customer_id),
+        org_unit_type=str(args.org_unit_type),
     )
     UtilityTools.dlog(
         debug,

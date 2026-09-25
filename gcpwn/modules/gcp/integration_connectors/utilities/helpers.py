@@ -7,9 +7,9 @@ import requests as _rlib
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
+from gcpwn.core.utils.service_runtime import get_bearer_token
 from gcpwn.core.utils.module_helpers import (
     extract_project_id_from_resource,
-    get_bearer_token,
     static_locations,
 )
 
@@ -68,18 +68,6 @@ def delete_connection(token: str, name: str) -> tuple[int, dict]:
         return resp.status_code, resp.json()
     except Exception:
         return resp.status_code, {"_raw": resp.text[:300]}
-
-
-def list_connector_versions(token: str, project_id: str, provider: str = "default", connector: str = "http") -> list[dict]:
-    url = (
-        f"{_CONN_BASE}/projects/{project_id}/locations/global"
-        f"/providers/{provider}/connectors/{connector}/versions"
-    )
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = _rlib.get(url, headers=headers, timeout=15)
-    if resp.status_code == 200:
-        return resp.json().get("connectorVersions", [])
-    return []
 
 
 def _normalize_connection(c: dict, location: str) -> dict:
@@ -153,6 +141,15 @@ class ConnectionsResource(GcpListResource):
             scope_label=project_id,
         )
         return rows
+
+    def get(self, name: str) -> dict | None:
+        return get_connection(get_bearer_token(self.session), name)
+
+    def create(self, project_id: str, region: str, conn_id: str, body: dict) -> tuple[int, dict]:
+        return create_connection(get_bearer_token(self.session), project_id, region, conn_id, body)
+
+    def delete(self, name: str) -> tuple[int, dict]:
+        return delete_connection(get_bearer_token(self.session), name)
 
     def test_iam_permissions(self, *, resource_id, action_dict=None):
         if not self.TEST_IAM_PERMISSIONS:

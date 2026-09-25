@@ -85,7 +85,7 @@ def _parse_args(user_args):
         description="Enumerate Batch resources (read-only)",
         components=component_args(COMPONENTS),
         add_extra_args=_add_extra_args,
-        standard_args=("download", "get", "debug"),
+        standard_args=("iam", "download", "get"),
     )
 
 

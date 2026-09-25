@@ -59,19 +59,3 @@ def test_sugar_supports_multiple_subject_groups():
     assert out["combo_hop"]["hops"][0]["node_mode"] == "capability"
     # target_edge omitted -> defaults to the rule name
     assert out["combo_hop"]["edge_to_target"] == "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA"
-
-
-def test_verbose_rule_passes_through_untouched():
-    verbose = {
-        "multi_permission_type": "complex",
-        "requires_groups": [{"id": "g", "permissions": ["x"]}],
-        "combo_hop": {"edge_to_target": "E", "hops": []},
-    }
-    assert _desugar_multi_permission_rule("R", verbose) is verbose
-
-
-def test_match_paths_rule_is_left_for_the_full_parser():
-    rule = {"match_paths": [{"id": "p", "requires_groups": []}],
-            "subject_groups": [{"permissions": ["x"]}], "act_as": {"permissions": ["y"]}}
-    # sugar keys present but match_paths wins -> untouched (no accidental double-expansion)
-    assert _desugar_multi_permission_rule("R", rule) is rule

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_shared_helpers import (
     BindingPlusScopeEntry,
@@ -101,9 +100,3 @@ def make_binding_entry(
         condition_name_prefixes=frozenset(),
         condition_name_equals=frozenset(),
     )
-
-
-@pytest.fixture
-def binding_entry_factory():
-    """Fixture form of :func:`make_binding_entry` for tests that prefer injection."""
-    return make_binding_entry

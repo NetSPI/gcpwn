@@ -352,6 +352,51 @@ def test_nested_manual_parent_prefers_enumerated_row_to_keep_filter_fields():
     assert len(out["child"]) == 1
 
 
+def test_nested_manual_parent_stub_bypasses_parent_filter():
+    """Regression: when a manual parent name has no enumerated row (stub), it must
+    bypass parent_filter so explicit names are never silently dropped.
+
+    Before the fix, ``parent_filter`` was applied unconditionally to all rows in
+    parent_source. A stub ``{"name": "parents/m"}`` (len==1, no extra fields) would
+    fail any filter that checks e.g. ``row.get("format_")``, silently producing zero
+    children even though the user explicitly named the parent.
+    """
+    parent_cls = make_resource_cls(
+        table_name="parents_tbl", columns=("name", "kind"),
+        # No get_returns -> parent is NOT hydrated; stub will be used
+    )
+    child_cls = make_resource_cls(
+        table_name="children",
+        list_returns={"parents/m": [{"name": "parents/m/children/c"}]},
+    )
+    parent = Component(key="parent", resource_cls=parent_cls, title="Parents",
+                       primary_resource="parent", scope=PROJECT,
+                       manual_id_arg="parent_ids")
+
+    filter_calls: list[dict] = []
+
+    def _strict_filter(row):
+        """Rejects any row without a 'kind' field (including stubs)."""
+        filter_calls.append(dict(row))
+        return row.get("kind") == "good"
+
+    child = Component(key="child", resource_cls=child_cls, title="Children",
+                      primary_resource="child", scope=NESTED, parent_key="parent",
+                      parent_filter=_strict_filter)
+
+    session = FakeSession()
+    # Supply manual parent name without --get -> no full row -> stub used
+    args = make_args(child=True, parent_ids="parents/m", parent_ids_file=None)
+    out = run_components(session, args, components=[parent, child], column_name="col")
+
+    # The child must have been listed: stub bypassed the filter
+    assert [c["parent"] for c in child_cls.instances[0].list_calls] == ["parents/m"], (
+        "Explicit manual parent 'parents/m' must reach the API even though "
+        "its stub row has no 'kind' field to pass the filter."
+    )
+    assert len(out["child"]) == 1
+
+
 # --------------------------------------------------------------------------- #
 # enrich_fn
 # --------------------------------------------------------------------------- #
@@ -634,6 +679,56 @@ def test_not_enabled_listing_produces_no_rows():
     session = FakeSession()
     out = run_components(session, make_args(), components=[comp], column_name="col")
     assert out["d"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Regression: NESTED scope resource.list() exception must not crash the loop
+# with TypeError: cannot unpack non-iterable NoneType object
+# --------------------------------------------------------------------------- #
+def test_nested_scope_worker_exception_yields_empty_batch_not_type_error():
+    """When resource.list() raises for some parents in NESTED scope, those parents
+    must produce an empty batch instead of crashing the for-loop that unpacks results.
+
+    Root cause: parallel_map converts worker exceptions to bare None; callers that
+    pass a tuple-returning lambda then fail with TypeError when iterating. The fix
+    wraps the lambda in _safe_nested_list which always returns (parent, result|None).
+    """
+    parent_rows = [{"name": "parents/good"}, {"name": "parents/bad"}]
+    parent_cls = make_resource_cls(table_name="ptbl", list_returns={"global": parent_rows})
+
+    class PartiallyFailingResource:
+        TABLE_NAME = "children"
+        COLUMNS = ["name"]
+        TEST_IAM_PERMISSIONS = ()
+        instances: list = []
+
+        def __init__(self, session):
+            self.session = session
+            PartiallyFailingResource.instances.append(self)
+
+        def list(self, *, parent=None, project_id=None, location=None, action_dict=None, **kw):
+            if parent == "parents/bad":
+                raise RuntimeError("simulated API error for this parent")
+            return [{"name": f"{parent}/c1"}]
+
+        def save(self, rows, *, project_id=None, location=None, **kw):
+            pass
+
+    parent_comp = Component(key="parent", resource_cls=parent_cls, title="Parents",
+                            primary_resource="parent", scope=PROJECT)
+    child_comp = Component(key="child", resource_cls=PartiallyFailingResource,
+                           title="Children", primary_resource="child",
+                           scope=NESTED, parent_key="parent")
+
+    session = FakeSession()
+    # Must NOT raise TypeError: cannot unpack non-iterable NoneType object
+    out = run_components(session, make_args(), components=[parent_comp, child_comp],
+                         column_name="col")
+
+    assert "child" in out
+    # good parent produced one child; bad parent's exception was swallowed → empty batch
+    assert len(out["child"]) == 1
+    assert out["child"][0]["name"] == "parents/good/c1"
 
 
 if __name__ == "__main__":  # pragma: no cover

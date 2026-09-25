@@ -1,4 +1,3 @@
-# TODO add a throttling mechanism
 # All credit to https://github.com/RhinoSecurityLabs/GCPBucketBrute/blob/master/gcpbucketbrute.py
 import argparse
 import multiprocessing
@@ -13,11 +12,6 @@ from gcpwn.modules.gcp.cloudstorage.utilities.helpers import (
     CloudStorageBucketsResource,
 )
 
-def outprint(data='', file_path='', normal_print=''):
-    with open(file_path, 'a+') as f:
-        f.write('{}\n'.format(data))
-
-    normal_print(data)
 
 def generate_bucket_permutations(keyword, all_tlds = False):
     permutation_templates = [
@@ -29,7 +23,7 @@ def generate_bucket_permutations(keyword, all_tlds = False):
         '{permutation}{keyword}'
     ]
     permutations_path = module_data_file(__file__, "..", "utilities", "data", "gcpbucketbrute_permutations.txt")
-    with open(permutations_path, 'r') as f:
+    with open(permutations_path, encoding="utf-8") as f:
         permutations = f.readlines()
         buckets = []
         for perm in permutations:
@@ -42,7 +36,7 @@ def generate_bucket_permutations(keyword, all_tlds = False):
     if all_tlds:
         # Try every TLD
         tld_path = module_data_file(__file__, "..", "utilities", "data", "top_level_domains.txt")
-        with open(tld_path, 'r') as f:
+        with open(tld_path, encoding="utf-8") as f:
             tlds = f.readlines()
             for tld in tlds:
                 tld = tld.strip().lower()
@@ -65,7 +59,7 @@ def generate_bucket_permutations(keyword, all_tlds = False):
 
 def read_wordlist(filename):
     try:
-        file = open(filename, 'r')
+        file = open(filename, encoding="utf-8")
         lines = file.read().splitlines()
         file.close()
         return lines
@@ -97,9 +91,11 @@ def run_module(user_args, session):
     group.add_argument('-w', '--wordlist', required=False, default=None, help='The path to a wordlist file')
     parser.add_argument('-s', '--subprocesses', required=False, default=5, type=int, help='The amount of subprocesses to delegate work to for enumeration. Default: 5. This is essentially how many threads you want to run the script with, but it is using subprocesses instead of threads.')
     # add later check code was causing issues
-    parser.add_argument('-o', '--out-file', required=False, default=None, help='The path to a log file to write the scan results to. The file will be created if it does not exist and will append to it if it already exists. By default output will only print to the screen.')
-    
+    parser.add_argument('-o', '--out-file', required=False, default=None, help='Not yet implemented; reserved for future file logging.')
+
     args = parser.parse_args(user_args)
+    if args.out_file:
+        print("[!] --out-file is not yet implemented; results will only be printed to the screen.")
     
     # Only immplementing unauthetnicated right now
     client = None
@@ -122,14 +118,15 @@ def run_module(user_args, session):
     elif args.check:
         buckets = args.check
     elif args.check_list:
-        with sys.stdin if args.check_list == '-' else open(args.check_list, 'r') as fd:
+        with sys.stdin if args.check_list == '-' else open(args.check_list, encoding="utf-8") as fd:
             buckets = fd.read().splitlines()
 
     start_time = time.time()
 
-    for i in range(0, args.subprocesses):
-        start = int(len(buckets) / args.subprocesses * i)
-        end = int(len(buckets) / args.subprocesses * (i+1))
+    n = args.subprocesses
+    for i in range(0, n):
+        start = len(buckets) * i // n
+        end = len(buckets) * (i + 1) // n
         permutation_list = buckets[start:end]
         subproc = Worker(client,permutation_list, args.authenticated, throttle = args.throttle, debug = args.debug)
         subprocesses.append(subproc)
@@ -158,6 +155,7 @@ def run_module(user_args, session):
             print('\nScanned {} potential buckets in {} second(s).'.format(len(buckets), d.second))
 
     print('\nGracefully exiting!')
+    return 1
  
 
 class Worker(multiprocessing.Process):

@@ -1,7 +1,6 @@
 """Enumerate Integration Connector connections.
 
 Records connector type, state, and the serviceAccount each connection runs as.
-Records connector type, state, and the serviceAccount each connection runs as.
 The connector runtime can only make predefined API calls for its connector type
 (Pub/Sub, BQ, GCS, etc.) — not arbitrary Google APIs.
 
@@ -16,12 +15,10 @@ import json
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
-from gcpwn.core.utils.module_helpers import get_bearer_token
 from gcpwn.core.utils.service_runtime import DownloadBudget, parse_component_args
 from gcpwn.modules.gcp.integration_connectors.utilities.helpers import (
     ConnectionsResource,
     _DEFAULT_REGIONS,
-    get_connection,
 )
 
 
@@ -54,7 +51,7 @@ def _parse_args(user_args):
         description="Enumerate Integration Connector connections across regions",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "debug"),
+        standard_args=("iam", "get"),
     )
 
 
@@ -64,7 +61,7 @@ def _region_resolver(session, args):
     if getattr(args, "regions_list", None):
         return [r.strip() for r in args.regions_list.split(",") if r.strip()]
     if getattr(args, "regions_file", None):
-        with open(args.regions_file) as f:
+        with open(args.regions_file, encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip()]
     return _DEFAULT_REGIONS
 
@@ -91,7 +88,7 @@ def _download_connections(session, project_id: str, rows: list[dict]) -> None:
     (list responses may omit sensitive credential sub-fields).
     """
     budget = DownloadBudget(session, label="connector connection configs")
-    tok = get_bearer_token(session)
+    resource = ConnectionsResource(session)
     downloaded = 0
 
     for row in rows:
@@ -102,7 +99,7 @@ def _download_connections(session, project_id: str, rows: list[dict]) -> None:
             continue
         location = row.get("location", "")
         connection_id = row.get("connection_id", "") or name.rsplit("/", 1)[-1]
-        full = get_connection(tok, name)
+        full = resource.get(name)
         if full is None:
             print(f"{UtilityTools.YELLOW}[*] Could not fetch full JSON for {connection_id} — skipping.{UtilityTools.RESET}")
             continue

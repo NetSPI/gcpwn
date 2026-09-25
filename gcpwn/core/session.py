@@ -299,8 +299,9 @@ class SessionUtility:
 
         expiry_timestamp = auth_json.get("expiry")
         if credentials.expired and expiry_timestamp:
-            expiry_datetime = datetime.fromisoformat(expiry_timestamp.rstrip('Z'))
-            if expiry_datetime < datetime.now(timezone.utc).replace(tzinfo=None) and credentials.token:
+            ts = expiry_timestamp.rstrip('Z')
+            expiry_datetime = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
+            if expiry_datetime < datetime.now(timezone.utc) and credentials.token:
                 print(
                     f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Expired Credentials. "
                     f"Timestamp expiration for the access_token was {expiry_datetime}. "
@@ -416,9 +417,29 @@ class SessionUtility:
             if self.credentials is None:
                 print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] There was an error loading your credentials. These credentials might not work/be passed onto the service{UtilityTools.RESET}")
                 return -1
-            else:
-                print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
-                return 1
+
+            # Apply implicit delegation chain when configured for this credential.
+            delegates_raw = cred.get("delegates")
+            if delegates_raw and self.credentials is not None:
+                try:
+                    from google.auth import impersonated_credentials as _imp_creds
+                    delegates_list = json.loads(delegates_raw)
+                    if delegates_list:
+                        target = delegates_list[-1]
+                        intermediaries = delegates_list[:-1]
+                        self.credentials = _imp_creds.Credentials(
+                            source_credentials=self.credentials,
+                            target_principal=target,
+                            target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                            delegates=intermediaries,
+                        )
+                        chain_str = " → ".join([self.email or credname] + delegates_list)
+                        print(f"{UtilityTools.GREEN}[*] Implicit delegation active: {chain_str}{UtilityTools.RESET}")
+                except Exception as _exc:
+                    print(f"[X] Failed to apply implicit delegation chain: {_exc}")
+
+            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
+            return 1
 
         except Exception:
             print(f"[X] Credentials {credname} could not be assumed.")
@@ -506,7 +527,7 @@ class SessionUtility:
             else:
                 print("[*] Project ID of credentials is Unknown. Set it via workspace with `projects set <project_id>`.")
             
-            self.data_master.insert_creds(self.workspace_id, credname, type_of_cred, project_id, serialized_creds, email = email, scopes = str(scopes)) 
+            self.data_master.insert_creds(self.workspace_id, credname, type_of_cred, project_id, serialized_creds, email = email, scopes = str(scopes if scopes is not None else []))
             if project_id and project_id != "Unknown":
                 self.insert_data('abstract_tree_hierarchy', {"project_id":project_id,"name":"Unknown"}, only_if_new_columns = ["project_id"])
 
@@ -515,7 +536,7 @@ class SessionUtility:
 
             # Assume the creds we just inserted
 
-            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Credentials successfuly added{UtilityTools.RESET}") 
+            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Credentials successfully added{UtilityTools.RESET}") 
 
             if assume:
                 self.load_stored_creds(credname, tokeninfo_check = tokeninfo_check)
@@ -525,7 +546,7 @@ class SessionUtility:
             print(traceback.format_exc())
 
     # https://google-auth.readthedocs.io/en/master/reference/google.oauth2.service_account.html
-    # Add service account. If successfull add to database
+    # Add service account. If successful add to database
     def add_service_account(self, filename, credname, email = None, sa_info = None, assume = False, refresh_attempt = False):
         """Register a service-account key under credname and store it in the DB.
 
@@ -539,13 +560,16 @@ class SessionUtility:
             None on duplicate credname; otherwise no explicit value.
         """
         if not refresh_attempt and self.data_master.get_credential(self.workspace_id, credname):
-            print(f"[X] Apologies, {credname} already exists. Try again with a new credname.")
+            if assume:
+                self.load_stored_creds(credname)
+            else:
+                print(f"[X] Apologies, {credname} already exists. Try again with a new credname.")
             return None
 
         if sa_info:
             serialized_creds = json.loads(sa_info)
         else:
-            with open(filename) as handle:
+            with open(filename, encoding="utf-8") as handle:
                 serialized_creds = json.load(handle)
 
         project_id = serialized_creds.get("project_id", "Unknown")
@@ -563,7 +587,7 @@ class SessionUtility:
                 
         self.data_master.insert_creds(self.workspace_id, credname, "service", project_id, json.dumps(serialized_creds), email = email, scopes = scopes) 
    
-        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Credentials successfuly added{UtilityTools.RESET}") 
+        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Credentials successfully added{UtilityTools.RESET}") 
 
         if assume:
             
@@ -639,6 +663,9 @@ class SessionUtility:
             (scopes, email) tuple, or (None, None) for service creds / failures.
         """
         cred = self.data_master.get_credential(self.workspace_id, credname)
+        if cred is None:
+            print(f"[X] Credential '{credname}' not found.")
+            return None, None
         if cred["credtype"] != "service":
             access_token = json.loads(cred["session_creds"])["token"]
             scopes, email = self.call_tokeninfo(access_token)
@@ -745,12 +772,11 @@ class SessionUtility:
 
         if update_only:
             save_data["primary_keys_to_match"]["workspace_id"] = self.workspace_id
-            self.data_master.save_service_row(table_name, update_data=save_data)
-            return
+            return self.data_master.save_service_row(table_name, update_data=save_data)
 
         save_payload = {key: str(value) for key, value in save_data.items()}
         save_payload["workspace_id"] = self.workspace_id
-        self.data_master.save_service_row(table_name, save_payload, **save_kwargs)
+        return self.data_master.save_service_row(table_name, save_payload, **save_kwargs)
 
     # Project ID None when more than one is specified
     def insert_actions(
@@ -827,11 +853,12 @@ class SessionUtility:
         )
 
     def execute_sql(self, query: str, *, db: str = "service", fetch_limit: int = 200) -> dict[str, Any]:
-        """Run a raw read-only SQL query against one of the DBs (interactive `data` cmd).
+        """Run an arbitrary SQL query against one of the DBs (interactive `data` cmd).
 
-        NOT workspace-scoped automatically -- the query is passed through as-is, so
-        the caller is responsible for any workspace_id filter. Results are capped at
-        fetch_limit rows. Main-thread only.
+        Supports SELECT/INSERT/UPDATE/DELETE; DDL and control-plane table writes are
+        blocked. NOT workspace-scoped automatically -- the query is passed through
+        as-is, so the caller is responsible for any workspace_id filter. Results are
+        capped at fetch_limit rows. Main-thread only.
         """
         return self.data_master.execute_sql(query, db=db, fetch_limit=fetch_limit)
 
@@ -1207,42 +1234,43 @@ class SessionUtility:
         if not customer_id:
             customer_id = "unknown"
 
-        for email in sorted(discovered_user_emails - known_user_emails):
-            self.insert_data(
-                "workspace_users",
-                {
-                    "customer_id": customer_id,
-                    "email": email,
-                    "user_id": "",
-                    "display_name": email,
-                    "raw_json": json.dumps(
-                        {"source": "iam_allow_policies", "discovered_member": f"user:{email}"},
-                        ensure_ascii=False,
-                    ),
-                },
-                only_if_new_columns=["customer_id", "email"],
-            )
+        with self.batched_writes():
+            for email in sorted(discovered_user_emails - known_user_emails):
+                self.insert_data(
+                    "workspace_users",
+                    {
+                        "customer_id": customer_id,
+                        "email": email,
+                        "user_id": "",
+                        "display_name": email,
+                        "raw_json": json.dumps(
+                            {"source": "iam_allow_policies", "discovered_member": f"user:{email}"},
+                            ensure_ascii=False,
+                        ),
+                    },
+                    only_if_new_columns=["customer_id", "email"],
+                )
 
-        for email in sorted(discovered_group_emails - known_group_emails):
-            group_name = f"groups/discovered/{email}"
-            self.insert_data(
-                "workspace_groups",
-                {
-                    "customer_id": customer_id,
-                    "name": group_name,
-                    "email": email,
-                    "display_name": email,
-                    "description": "",
-                    "labels": "",
-                    "create_time": "",
-                    "update_time": "",
-                    "raw_json": json.dumps(
-                        {"source": "iam_allow_policies", "discovered_member": f"group:{email}"},
-                        ensure_ascii=False,
-                    ),
-                },
-                only_if_new_columns=["customer_id", "name"],
-            )
+            for email in sorted(discovered_group_emails - known_group_emails):
+                group_name = f"groups/discovered/{email}"
+                self.insert_data(
+                    "workspace_groups",
+                    {
+                        "customer_id": customer_id,
+                        "name": group_name,
+                        "email": email,
+                        "display_name": email,
+                        "description": "",
+                        "labels": "",
+                        "create_time": "",
+                        "update_time": "",
+                        "raw_json": json.dumps(
+                            {"source": "iam_allow_policies", "discovered_member": f"group:{email}"},
+                            ensure_ascii=False,
+                        ),
+                    },
+                    only_if_new_columns=["customer_id", "name"],
+                )
 
         # Return union of known + discovered users for interactive member prompts.
         return sorted(known_user_emails.union(discovered_user_emails))

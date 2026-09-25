@@ -2156,6 +2156,8 @@
         "name",
         "environment_id",
         "state",
+        "dag_gcs_prefix",
+        "worker_service_account",
         "config_gke_cluster",
         "config_airflow_uri",
         "raw_json"
@@ -3278,7 +3280,9 @@
         "state",
         "service_account",
         "accelerator_type",
-        "tensorflow_version"
+        "tensorflow_version",
+        "metadata",
+        "raw_json"
       ],
       "primary_keys": [
         "project_id",
@@ -3373,34 +3377,359 @@
         "project_id",
         "name"
       ]
+    },
+    {
+      "table_name": "agentplatform_datasets",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "dataset_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_featurestores",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "featurestore_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_feature_groups",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "feature_group_id",
+        "display_name",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_feature_online_stores",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "feature_online_store_id",
+        "display_name",
+        "labels",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_reasoning_engines",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "reasoning_engine_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "agentplatform_notebook_runtime_templates",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "notebook_runtime_template_id",
+        "display_name",
+        "create_time",
+        "update_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "clouddeploy_releases",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "release_id",
+        "skaffold_config_uri",
+        "skaffold_config_path",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "clouddeploy_rollouts",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "rollout_id",
+        "state",
+        "target_id",
+        "deploy_failure_cause",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "cloudrun_worker_pools",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "worker_pool_id",
+        "service_account",
+        "min_instance_count",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "datafusion_instances",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "instance_id",
+        "state",
+        "type",
+        "dataproc_service_account",
+        "service_endpoint",
+        "api_endpoint",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataplex_lakes",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "lake_id",
+        "display_name",
+        "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataplex_tasks",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "lake_id",
+        "task_id",
+        "service_account",
+        "task_type",
+        "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "dataproc_workflow_templates",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "template_id",
+        "version",
+        "service_account",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "inframanager_deployments",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "deployment_id",
+        "service_account",
+        "gcs_source",
+        "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_custom_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "job_id",
+        "state",
+        "service_account",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_pipeline_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "job_id",
+        "state",
+        "service_account",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_deployment_resource_pools",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "pool_id",
+        "service_account",
+        "machine_type",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_tuning_jobs",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "job_id",
+        "state",
+        "service_account",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_reasoning_engines",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "engine_id",
+        "display_name",
+        "service_account",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_endpoints",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "endpoint_id",
+        "display_name",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vertex_models",
+      "columns": [
+        "project_id",
+        "location",
+        "name",
+        "model_id",
+        "display_name",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
     }
-  ],
-  "vertex_custom_jobs": [
-    "project_id",
-    "name"
-  ],
-  "vertex_pipeline_jobs": [
-    "project_id",
-    "name"
-  ],
-  "vertex_deployment_resource_pools": [
-    "project_id",
-    "name"
-  ],
-  "vertex_tuning_jobs": [
-    "project_id",
-    "name"
-  ],
-  "vertex_reasoning_engines": [
-    "project_id",
-    "name"
-  ],
-  "vertex_endpoints": [
-    "project_id",
-    "name"
-  ],
-  "vertex_models": [
-    "project_id",
-    "name"
   ]
 }

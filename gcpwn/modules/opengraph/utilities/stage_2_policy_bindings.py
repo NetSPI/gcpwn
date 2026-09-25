@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from gcpwn.core.utils.hierarchy import descendants as _descendants
-from gcpwn.core.utils.module_helpers import load_mapping_data, parse_string_list
+from gcpwn.core.utils.module_helpers import load_mapping_data, parse_json_value, parse_string_list
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import principal_node_id
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_conditionals import ConditionOption, StatementConditionalsEngine
 from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import normalized_token_frozenset
@@ -183,7 +183,13 @@ def _dangerous_rules_by_family(context) -> tuple[tuple[dict[str, Any], ...], tup
     cached = context.get_artifact(_DANGEROUS_RULES_BY_FAMILY_ARTIFACT)
     if isinstance(cached, tuple) and len(cached) == 2:
         return cached
-    rules = load_normalized_dangerous_rules_by_family()
+    cats = getattr(getattr(context, "options", None), "edge_categories", None)
+    single_rules, multi_rules = load_normalized_dangerous_rules_by_family(categories=cats or None)
+    include_all = bool(getattr(getattr(context, "options", None), "include_all", False))
+    if not include_all:
+        single_rules = tuple(r for r in single_rules if not r.get("include_all_only"))
+        multi_rules = tuple(r for r in multi_rules if not r.get("include_all_only"))
+    rules = (single_rules, multi_rules)
     context.set_artifact(_DANGEROUS_RULES_BY_FAMILY_ARTIFACT, rules)
     return rules
 
@@ -259,6 +265,10 @@ def build_scope_and_resource_indexes(
     flattened_member_rows: Iterable[dict[str, Any]] | None = None,
     cloudcompute_instances_rows: Iterable[dict[str, Any]] | None = None,
     service_account_rows: Iterable[dict[str, Any]] | None = None,
+    cloudfunctions_functions_rows: Iterable[dict[str, Any]] | None = None,
+    secretsmanager_secrets_rows: Iterable[dict[str, Any]] | None = None,
+    cloudrun_services_rows: Iterable[dict[str, Any]] | None = None,
+    cloudrun_jobs_rows: Iterable[dict[str, Any]] | None = None,
 ) -> ScopeResourceIndexes:
     """Build reusable scope/resource indexes from hierarchy + flattened IAM member rows.
 
@@ -317,6 +327,10 @@ def build_scope_and_resource_indexes(
             }
         )
 
+    # Index of resource_name -> list[SA email] so via=resource combo rules can find
+    # the resource's own attached SA for the terminal ActAsServiceAccount edge.
+    resource_sa_by_name: dict[str, list[str]] = {}
+
     # Enrich compute instance resources with runtime status from cached
     # cloudcompute_instances rows so rule selectors can reason about
     # start/reset viability by instance state.
@@ -340,6 +354,27 @@ def build_scope_and_resource_indexes(
         if not (project_id and instance_name):
             continue
         resource_name = f"projects/{project_id}/zones/{zone}/instances/{instance_name}" if zone else instance_name
+        # Extract SA emails for this compute instance.
+        _sa_candidates: list[Any] = []
+        _sa_candidates.append(parse_json_value(row.get("service_accounts"), default=None))
+        _raw_json = parse_json_value(row.get("raw_json"), default=None)
+        if isinstance(_raw_json, dict):
+            _sa_candidates.append(_raw_json.get("service_accounts"))
+        _sa_emails: list[str] = []
+        for _candidate in _sa_candidates:
+            if not isinstance(_candidate, list):
+                continue
+            for _item in _candidate:
+                if isinstance(_item, str):
+                    _email = _item.strip().lower()
+                    if "@" in _email and _email not in _sa_emails:
+                        _sa_emails.append(_email)
+                elif isinstance(_item, dict):
+                    _email = str(_item.get("email") or "").strip().lower()
+                    if "@" in _email and _email not in _sa_emails:
+                        _sa_emails.append(_email)
+        if _sa_emails:
+            resource_sa_by_name[resource_name] = _sa_emails
         resource_key_tuple = (resource_name, "computeinstance", project_id)
         if resource_key_tuple in seen_resources:
             continue
@@ -389,6 +424,128 @@ def build_scope_and_resource_indexes(
             }
         )
 
+    # Ensure enumerated Cloud Functions appear as selectable targets for
+    # CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM even when the function's IAM policy is empty.
+    for row in cloudfunctions_functions_rows or []:
+        fn_name = str(row.get("name") or "").strip()
+        if not fn_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        display_name = _scope_leaf(fn_name)
+        # Extract the SA email for this Cloud Function.
+        _fn_email = str(row.get("service_account_email") or "").strip().lower()
+        if not _fn_email:
+            _fn_sc = parse_json_value(row.get("service_config"), default=None)
+            _fn_bc = parse_json_value(row.get("build_config"), default=None)
+            _fn_rj = parse_json_value(row.get("raw_json"), default=None)
+            if isinstance(_fn_sc, dict):
+                _fn_email = str(_fn_sc.get("service_account_email") or "").strip().lower()
+            if not _fn_email and isinstance(_fn_bc, dict):
+                _fn_email = str(_fn_bc.get("service_account_email") or "").strip().lower()
+            if not _fn_email and isinstance(_fn_rj, dict):
+                _fn_sc2 = _fn_rj.get("service_config")
+                _fn_bc2 = _fn_rj.get("build_config")
+                if isinstance(_fn_sc2, dict):
+                    _fn_email = str(_fn_sc2.get("service_account_email") or "").strip().lower()
+                if not _fn_email and isinstance(_fn_bc2, dict):
+                    _fn_email = str(_fn_bc2.get("service_account_email") or "").strip().lower()
+        if "@" in _fn_email:
+            resource_sa_by_name[fn_name] = [_fn_email]
+        resource_key_tuple = (fn_name, "cloudfunction", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": fn_name,
+                "resource_type": "cloudfunction",
+                "display_name": display_name,
+                "project_id": project_id,
+            }
+        )
+
+    # Ensure enumerated Secret Manager secrets appear as selectable targets for
+    # CAN_MODIFY_SECRET_MANAGER_SECRET_IAM and CAN_READ_SECRET_DATA even when the
+    # secret's IAM policy is empty (no bindings fetched).
+    for row in secretsmanager_secrets_rows or []:
+        secret_name = str(row.get("name") or "").strip()
+        if not secret_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        display_name = _scope_leaf(secret_name)
+        resource_key_tuple = (secret_name, "secrets", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": secret_name,
+                "resource_type": "secrets",
+                "display_name": display_name,
+                "project_id": project_id,
+            }
+        )
+
+    # Ensure enumerated Cloud Run services/jobs appear as selectable targets for
+    # UPDATE_CLOUDRUN_SERVICE_AS_SA / UPDATE_CLOUDRUN_JOB_AS_SA (via: "resource").
+    for row in cloudrun_services_rows or []:
+        svc_name = str(row.get("name") or "").strip()
+        if not svc_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        # Extract the SA email for this Cloud Run service.
+        _svc_rj = parse_json_value(row.get("raw_json"), default=None)
+        _svc_email = ""
+        if isinstance(_svc_rj, dict):
+            _svc_email = str(_svc_rj.get("template_service_account") or "").strip().lower()
+            if not _svc_email:
+                _svc_tmpl = _svc_rj.get("template")
+                if isinstance(_svc_tmpl, dict):
+                    _svc_email = str(_svc_tmpl.get("service_account") or "").strip().lower()
+        if "@" in _svc_email:
+            resource_sa_by_name[svc_name] = [_svc_email]
+        resource_key_tuple = (svc_name, "cloudrunservice", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": svc_name,
+                "resource_type": "cloudrunservice",
+                "display_name": _scope_leaf(svc_name),
+                "project_id": project_id,
+            }
+        )
+
+    for row in cloudrun_jobs_rows or []:
+        job_name = str(row.get("name") or "").strip()
+        if not job_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        # Extract the SA email for this Cloud Run job.
+        _job_rj = parse_json_value(row.get("raw_json"), default=None)
+        _job_email = ""
+        if isinstance(_job_rj, dict):
+            _job_tmpl = _job_rj.get("template")
+            if isinstance(_job_tmpl, dict):
+                _job_inner = _job_tmpl.get("template")
+                if isinstance(_job_inner, dict):
+                    _job_email = str(_job_inner.get("service_account") or "").strip().lower()
+        if "@" in _job_email:
+            resource_sa_by_name[job_name] = [_job_email]
+        resource_key_tuple = (job_name, "cloudrunjob", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": job_name,
+                "resource_type": "cloudrunjob",
+                "display_name": _scope_leaf(job_name),
+                "project_id": project_id,
+            }
+        )
+
     allow_resources_by_project: dict[str, list[dict[str, str]]] = defaultdict(list)
     allow_resources_by_project_type: dict[str, dict[str, list[dict[str, str]]]] = defaultdict(lambda: defaultdict(list))
     for resource in allow_resources:
@@ -410,6 +567,7 @@ def build_scope_and_resource_indexes(
             project_id: {resource_type: list(resources) for resource_type, resources in type_map.items()}
             for project_id, type_map in allow_resources_by_project_type.items()
         },
+        resource_sa_by_name=resource_sa_by_name,
     )
 
 
@@ -781,6 +939,13 @@ def _section_build_binding_entries(
                 )
                 project_id = binding_ctx.get("project_id", "")
                 cond_hash = _condition_hash(condition)
+                # When enum_gcp_policy_bindings encodes a conditional binding by appending
+                # _withcond_<hash> to the role name, no condition dict is stored.  Recover
+                # the condition signal from the suffix so the entry is marked conditional.
+                if not cond_hash:
+                    _wc_idx = role_name.find("_withcond_")
+                    if _wc_idx != -1:
+                        cond_hash = role_name[_wc_idx + len("_withcond_"):]
                 attached_scope_ref = binding_scope_token(attached_type, attached_scope_name, project_id=project_id)
                 source_scope_display = str(scope_display_by_name.get(attached_scope_name) or attached_scope_ref)
 
@@ -797,6 +962,13 @@ def _section_build_binding_entries(
                     }
                 )
 
+                # _withcond_<hash> suffix is added by enum_gcp_policy_bindings to
+                # create a unique key for conditional bindings; strip it before the
+                # permission lookup so the base role's permission set is used.
+                _perm_lookup_role = role_name
+                _withcond_idx = role_name.find("_withcond_")
+                if _withcond_idx != -1:
+                    _perm_lookup_role = role_name[:_withcond_idx]
                 common_entry_fields = {
                     # str; graph principal node key, ex: "user:alice@example.com"
                     "principal_id": member_token,
@@ -805,7 +977,7 @@ def _section_build_binding_entries(
                     # str; IAM role bound on source scope, ex: "roles/storage.objectViewer"
                     "role_name": role_name,
                     # frozenset[str]; resolved role permissions, ex: {"storage.objects.get", ...}
-                    "permissions": frozenset(role_to_permissions.get(role_name, ())),
+                    "permissions": frozenset(role_to_permissions.get(_perm_lookup_role, ())),
                 }
 
                 # Fan out into effective-scope rows.
@@ -838,7 +1010,7 @@ def _section_build_binding_entries(
     return entries
 
 
-# Stage 29 public entrypoint:
+# Stage 2 public entrypoint:
 # resolve all IAM bindings into normalized composite entries and publish them as
 # context artifact `resolved_bindings_composite` for later graph-emission stages.
 def build_resolved_binding_entries(

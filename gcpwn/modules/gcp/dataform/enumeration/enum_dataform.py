@@ -55,7 +55,7 @@ def _parse_args(user_args):
         description="Enumerate Dataform repositories, workspaces, and workflow configs.",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("get", "iam", "debug"),
+        standard_args=("get", "iam"),
     )
 
 

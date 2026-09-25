@@ -130,7 +130,7 @@ def _list_kwargs(component, args) -> dict:
     spec = component.list_kwargs
     if callable(spec):
         return dict(spec(args) or {})
-    return dict(spec or {})
+    return dict(spec)
 
 
 def _process_listed(listed, resource, component, args, api_actions, iam_actions):
@@ -306,7 +306,13 @@ def run_components(
                     session, resources[component.parent_key].TABLE_NAME, project_id=project_id, columns=cache_columns
                 ) or []
             if component.parent_filter:
-                parent_source = [row for row in parent_source if component.parent_filter(row)]
+                # Stubs from the manual_parent_names path have exactly one key ("name")
+                # and no filter fields; they pass unconditionally so an explicit user
+                # name is never silently dropped just because the parent wasn't enumerated.
+                parent_source = [
+                    row for row in parent_source
+                    if len(row) == 1 or component.parent_filter(row)
+                ]
             parent_names = [str(row.get("name") or "").strip() for row in parent_source if row.get("name")]
             parent_names = [name for name in parent_names if name]
             if not parent_names:
@@ -321,9 +327,16 @@ def run_components(
                 discovered[component.key] = []
                 continue
             nested_extra = _list_kwargs(component, args)
+
+            def _safe_nested_list(parent_name: str) -> tuple:
+                try:
+                    return (parent_name, resource.list(parent=parent_name, action_dict=scope_actions, **nested_extra))
+                except Exception:
+                    return (parent_name, None)
+
             listed_by_parent = parallel_map(
                 parent_names,
-                lambda parent_name: (parent_name, resource.list(parent=parent_name, action_dict=scope_actions, **nested_extra)),
+                _safe_nested_list,
                 threads=threads,
             )
             for parent_name, listed in listed_by_parent:
@@ -357,25 +370,22 @@ def run_components(
                             resource.save(batch, project_id=project_id, location=location)
                     rows.extend(batch)
 
-        if not component.summarize:
-            # Module renders its own summary off the returned rows (e.g. a
-            # bucket -> blobs map that the uniform list summary can't express).
-            pass
-        elif rows:
-            UtilityTools.summary_wrapup(
-                project_id,
-                component.title,
-                rows,
-                columns,
-                primary_resource=component.primary_resource,
-                primary_sort_key=component.primary_sort_key,
-            )
-        elif not manual_requested:
-            print(f"[*] No {component.title} found in project {project_id}.")
-        elif getattr(args, "get", False):
-            print(f"[*] No {component.title} found for the supplied IDs/names.")
-        else:
-            print(f"[*] Manual {component.title} IDs/names supplied without --get; skipping summary.")
+        if component.summarize:
+            if rows:
+                UtilityTools.summary_wrapup(
+                    project_id,
+                    component.title,
+                    rows,
+                    columns,
+                    primary_resource=component.primary_resource,
+                    primary_sort_key=component.primary_sort_key,
+                )
+            elif not manual_requested:
+                print(f"[*] No {component.title} found in project {project_id}.")
+            elif getattr(args, "get", False):
+                print(f"[*] No {component.title} found for the supplied IDs/names.")
+            else:
+                print(f"[*] Manual {component.title} IDs/names supplied without --get; skipping summary.")
         discovered[component.key] = rows
 
     flush_actions(session, project_id, column_name, accumulators, credname_override=credname_override)

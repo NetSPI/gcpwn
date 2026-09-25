@@ -4,9 +4,13 @@ from typing import Any
 
 from gcpwn.core.utils.module_helpers import load_mapping_data
 
-# IAM dangerous (privilege escalation/lateral movement) edge rules are loaded
-# from a dedicated data file so contributors can add paths without editing code.
-_PRIVILEGE_ESCALATION_RULES_MAPPING_FILE = "og_privilege_escalation_paths.json"
+# Edge rules are loaded from a dedicated data file so contributors can add
+# paths without editing code.  The file is organised into named categories;
+# callers may filter to a subset via the `categories` parameter.
+_DEFINED_EDGES_FILE = "og_defined_edges.json"
+
+# Top-level keys that are not rule categories.
+_NON_CATEGORY_KEYS: frozenset[str] = frozenset({"_schema", "collapsed_role_edges"})
 
 
 def _as_rule_mapping(value: Any) -> dict[str, dict[str, Any]]:
@@ -39,25 +43,41 @@ def _as_collapsed_role_mapping(value: Any) -> dict[str, dict[str, str]]:
     return output
 
 
-def load_privilege_escalation_rules() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
-    """
-    Load privilege-escalation rule mappings from disk.
+def load_privilege_escalation_rules(
+    categories: "frozenset[str] | None" = None,
+) -> "tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, str]]]":
+    """Load edge rule mappings from og_defined_edges.json.
 
-    Callers that need hot-reload behavior in long-lived CLI sessions should
-    use this helper instead of relying on module-import-time globals.
+    Args:
+        categories: frozenset of category names to include (e.g.
+            ``frozenset({"priv_escalation"})``).  ``None`` or empty frozenset
+            includes every category (backward-compatible default used by
+            module-level initialisation and tests).
+
+    Returns:
+        ``(single_rules, multi_rules, collapsed_role_edges)`` — single_rules
+        have only ``permissions``; multi_rules have ``requires``.
     """
-    payload = load_mapping_data(_PRIVILEGE_ESCALATION_RULES_MAPPING_FILE, kind="json")
+    payload = load_mapping_data(_DEFINED_EDGES_FILE, kind="json")
     if not isinstance(payload, dict):
         return {}, {}, {}
-    # Unified "rules" dict: 1-hop rules have only "permissions"; 2-hop have "requires".
-    # Legacy split keys ("single_permission_rules" / "multi_permission_rules") still work.
+
+    # Legacy flat layout ("rules" key) — still supported transparently.
     if "rules" in payload:
-        all_rules = _as_rule_mapping(payload.get("rules"))
-        single_rules = {name: rule for name, rule in all_rules.items() if not rule.get("requires")}
-        multi_rules = {name: rule for name, rule in all_rules.items() if rule.get("requires")}
+        all_raw = _as_rule_mapping(payload.get("rules"))
     else:
-        single_rules = _as_rule_mapping(payload.get("single_permission_rules"))
-        multi_rules = _as_rule_mapping(payload.get("multi_permission_rules"))
+        # Category layout: merge rules from every matching category.
+        all_raw: dict[str, dict[str, Any]] = {}
+        for key, val in payload.items():
+            if key in _NON_CATEGORY_KEYS:
+                continue
+            if categories and key not in categories:
+                continue
+            if isinstance(val, dict):
+                all_raw.update(_as_rule_mapping(val))
+
+    single_rules = {n: r for n, r in all_raw.items() if not r.get("requires")}
+    multi_rules = {n: r for n, r in all_raw.items() if r.get("requires")}
     return (
         single_rules,
         multi_rules,

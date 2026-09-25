@@ -4,19 +4,11 @@ from gcpwn.modules.opengraph.processing.process_og_gcpwn_data import export_open
 from gcpwn.modules.opengraph.utilities.helpers.graph.context import OpenGraphBuildContext, OpenGraphBuildOptions
 from gcpwn.modules.opengraph.utilities.stage_1_principals import build_users_groups_graph
 
-
-class _FakeSession:
-    def __init__(self, rows_by_table: dict[str, list[dict]]) -> None:
-        self._rows_by_table = rows_by_table
-
-    def get_data(self, table_name: str, *args, **kwargs):
-        _ = (args, kwargs)
-        rows = self._rows_by_table.get(table_name, [])
-        return [dict(row) for row in rows]
+from conftest import FakeSession
 
 
 def test_key_opengraph_example_users_groups_to_graph_json() -> None:
-    session = _FakeSession(
+    session = FakeSession(
         {
             "workspace_users": [
                 {
@@ -62,13 +54,13 @@ def test_key_opengraph_example_users_groups_to_graph_json() -> None:
     assert node_ids == ["group:admins@example.com", "user:alice@example.com"]
 
     edge = payload["graph"]["edges"][0]
-    assert edge["kind"] == "GOOGLE_MEMBER_OF"
+    assert edge["kind"] == "MemberOf"
     assert edge["start"]["value"] == "user:alice@example.com"
     assert edge["end"]["value"] == "group:admins@example.com"
 
 
 def test_key_opengraph_example_service_account_membership() -> None:
-    session = _FakeSession(
+    session = FakeSession(
         {
             "workspace_users": [],
             "workspace_groups": [],

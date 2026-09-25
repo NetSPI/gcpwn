@@ -73,7 +73,10 @@ def _print_inline_progress(label: str, processed: int, total: int, *, force: boo
         if force:
             print("")
         return
-    print(message)
+    # Non-TTY: force=True after a loop that already emitted at processed==total would
+    # print the same line twice. Skip when the regular emit would already cover it.
+    if not (force and _should_emit_progress(processed, total)):
+        print(message)
 
 
 def _print_stage4_section_progress(
@@ -183,6 +186,33 @@ def _extract_compute_instance_service_accounts(row: dict[str, Any]) -> list[str]
     return sorted(emails)
 
 
+def _extract_cloudrun_service_account(row: dict[str, Any], *, is_job: bool) -> str | None:
+    """Return the attached SA email from a cloudrun_services or cloudrun_jobs row."""
+    raw_json = parse_json_value(row.get("raw_json"), default=None)
+    if not isinstance(raw_json, dict):
+        return None
+    if is_job:
+        # jobs: .template.template.service_account
+        tmpl = raw_json.get("template")
+        if isinstance(tmpl, dict):
+            inner = tmpl.get("template")
+            if isinstance(inner, dict):
+                email = str(inner.get("service_account") or "").strip().lower()
+                if "@" in email:
+                    return email
+    else:
+        # services: .template_service_account (flattened) or .template.service_account
+        email = str(raw_json.get("template_service_account") or "").strip().lower()
+        if "@" in email:
+            return email
+        tmpl = raw_json.get("template")
+        if isinstance(tmpl, dict):
+            email = str(tmpl.get("service_account") or "").strip().lower()
+            if "@" in email:
+                return email
+    return None
+
+
 def _project_scope_name(project_id: str, project_scope_by_project_id: dict[str, str]) -> str:
     token = str(project_id or "").strip()
     if not token:
@@ -233,6 +263,8 @@ _RESOURCE_EXPANSION_ROW_TABLES: tuple[str, ...] = (
     "cloudfunctions_functions",
     "cloudrun_services",
     "cloudrun_jobs",
+    "cloudscheduler_jobs",
+    "cloudworkflows_workflows",
     "workload_identity_pools",
     "workload_identity_providers",
 )
@@ -243,6 +275,9 @@ _RESOURCE_EXPANSION_STAGE_STAT_KEYS: tuple[str, ...] = (
     "service_account_key_edges_added",
     "project_resource_edges_added",
     "compute_executes_with_edges_added",
+    "cloudrun_runs_as_edges_added",
+    "cloudscheduler_runs_as_edges_added",
+    "cloudworkflow_runs_as_edges_added",
     "wif_provider_pool_edges_added",
     "wif_principal_pool_edges_added",
     "wif_provider_external_edges_added",
@@ -533,13 +568,13 @@ def _add_project_resource_membership_edges(
             source="resource_expansion",
         )
 
-        edge_key = (project_node_id, "EXISTS_IN_PROJECT", resource_node)
+        edge_key = (project_node_id, "ExistsInProject", resource_node)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
             project_node_id,
             resource_node,
-            "EXISTS_IN_PROJECT",
+            "ExistsInProject",
             source="resource_expansion",
             project_id=project_id,
             resource_type=resource_type,
@@ -600,13 +635,13 @@ def _add_compute_executes_with_edges(
                 source="cloudcompute_instances",
             )
 
-            edge_key = (instance_node_id, "EXECUTES_WITH", principal_id)
+            edge_key = (instance_node_id, "RunsAs", principal_id)
             if edge_key in context.builder.edge_map:
                 continue
             context.builder.add_edge(
                 instance_node_id,
                 principal_id,
-                "EXECUTES_WITH",
+                "RunsAs",
                 source="cloudcompute_instances",
                 project_id=project_id,
                 instance_resource=instance_name,
@@ -615,6 +650,220 @@ def _add_compute_executes_with_edges(
             edges_added += 1
         _print_inline_progress("Stage 4 compute instances processed", index, total_rows)
     _print_inline_progress("Stage 4 compute instances processed", total_rows, total_rows, force=True)
+    return edges_added
+
+
+def _add_cloudrun_runs_as_edges(
+    context,
+    *,
+    cloudrun_services_rows: Iterable[dict[str, Any]] | None,
+    cloudrun_jobs_rows: Iterable[dict[str, Any]] | None,
+) -> int:
+    """
+    Add:
+      cloudrun_service/job -> RunsAs -> serviceAccount:<email>
+    """
+    edges_added = 0
+
+    def _process(rows, resource_type: str, *, is_job: bool) -> None:
+        nonlocal edges_added
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            project_id = str(row.get("project_id") or "").strip()
+            resource_name = str(row.get("name") or "").strip()
+            if not project_id or not resource_name:
+                continue
+            email = _extract_cloudrun_service_account(row, is_job=is_job)
+            if not email:
+                continue
+            resource_node = resource_node_id(resource_name)
+            member = f"serviceAccount:{email}"
+            principal_id = principal_node_id(member)
+            if not principal_id:
+                continue
+            context.builder.add_node(
+                principal_id,
+                principal_type(member),
+                **principal_member_properties(member),
+                source=f"cloudrun_{'jobs' if is_job else 'services'}",
+            )
+            edge_key = (resource_node, "RunsAs", principal_id)
+            if edge_key in context.builder.edge_map:
+                continue
+            context.builder.add_edge(
+                resource_node,
+                principal_id,
+                "RunsAs",
+                source=f"cloudrun_{'jobs' if is_job else 'services'}",
+                project_id=project_id,
+                instance_resource=resource_name,
+                service_account_email=email,
+            )
+            edges_added += 1
+
+    _process(cloudrun_services_rows, "cloudrunservice", is_job=False)
+    _process(cloudrun_jobs_rows, "cloudrunjob", is_job=True)
+    return edges_added
+
+
+def _add_cloudfunction_runs_as_edges(
+    context,
+    *,
+    cloudfunctions_functions_rows: Iterable[dict[str, Any]] | None,
+) -> int:
+    """
+    Add:
+      cloudfunction -> RunsAs -> serviceAccount:<email>
+
+    Gen2 functions store the SA in service_config.service_account_email.
+    Gen1 functions store it in build_config.service_account_email.
+    """
+    edges_added = 0
+    for row in cloudfunctions_functions_rows or []:
+        if not isinstance(row, dict):
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_name = str(row.get("name") or "").strip()
+        if not project_id or not resource_name:
+            continue
+        service_config = parse_json_value(row.get("service_config"), default=None)
+        build_config = parse_json_value(row.get("build_config"), default=None)
+        email = ""
+        if isinstance(service_config, dict):
+            email = str(service_config.get("service_account_email") or "").strip().lower()
+        if not email and isinstance(build_config, dict):
+            email = str(build_config.get("service_account_email") or "").strip().lower()
+        if not email:
+            continue
+        resource_node = resource_node_id(resource_name)
+        member = f"serviceAccount:{email}"
+        principal_id = principal_node_id(member)
+        if not principal_id:
+            continue
+        context.builder.add_node(
+            principal_id,
+            principal_type(member),
+            **principal_member_properties(member),
+            source="cloudfunctions_functions",
+        )
+        edge_key = (resource_node, "RunsAs", principal_id)
+        if edge_key in context.builder.edge_map:
+            continue
+        context.builder.add_edge(
+            resource_node,
+            principal_id,
+            "RunsAs",
+            source="cloudfunctions_functions",
+            project_id=project_id,
+            instance_resource=resource_name,
+            service_account_email=email,
+        )
+        edges_added += 1
+    return edges_added
+
+
+def _add_cloudscheduler_runs_as_edges(
+    context,
+    *,
+    cloudscheduler_jobs_rows: Iterable[dict[str, Any]] | None,
+) -> int:
+    """
+    Add:
+      cloudscheduler_job -> RunsAs -> serviceAccount:<email>
+    """
+    edges_added = 0
+    for row in cloudscheduler_jobs_rows or []:
+        if not isinstance(row, dict):
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_name = str(row.get("name") or "").strip()
+        if not project_id or not resource_name:
+            continue
+        email = str(row.get("target_sa_email") or "").strip().lower()
+        if not email:
+            continue
+        resource_node = resource_node_id(resource_name)
+        member = f"serviceAccount:{email}"
+        principal_id = principal_node_id(member)
+        if not principal_id:
+            continue
+        context.builder.add_node(
+            principal_id,
+            principal_type(member),
+            **principal_member_properties(member),
+            source="cloudscheduler_jobs",
+        )
+        edge_key = (resource_node, "RunsAs", principal_id)
+        if edge_key in context.builder.edge_map:
+            continue
+        context.builder.add_edge(
+            resource_node,
+            principal_id,
+            "RunsAs",
+            source="cloudscheduler_jobs",
+            project_id=project_id,
+            instance_resource=resource_name,
+            service_account_email=email,
+        )
+        edges_added += 1
+    return edges_added
+
+
+def _add_cloudworkflows_runs_as_edges(
+    context,
+    *,
+    cloudworkflows_workflows_rows: Iterable[dict[str, Any]] | None,
+) -> int:
+    """
+    Add:
+      cloudworkflow -> RunsAs -> serviceAccount:<email>
+
+    The `service_account` column may be a full SA resource path
+    (projects/P/serviceAccounts/email) or a bare email.
+    """
+    edges_added = 0
+    for row in cloudworkflows_workflows_rows or []:
+        if not isinstance(row, dict):
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_name = str(row.get("name") or "").strip()
+        if not project_id or not resource_name:
+            continue
+        sa_value = str(row.get("service_account") or "").strip()
+        if not sa_value:
+            continue
+        # Normalize full resource path to email
+        if "/" in sa_value:
+            email = sa_value.split("/")[-1].lower()
+        else:
+            email = sa_value.lower()
+        if not email or "@" not in email:
+            continue
+        resource_node = resource_node_id(resource_name)
+        member = f"serviceAccount:{email}"
+        principal_id = principal_node_id(member)
+        if not principal_id:
+            continue
+        context.builder.add_node(
+            principal_id,
+            principal_type(member),
+            **principal_member_properties(member),
+            source="cloudworkflows_workflows",
+        )
+        edge_key = (resource_node, "RunsAs", principal_id)
+        if edge_key in context.builder.edge_map:
+            continue
+        context.builder.add_edge(
+            resource_node,
+            principal_id,
+            "RunsAs",
+            source="cloudworkflows_workflows",
+            project_id=project_id,
+            instance_resource=resource_name,
+            service_account_email=email,
+        )
+        edges_added += 1
     return edges_added
 
 
@@ -688,13 +937,13 @@ def _add_wif_provider_pool_edges(
             resourcedata=pool_resourcedata or None,
         )
 
-        edge_key = (provider_node_id, "WIF_PROVIDER_IN_POOL", pool_node_id)
+        edge_key = (provider_node_id, "IdentityProviderInPool", pool_node_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
             provider_node_id,
             pool_node_id,
-            "WIF_PROVIDER_IN_POOL",
+            "IdentityProviderInPool",
             source="resource_expansion",
             project_id=pool_project_id or project_id or None,
             provider_name=provider_name,
@@ -1241,13 +1490,13 @@ def _add_wif_principal_pool_edges(
             resourcedata=pool_resourcedata or None,
         )
 
-        edge_key = (principal_id, "WIF_PRINCIPAL_IN_POOL", pool_node_id)
+        edge_key = (principal_id, "FederatedPrincipalInPool", pool_node_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
             principal_id,
             pool_node_id,
-            "WIF_PRINCIPAL_IN_POOL",
+            "FederatedPrincipalInPool",
             source="resource_expansion",
             wif_scheme=str(parsed.get("scheme") or ""),
             wif_project_number=str(parsed.get("project_number") or ""),
@@ -1353,13 +1602,13 @@ def _enrich_wif_provider_nodes(
             conditionals_added=False,
         )
 
-        edge_key = (external_node_id, "GCP_FEDERATION_POSSIBLE", provider_node_id)
+        edge_key = (external_node_id, "CanFederateWith", provider_node_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
             external_node_id,
             provider_node_id,
-            "GCP_FEDERATION_POSSIBLE",
+            "CanFederateWith",
             source="resource_expansion",
             provider_name=provider_name,
             provider_source_kind=provider_source_kind,
@@ -1461,12 +1710,12 @@ def _section_expand_service_account_keys(
             source="iam_sa_keys",
         )
 
-        edge_key = (key_node_id, "GCP_SERVICE_ACCOUNT_KEY_FOR", service_account_id)
+        edge_key = (key_node_id, "ServiceAccountKeyFor", service_account_id)
         edge_existed = edge_key in context.builder.edge_map
         context.builder.add_edge(
             key_node_id,
             service_account_id,
-            "GCP_SERVICE_ACCOUNT_KEY_FOR",
+            "ServiceAccountKeyFor",
             source="iam_sa_keys",
             key_name=key_name,
             key_id=key_id,
@@ -1546,6 +1795,8 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
     cloudfunctions_functions_rows = source_rows["cloudfunctions_functions"]
     cloudrun_services_rows = source_rows["cloudrun_services"]
     cloudrun_jobs_rows = source_rows["cloudrun_jobs"]
+    cloudscheduler_jobs_rows = source_rows["cloudscheduler_jobs"]
+    cloudworkflows_workflows_rows = source_rows["cloudworkflows_workflows"]
     workload_identity_pools_rows = source_rows["workload_identity_pools"]
     workload_identity_providers_rows = source_rows["workload_identity_providers"]
     print(
@@ -1556,6 +1807,8 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
         f"cloudfunctions_functions={len(cloudfunctions_functions_rows or [])}, "
         f"cloudrun_services={len(cloudrun_services_rows or [])}, "
         f"cloudrun_jobs={len(cloudrun_jobs_rows or [])}, "
+        f"cloudscheduler_jobs={len(cloudscheduler_jobs_rows or [])}, "
+        f"cloudworkflows_workflows={len(cloudworkflows_workflows_rows or [])}, "
         f"workload_identity_pools={len(workload_identity_pools_rows or [])}, "
         f"workload_identity_providers={len(workload_identity_providers_rows or [])}"
     )
@@ -1629,6 +1882,23 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
     section_stats["compute_executes_with_edges_added"] = _add_compute_executes_with_edges(
         context,
         cloudcompute_instances_rows=cloudcompute_instances_rows,
+    )
+    section_stats["cloudrun_runs_as_edges_added"] = _add_cloudrun_runs_as_edges(
+        context,
+        cloudrun_services_rows=cloudrun_services_rows,
+        cloudrun_jobs_rows=cloudrun_jobs_rows,
+    )
+    section_stats["cloudfunction_runs_as_edges_added"] = _add_cloudfunction_runs_as_edges(
+        context,
+        cloudfunctions_functions_rows=cloudfunctions_functions_rows,
+    )
+    section_stats["cloudscheduler_runs_as_edges_added"] = _add_cloudscheduler_runs_as_edges(
+        context,
+        cloudscheduler_jobs_rows=cloudscheduler_jobs_rows,
+    )
+    section_stats["cloudworkflow_runs_as_edges_added"] = _add_cloudworkflows_runs_as_edges(
+        context,
+        cloudworkflows_workflows_rows=cloudworkflows_workflows_rows,
     )
     processed_sections += 1
     _print_stage4_section_progress(

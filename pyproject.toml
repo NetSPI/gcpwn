@@ -40,6 +40,9 @@ excel = [
 dataflow = [
   "apache-beam[gcp]>=2.50.0"
 ]
+vertex = [
+  "cloudpickle>=3.0.0"
+]
 
 [project.scripts]
 gcpwn = "gcpwn.cli.main:main"

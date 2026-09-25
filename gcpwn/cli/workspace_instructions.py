@@ -31,13 +31,15 @@ from gcpwn.core.utils.module_helpers import (
     extract_location_from_resource_name,
     extract_path_segment,
     extract_path_tail,
+    iter_module_rows,
+    load_mapping_data,
+    load_service_locations,
+)
+from gcpwn.core.utils.export_helpers import (
     export_hierarchy_tree_image,
     export_sqlite_dbs_to_csv_blob,
     export_sqlite_dbs_to_excel_blob,
     export_sqlite_dbs_to_json_blob,
-    iter_module_rows,
-    load_mapping_data,
-    load_service_locations,
 )
 from gcpwn.core.session import SessionUtility
 
@@ -50,7 +52,8 @@ ArgumentSpec = tuple[tuple[str, ...], Dict[str, Any]]
 
 CREDENTIAL_TYPES = ["adc", "oauth2", "service"]
 DATA_EXPORT_FLAGS = ["--out-dir", "--out-file"]
-DATA_WIPE_FLAGS = ["--all-workspaces", "--yes"]
+DATA_WIPE_FLAGS = ["--all-workspaces", "--yes", "--dry-run"]
+WORKSPACE_TENANT_FLAGS = ["--domain", "--admin", "--org-id", "--cred", "--swap"]
 CONFIG_COMPLETION_KEYS = [
     "std_output_format",
     "projects",
@@ -352,7 +355,7 @@ def help_banner():
 
         creds info [<credname>] [--csv]
         creds tokeninfo [<credname>]
-        creds set [<credname>] [--email <email>] [--project-id <project_id>]
+        creds set [<credname>] [--email <email>] [--project-id <project_id>] [--delegates sa1@proj,sa2@proj]
         creds add <credname> --type adc [--filepath-to-adc <adc_json_path>] [--tokeninfo] [--assume]
         creds add <credname> --type oauth2 --token <access_token> [--tokeninfo] [--assume]
         creds add <credname> --type oauth2 --token-file <token_json_path> [--tokeninfo] [--assume]
@@ -374,6 +377,23 @@ def help_banner():
 
         folders / orgs
             list                                        Print folder/org-focused GCP hierarchy
+                                                        (Workspace tenants are shown at the bottom of 'orgs list')
+
+        workspace
+            list                                        Show registered Workspace tenants
+            add <customer_id> [--domain D] [--admin A] [--org-id O] [--cred C] [--swap]
+                                                        Register (or update) a Workspace tenant.
+                                                        customer_id: directoryCustomerId (C0xxxxxxx) or 'my_customer'
+                                                        --admin: admin@domain to impersonate for SA domain-wide delegation
+                                                        --swap: activate this tenant immediately after adding
+                                                        First tenant added is auto-activated.
+            swap [<customer_id>] [--cred-also]         Activate a tenant; sets active customer_id + admin subject.
+                                                        --cred-also: also swap to the credential bound to this tenant.
+                                                        Interactive pick if customer_id omitted.
+            remove <customer_id>                        Remove a tenant (clears active if it was the active one)
+
+            Prompt shows active tenant: (project:credname:C0xxxxxxx)>
+            Workspace modules use the active tenant's customer_id and admin_subject automatically.
 
         configs
             list | set | unset | regions list          Workspace configs / known regions
@@ -383,33 +403,36 @@ def help_banner():
               projects                                 (comma list; project-id-1,project-id-2,...)
               zones                                    (comma list; zone1,zone2,zone3,...)
               regions                                  (comma list; region1,region2,region3,...)
-              workspace_customer_id                    (Google Workspace directoryCustomerId, e.g. C0xxxxxxx)
-              workspace_admin_subject                  (admin@domain to impersonate for SA domain-wide delegation)
+              workspace_customer_id                    (low-level override; prefer 'workspace swap')
+              workspace_admin_subject                  (low-level override; prefer 'workspace add --admin')
 
         data
-            export <csv|json|excel|treeimage> [--out-dir ...] [--out-file ...]
+            export <csv|json|excel|treeimage> [--out-dir ...] [--out-file ...] [--table <table>]
                                                         Unified data export command
                                                         csv: service DB rows in one flat CSV (includes resource=table name)
                                                         json: service DB tables as JSON blob (rows include resource)
                                                         excel: one workbook for service DB (single-sheet condensed format)
                                                         treeimage: org/folder/project hierarchy graph (SVG with built-in pan/zoom)
+                                                        --table: export only the named SQLite table
             sql --db <service|metadata> <SQL>
                                                         Run SQL directly against SQLite tables
                                                         example: data sql --db service "SELECT * FROM compute_instances LIMIT 25"
-            wipe-service [--all-workspaces] [--yes]
+            wipe-service [--all-workspaces] [--yes] [--dry-run]
                                                         Delete rows from service DB tables
                                                         default scope: ALL service tables for current workspace_id
                                                         (tables without workspace_id are skipped)
                                                         add --all-workspaces to wipe all workspace rows
-                 
-        help                                Display this page of information       
+                                                        --dry-run: show what would be deleted without deleting
+
+        help                                Display this page of information
         exit/quit                           Exit GCPwn
 
     Other command info:
         Google Workspace enumeration        Tenant-scoped (Google Workspace / Cloud Identity) -- separate from GCP project enum.
                                                 modules run enum_google_workspace     (groups, users, admin roles, OUs, domains, devices, OAuth grants)
                                                 Needs Workspace admin creds OR a service account with domain-wide delegation:
-                                                configs set workspace_admin_subject admin@domain   (or per-run --impersonate admin@domain)
+                                                workspace add C0xxxxxxx --admin admin@domain --cred my-oauth-cred
+                                                workspace swap C0xxxxxxx --cred-also
 
         gcloud/bq/gsutil <command>            Run GCP CLI tool. It is recommended if you want to add a set of creds while in GCPwn
                                                 to run the following command to set them at the command line
@@ -434,10 +457,12 @@ class CommandProcessor:
         "data",
         "configs",
         "global_configs",
+        "workspace",
     )
     CONFIG_COMMAND_NAMES = ("configs", "global_configs")
     CREDS_SUBCOMMANDS = ["list", "info", "tokeninfo", "set", "add", "update", "swap"]
     PROJECTS_SUBCOMMANDS = ["list", "set", "add", "rm"]
+    WORKSPACE_SUBCOMMANDS = ["list", "add", "swap", "remove"]
     TREE_SUBCOMMANDS = ["list"]
     MODULES_SUBCOMMANDS = ["list", "search", "info", "run"]
     DATA_SUBCOMMANDS = ["export", "sql", "wipe-service"]
@@ -466,8 +491,9 @@ class CommandProcessor:
             "configs": self.process_configs_command,
             "data": self.process_data_command,
             "projects": self.process_projects_command,
+            "workspace": self.process_workspace_command,
             "folders": lambda *_args: self.print_gcp_hierarchy(focus_types=self.TREE_FOCUS_TYPES["folders"]),
-            "orgs": lambda *_args: self.print_gcp_hierarchy(focus_types=self.TREE_FOCUS_TYPES["orgs"]),
+            "orgs": lambda *_args: self._print_orgs_with_workspace(),
             "global_configs": self.process_configs_command,
             "gcloud": self.run_passthrough_command,
             "bq": self.run_passthrough_command,
@@ -518,6 +544,7 @@ class CommandProcessor:
             "data": self.DATA_SUBCOMMANDS,
             "configs": self.CONFIGS_SUBCOMMANDS,
             "global_configs": self.CONFIGS_SUBCOMMANDS,
+            "workspace": self.WORKSPACE_SUBCOMMANDS,
         }
         basic = self._complete_simple_subcommands(args, trailing_space, base_subcommands[command_name])
         if basic:
@@ -580,6 +607,24 @@ class CommandProcessor:
                 return ["list"]
             if len(args) == 2 and not trailing_space:
                 return self._match_prefix(["list"], args[1])
+
+        if command_name == "workspace":
+            known_ids = [
+                str(t.get("customer_id") or "")
+                for t in (self.session.workspace_config.workspace_tenants or [])
+                if t.get("customer_id")
+            ]
+            if subcmd in {"swap", "remove"}:
+                if len(args) == 1 and trailing_space:
+                    return known_ids
+                if len(args) == 2 and not trailing_space:
+                    return self._match_prefix(known_ids, args[1])
+            if subcmd == "add":
+                if len(args) == 2 and trailing_space:
+                    return WORKSPACE_TENANT_FLAGS
+                if len(args) >= 2 and not trailing_space and args[-1].startswith("-"):
+                    return self._match_prefix(WORKSPACE_TENANT_FLAGS, args[-1])
+
         return []
 
     def _command_candidates(self, line_buffer: str) -> List[str]:
@@ -788,6 +833,7 @@ class CommandProcessor:
         self.setup_data_parsers()
         self.setup_configs_parsers()
         self.setup_projects_parsers()
+        self.setup_workspace_tenant_parsers()
         self.setup_tree_parsers()
 
     # -----------------------------
@@ -819,6 +865,7 @@ class CommandProcessor:
                 (("credname",), {"nargs": "?", "help": "Specify credential name"}),
                 (("--email",), {"help": "Specify email"}),
                 (("--project-id",), {"help": "Specify project"}),
+                (("--delegates",), {"help": "Comma-separated SA emails for implicit delegation chain (empty string clears)"}),
             ],
         )
 
@@ -859,6 +906,7 @@ class CommandProcessor:
                 (("format",), {"choices": self.DATA_EXPORT_FORMATS, "help": "Export format"}),
                 (("--out-dir",), {"required": False, "help": "Output directory"}),
                 (("--out-file",), {"required": False, "help": "Output file path"}),
+                (("--table",), {"required": False, "help": "Export only the named SQLite table"}),
             ],
         )
 
@@ -876,6 +924,7 @@ class CommandProcessor:
             [
                 (("--all-workspaces",), {"action": "store_true", "help": "Wipe all workspace rows from service tables"}),
                 (("--yes",), {"action": "store_true", "help": "Skip interactive confirmation"}),
+                (("--dry-run",), {"action": "store_true", "help": "Show what would be deleted without deleting anything"}),
             ],
         )
 
@@ -918,6 +967,46 @@ class CommandProcessor:
         sub.add_parser("set").add_argument("project_id", nargs="?", help="Project ID to enter")
         sub.add_parser("add").add_argument("project_id", help="Project ID to enter")
         sub.add_parser("rm").add_argument("project_id", help="Project ID to enter")
+
+    # -----------------------------
+    # Workspace tenant parsers
+    # -----------------------------
+
+    def setup_workspace_tenant_parsers(self):
+        ws = self.subparsers.add_parser("workspace")
+        sub = ws.add_subparsers(dest="workspace_subcommand")
+
+        sub.add_parser("list")
+
+        add_cmd = sub.add_parser("add")
+        apply_argument_specs(
+            add_cmd,
+            [
+                (("customer_id",), {"help": "directoryCustomerId (C0xxxxxxx) or 'my_customer'"}),
+                (("--domain",), {"required": False, "help": "Primary domain (e.g. company.com)"}),
+                (("--admin",), {"required": False, "help": "Admin email for SA domain-wide delegation"}),
+                (("--org-id",), {"required": False, "help": "Linked GCP org ID (e.g. 123456789)"}),
+                (("--cred",), {"required": False, "help": "Credential name to bind to this tenant"}),
+                (("--swap",), {"action": "store_true", "help": "Activate this tenant immediately after adding"}),
+            ],
+        )
+
+        swap_cmd = sub.add_parser("swap")
+        apply_argument_specs(
+            swap_cmd,
+            [
+                (("customer_id",), {"nargs": "?", "help": "directoryCustomerId; interactive pick if omitted"}),
+                (("--cred-also",), {"action": "store_true", "help": "Also swap credential to the one bound to this tenant"}),
+            ],
+        )
+
+        remove_cmd = sub.add_parser("remove")
+        apply_argument_specs(
+            remove_cmd,
+            [
+                (("customer_id",), {"help": "directoryCustomerId to remove"}),
+            ],
+        )
 
     # -----------------------------
     # Folders / orgs parsers
@@ -963,6 +1052,30 @@ class CommandProcessor:
             focus_types=focus_types,
         )
 
+    def _print_orgs_with_workspace(self) -> None:
+        self.print_gcp_hierarchy(focus_types=self.TREE_FOCUS_TYPES["orgs"])
+        tenants = list(self.session.workspace_config.workspace_tenants or [])
+        if not tenants:
+            return
+        active_id = str(self.session.workspace_config.workspace_customer_id or "").strip()
+        print(f"\n{UtilityTools.BOLD}[*] Linked Workspace tenants:{UtilityTools.RESET}")
+        for t in tenants:
+            cid = str(t.get("customer_id") or "")
+            is_active = cid == active_id
+            parts = [f"[ws] {cid}"]
+            if t.get("domain"):
+                parts.append(f"domain={t['domain']}")
+            if t.get("org_id"):
+                parts.append(f"org={t['org_id']}")
+            if t.get("admin_subject"):
+                parts.append(f"admin={t['admin_subject']}")
+            if t.get("credname"):
+                parts.append(f"cred={t['credname']}")
+            line = "  " + "  ".join(parts)
+            if is_active:
+                line += f"  {UtilityTools.GREEN}[active]{UtilityTools.RESET}"
+            print(line)
+
     def _project_choice_rows(self) -> List[Dict[str, Any]]:
         return project_choice_rows(self._hierarchy_rows(), self.session.global_project_list or [])
 
@@ -975,6 +1088,8 @@ class CommandProcessor:
         }
 
     def process_command(self, command):
+        if not (command or "").strip():
+            return None
         try:
             args = self.parser.parse_args(shlex.split(command))
             if handler := self.command_handlers.get(args.subcommand):
@@ -1004,6 +1119,7 @@ class CommandProcessor:
         )
 
     def _set_active_cred(self, args):
+        import json as _json
         credname = args.credname or self.session.credname
         email = args.email or self.session.email
         project_id = args.project_id or self.session.project_id
@@ -1013,12 +1129,26 @@ class CommandProcessor:
                 updates["email"] = email
             if project_id is not None:
                 updates["default_project"] = project_id
+            delegates_arg = getattr(args, "delegates", None)
+            if delegates_arg is not None:
+                if delegates_arg.strip() == "":
+                    updates["delegates"] = None
+                    print(f"{UtilityTools.GREEN}[*] Implicit delegation chain cleared for '{credname}'.{UtilityTools.RESET}")
+                else:
+                    chain = [e.strip() for e in delegates_arg.split(",") if e.strip()]
+                    updates["delegates"] = _json.dumps(chain)
+                    print(f"{UtilityTools.GREEN}[*] Implicit delegation chain set: {' → '.join(chain)}{UtilityTools.RESET}")
             if updates:
                 self.session.data_master.update_credential(
                     self.session.workspace_id,
                     credname,
                     updates,
                 )
+                non_delegate_keys = [k for k in updates if k != "delegates"]
+                if non_delegate_keys:
+                    print(f"{UtilityTools.GREEN}[*] Updated '{credname}': {', '.join(non_delegate_keys)}{UtilityTools.RESET}")
+            else:
+                print("[*] No changes made.")
             self.session.email = email
             self.session.project_id = project_id
         except Exception as exc:
@@ -1048,7 +1178,9 @@ class CommandProcessor:
 
     def swap_cred(self, args):
         if args.credname:
-            self.session.load_stored_creds(args.credname)
+            result = self.session.load_stored_creds(args.credname)
+            if result is None:
+                print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Credential '{args.credname}' not found.{UtilityTools.RESET}")
             return
 
         available_creds = self.print_creds_table()
@@ -1058,17 +1190,27 @@ class CommandProcessor:
             self.session.load_stored_creds(credname)
 
     def _credential_rows_for_display(self):
+        import json as _json
         rows = self.session.get_session_data("session") or []
         normalized_rows = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
+            delegates_raw = row.get("delegates")
+            delegates_display = ""
+            if delegates_raw:
+                try:
+                    chain = _json.loads(delegates_raw)
+                    delegates_display = " → ".join(chain) if chain else ""
+                except Exception:
+                    delegates_display = str(delegates_raw)
             normalized_rows.append(
                 {
                     "credname": str(row.get("credname") or "").strip(),
                     "credtype": str(row.get("credtype") or "").strip(),
                     "email": str(row.get("email") or "").strip(),
                     "default_project": str(row.get("default_project") or "").strip(),
+                    "delegates": delegates_display,
                 }
             )
 
@@ -1090,8 +1232,10 @@ class CommandProcessor:
             credtype = row["credtype"] or "unknown"
             email = row["email"] or "-"
             default_project = row["default_project"] or "Unknown"
+            delegates = row.get("delegates") or ""
+            delegate_suffix = f" | delegates={delegates}" if delegates else ""
             print(
-                f"  [{idx}] {row['credname']}{marker} | type={credtype} | email={email} | default_project={default_project}"
+                f"  [{idx}] {row['credname']}{marker} | type={credtype} | email={email} | default_project={default_project}{delegate_suffix}"
             )
             available_creds.append((row["credname"], row["credtype"], row["email"]))
         return available_creds
@@ -1511,7 +1655,7 @@ class CommandProcessor:
             project_id = str(chosen_row.get("project_id") or "").strip()
 
         if project_id not in self.session.global_project_list:
-            print(f"[X] {project_id} is not in the list of project_ids. Adding...")
+            print(f"[!] {project_id} not in project list; auto-adding...")
             self.add_projects(project_id)
 
         self.session.project_id = project_id
@@ -1541,6 +1685,138 @@ class CommandProcessor:
             print(f"{UtilityTools.GREEN}[*] Removed project: {project_id}{UtilityTools.RESET}")
         else:
             print("[X] The project ID specified does not exist")
+
+    # -----------------------------
+    # Workspace tenant commands
+    # -----------------------------
+
+    def process_workspace_command(self, args):
+        customer_id = getattr(args, "customer_id", None)
+        return self._dispatch_subcommand(
+            getattr(args, "workspace_subcommand", None),
+            {
+                None: self.list_workspace_tenants,
+                "list": self.list_workspace_tenants,
+                "add": lambda: self.add_workspace_tenant(args),
+                "swap": lambda: self.swap_workspace_tenant(customer_id, cred_also=bool(getattr(args, "cred_also", False))),
+                "remove": lambda: self.remove_workspace_tenant(customer_id),
+            },
+        )
+
+    def list_workspace_tenants(self):
+        tenants = list(self.session.workspace_config.workspace_tenants or [])
+        active_id = str(self.session.workspace_config.workspace_customer_id or "").strip()
+
+        if not tenants:
+            print("[*] No workspace tenants registered.")
+            print("    Use: workspace add <customer_id> [--domain D] [--admin A] [--org-id O] [--cred C]")
+            if active_id:
+                print(f"[!] Active customer_id set via configs: {active_id} (use 'workspace add {active_id}' to register it)")
+            return
+
+        print(f"{UtilityTools.BOLD}[*] Registered Workspace tenants:{UtilityTools.RESET}")
+        for t in tenants:
+            cid = str(t.get("customer_id") or "")
+            is_active = cid == active_id
+            marker = f"  {UtilityTools.GREEN}[active]{UtilityTools.RESET}" if is_active else ""
+            extras = []
+            if t.get("domain"):
+                extras.append(f"domain={t['domain']}")
+            if t.get("org_id"):
+                extras.append(f"org={t['org_id']}")
+            if t.get("admin_subject"):
+                extras.append(f"admin={t['admin_subject']}")
+            if t.get("credname"):
+                extras.append(f"cred={t['credname']}")
+            line = f"  {UtilityTools.BOLD}{cid}{UtilityTools.RESET}{marker}"
+            if extras:
+                line += f"  ({', '.join(extras)})"
+            print(line)
+
+    def add_workspace_tenant(self, args):
+        customer_id = str(getattr(args, "customer_id", "") or "").strip()
+        if not customer_id:
+            print(f"{UtilityTools.RED}[X] customer_id is required.{UtilityTools.RESET}")
+            return
+
+        tenant = {
+            "customer_id": customer_id,
+            "domain": str(getattr(args, "domain", "") or "").strip() or None,
+            "admin_subject": str(getattr(args, "admin", "") or "").strip() or None,
+            "org_id": str(getattr(args, "org_id", "") or "").strip() or None,
+            "credname": str(getattr(args, "cred", "") or "").strip() or None,
+        }
+        is_new = self.session.workspace_config.add_or_update_tenant(tenant)
+        self.session.set_configs()
+
+        verb = "Added" if is_new else "Updated"
+        print(f"{UtilityTools.GREEN}[*] {verb} tenant: {customer_id}{UtilityTools.RESET}")
+
+        do_swap = bool(getattr(args, "swap", False))
+        auto_activate = len(self.session.workspace_config.workspace_tenants) == 1
+        if do_swap or auto_activate:
+            self.swap_workspace_tenant(customer_id)
+
+    def swap_workspace_tenant(self, customer_id=None, *, cred_also=False):
+        tenants = list(self.session.workspace_config.workspace_tenants or [])
+
+        if not customer_id:
+            if not tenants:
+                print("[X] No workspace tenants registered. Use: workspace add <customer_id>")
+                return
+            print(f"{UtilityTools.BOLD}[*] Select a workspace tenant:{UtilityTools.RESET}")
+            for i, t in enumerate(tenants, 1):
+                cid = str(t.get("customer_id") or "")
+                domain = str(t.get("domain") or "")
+                label = f"{cid}" + (f" ({domain})" if domain else "")
+                print(f"  [{i}] {label}")
+            answer = input("[*] Choose customer_id or index: ").strip()
+            if is_integer_within_bounds(answer, len(tenants)):
+                chosen = tenants[int(answer) - 1]
+            else:
+                chosen = next((t for t in tenants if t.get("customer_id") == answer), None)
+            if not chosen:
+                print("[X] Invalid selection.")
+                return
+            customer_id = str(chosen.get("customer_id") or "")
+
+        tenant = self.session.workspace_config.get_tenant(customer_id)
+        if tenant is None:
+            # Allow swapping to a customer_id that isn't registered (e.g. set via configs)
+            print(f"[!] '{customer_id}' is not a registered tenant — activating anyway. Use 'workspace add' to register it.")
+
+        self.session.workspace_config.workspace_customer_id = customer_id
+        if tenant and tenant.get("admin_subject"):
+            self.session.workspace_config.workspace_admin_subject = str(tenant["admin_subject"])
+        self.session.set_configs()
+        print(f"{UtilityTools.GREEN}[*] Active workspace tenant: {customer_id}{UtilityTools.RESET}")
+        if tenant and tenant.get("admin_subject"):
+            print(f"[*] Admin subject: {tenant['admin_subject']}")
+
+        if cred_also and tenant and tenant.get("credname"):
+            credname = str(tenant["credname"])
+            print(f"[*] Swapping credential to: {credname}")
+            result = self.session.load_stored_creds(credname)
+            if result is None:
+                print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Credential '{credname}' not found.{UtilityTools.RESET}")
+
+    def remove_workspace_tenant(self, customer_id):
+        if not customer_id:
+            print(f"{UtilityTools.RED}[X] customer_id is required.{UtilityTools.RESET}")
+            return
+
+        removed = self.session.workspace_config.remove_tenant(customer_id)
+        if not removed:
+            print(f"[X] No registered tenant with customer_id '{customer_id}'.")
+            return
+
+        if self.session.workspace_config.workspace_customer_id == customer_id:
+            self.session.workspace_config.workspace_customer_id = None
+            self.session.workspace_config.workspace_admin_subject = None
+            print("[!] Cleared active workspace tenant.")
+
+        self.session.set_configs()
+        print(f"{UtilityTools.GREEN}[*] Removed tenant: {customer_id}{UtilityTools.RESET}")
 
     # -----------------------------
     # Data commands
@@ -1583,7 +1859,7 @@ class CommandProcessor:
             if result.get("read_query"):
                 rows = list(result.get("rows") or [])
                 if rows:
-                    UtilityTools.print_limited_table(rows, list(rows[0].keys()), max_rows=200, sort_key=None)
+                    UtilityTools.print_limited_table(rows, list(rows[0].keys()), max_rows=200, sort_key=None, filter_display_fields=False)
                 else:
                     print("[*] No rows.")
             else:
@@ -1593,10 +1869,12 @@ class CommandProcessor:
                 )
         except Exception as exc:
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] SQL execution failed:{UtilityTools.RESET} {type(exc).__name__}: {exc}")
+            return -1
 
     def handle_wipe_service_command(self, args):
         all_workspaces = bool(getattr(args, "all_workspaces", False))
         force_yes = bool(getattr(args, "yes", False))
+        dry_run = bool(getattr(args, "dry_run", False))
         target_ws = int(getattr(self, "workspace_id", 0) or 0)
 
         try:
@@ -1617,6 +1895,10 @@ class CommandProcessor:
             print(f"[*] Candidate rows to delete: {total_rows}")
             if non_workspace_tables:
                 print(f"[!] Skipping tables without workspace_id: {len(non_workspace_tables)}")
+
+            if dry_run:
+                print("[*] Dry run — no changes made.")
+                return
 
             if total_rows <= 0:
                 print("[*] Nothing to delete for selected scope.")
@@ -1655,6 +1937,7 @@ class CommandProcessor:
         export_format = str(getattr(args, "format", "") or "").strip().lower()
         out_dir_arg = str(getattr(args, "out_dir", "") or "")
         out_file_arg = str(getattr(args, "out_file", "") or "")
+        table_filter = str(getattr(args, "table", "") or "").strip() or None
 
         def _default_out_dir(subdir: str) -> Path:
             if out_dir_arg:
@@ -1675,7 +1958,7 @@ class CommandProcessor:
                 "subdir": "sqlite_csv",
                 "filename": "sqlite_blob.csv",
                 "error_label": "CSV data blob",
-                "runner": lambda path: export_sqlite_dbs_to_csv_blob(db_paths=db_paths, out_csv_path=path),
+                "runner": lambda path: export_sqlite_dbs_to_csv_blob(db_paths=db_paths, out_csv_path=path, table_name=table_filter),
                 "summary": lambda result: (
                     f"[*] CSV export complete -> {result['csv_path']} "
                     f"(databases={result['databases']}, tables={result['tables']}, rows={result['rows']})"
@@ -1685,7 +1968,7 @@ class CommandProcessor:
                 "subdir": "sqlite_json",
                 "filename": "sqlite_blob.json",
                 "error_label": "JSON blob",
-                "runner": lambda path: export_sqlite_dbs_to_json_blob(db_paths=db_paths, out_json_path=path),
+                "runner": lambda path: export_sqlite_dbs_to_json_blob(db_paths=db_paths, out_json_path=path, table_name=table_filter),
                 "summary": lambda result: (
                     f"[*] JSON export complete -> {result['json_path']} "
                     f"(databases={result['databases']}, tables={result['tables']}, rows={result['rows']})"
@@ -1695,7 +1978,7 @@ class CommandProcessor:
                 "subdir": "sqlite_excel",
                 "filename": "sqlite_blob.xlsx",
                 "error_label": "Excel workbook",
-                "runner": lambda path: export_sqlite_dbs_to_excel_blob(db_paths=db_paths, out_xlsx_path=path, single_sheet=True),
+                "runner": lambda path: export_sqlite_dbs_to_excel_blob(db_paths=db_paths, out_xlsx_path=path, single_sheet=True, table_name=table_filter),
                 "summary": lambda result: (
                     f"[*] Excel export complete -> {result['xlsx_path']} "
                     f"(format={result.get('format','xlsx')}, databases={result['databases']}, tables={result['tables']}, rows={result['rows']}, single_sheet={result['single_sheet']})"
@@ -1800,8 +2083,11 @@ class CommandProcessor:
         key = str(getattr(args, "type_of_entity", "") or "").strip().lower()
         alias_to_attr = {
             "projects": "preferred_project_ids",
+            "preferred_project_ids": "preferred_project_ids",
             "zones": "preferred_zones",
+            "preferred_zones": "preferred_zones",
             "regions": "preferred_regions",
+            "preferred_regions": "preferred_regions",
             "workspace_customer_id": "workspace_customer_id",
             "workspace_admin_subject": "workspace_admin_subject",
         }
@@ -1831,6 +2117,7 @@ class CommandProcessor:
                 setattr(self.session.workspace_config, alias_to_attr[key], str(values[0]).strip() or None)
 
             self.session.set_configs()
+            print(f"{UtilityTools.GREEN}[*] Config '{key}' updated.{UtilityTools.RESET}")
             return None
 
         if command == "unset":
@@ -1861,8 +2148,7 @@ class CommandProcessor:
 
     def _run_module(self, module_name: str, module_args: List[str]):
         if module_path := self._module_name_to_path.get(module_name):
-            interact_with_module(self.session, module_path, module_args)
-            return
+            return interact_with_module(self.session, module_path, module_args)
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Module \"{module_name}\" not found.{UtilityTools.RED}{UtilityTools.RESET}")
 
     def print_module_info(self, module_name, max_width=100):
@@ -2263,7 +2549,9 @@ def workspace_instructions(workspace_id, workspace_name, *, startup_silent: bool
 
     # Main loop for interactive prompts.
     while True:
-        cli_prefix = f"{session.project_id}:{session.credname}"
+        ws_id = str(session.workspace_config.workspace_customer_id or "").strip()
+        ws_suffix = f":{ws_id}" if ws_id else ""
+        cli_prefix = f"{session.project_id}:{session.credname}{ws_suffix}"
 
         try:
             user_input = input(f'({cli_prefix})> ')
@@ -2276,7 +2564,7 @@ def workspace_instructions(workspace_id, workspace_name, *, startup_silent: bool
             if keep_running == CommandProcessor.EXIT_SIGNAL:
                 break
 
-        except (ValueError, KeyboardInterrupt):
+        except (EOFError, ValueError, KeyboardInterrupt):
             break
 
         except Exception:

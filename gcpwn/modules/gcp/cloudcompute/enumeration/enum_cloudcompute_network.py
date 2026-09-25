@@ -67,7 +67,7 @@ def _parse_args(user_args):
         description="Enumerate Compute Engine network and connectivity resources",
         components=COMPONENTS,
         add_extra_args=_add_extra_args,
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on supported Compute network resources"},
         },
@@ -139,7 +139,7 @@ def run_module(user_args, session):
         api_actions=api_actions,
         iam_actions=iam_actions,
         sort_key="region",
-    ) if selected.get("routers", False) else []
+    )
 
     _process_existing_resource(
         selected_key="networks",
@@ -383,22 +383,23 @@ def run_module(user_args, session):
                 if total_routers <= 50 or index in (1, total_routers) or index % max(5, total_routers // 20 or 1) == 0:
                     print(f"[*] Cloud NAT progress: {index}/{total_routers} routers checked")
 
-        UtilityTools.summary_wrapup(
-            project_id,
-            "Cloud NATs",
-            all_nats,
-            router_nats_resource.COLUMNS,
-            primary_resource="NATs",
-            primary_sort_key="region",
-        )
-        if not all_nats:
+        if all_nats:
+            UtilityTools.summary_wrapup(
+                project_id,
+                "Cloud NATs",
+                all_nats,
+                router_nats_resource.COLUMNS,
+                primary_resource="NATs",
+                primary_sort_key="region",
+            )
+        else:
             print(f"[*] No NATs found in project {project_id}.")
 
     if has_recorded_actions(scope_actions):
         session.insert_actions(scope_actions, project_id, column_name="compute_actions_allowed")
     if has_recorded_actions(api_actions):
         session.insert_actions(api_actions, project_id, column_name="compute_actions_allowed")
-    if has_recorded_actions(iam_actions):
+    if args.iam and has_recorded_actions(iam_actions):
         session.insert_actions(
             iam_actions,
             project_id,

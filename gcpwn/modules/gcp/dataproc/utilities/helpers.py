@@ -130,8 +130,8 @@ class DataprocBatchesResource(_DataprocRegionalResource):
     def delete(self, name: str) -> None:
         try:
             self._client_for_region(_region_of(name)).delete_batch(name=name)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_batch({name}): {e}")
 
 
 class DataprocWorkflowTemplatesResource(_DataprocRegionalResource):
@@ -182,5 +182,5 @@ class DataprocWorkflowTemplatesResource(_DataprocRegionalResource):
     def delete(self, name: str) -> None:
         try:
             self._client_for_region(_region_of(name)).delete_workflow_template(name=name)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_workflow_template({name}): {e}")

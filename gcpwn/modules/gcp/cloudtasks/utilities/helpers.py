@@ -154,17 +154,17 @@ class CloudTasksQueuesResource(GcpListResource):
 
     def create(self, *, parent: str, queue: Any) -> Any:
         """Create a Cloud Tasks queue. queue is a tasks_v2.Queue proto. Returns created queue."""
-        client = self._build_client(self.session)
+        client = self.client
         return client.create_queue(request=tasks_v2.CreateQueueRequest(parent=parent, queue=queue))
 
     def create_task(self, *, parent: str, task: Any) -> Any:
         """Create a Cloud Tasks task under a queue. task is a tasks_v2.Task proto."""
-        client = self._build_client(self.session)
+        client = self.client
         return client.create_task(request=tasks_v2.CreateTaskRequest(parent=parent, task=task))
 
     def delete(self, *, name: str) -> None:
         """Delete a Cloud Tasks queue by full resource name. Best-effort; swallows errors."""
-        client = self._build_client(self.session)
+        client = self.client
         try:
             client.delete_queue(request=tasks_v2.DeleteQueueRequest(name=name))
         except Exception:

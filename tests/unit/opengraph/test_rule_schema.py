@@ -1,4 +1,4 @@
-"""Regression tests for the unified og_privilege_escalation_paths.json schema.
+"""Regression tests for the unified og_defined_edges.json schema.
 
 Covers three layers:
   1. _desugar_multi_permission_rule: new key names (requires/on/edge/via) AND
@@ -255,7 +255,7 @@ class TestExpandSinglePermissionRules:
         assert r["requires_any"] == ["some.perm"]
         assert r["target_selector"] == {"mode": "resource_types", "resource_types": ["foo"]}
 
-    def test_description_and_scopes_stripped(self):
+    def test_scopes_stripped_description_kept(self):
         rules = expand_single_permission_rules({
             "X": {
                 "permissions": ["x.y.z"],
@@ -264,7 +264,8 @@ class TestExpandSinglePermissionRules:
             }
         })
         r = rules["X"]
-        assert "description" not in r
+        # description passes through (used for display); resource_scopes_possible is stripped
+        assert r.get("description") == "verbose docs"
         assert "resource_scopes_possible" not in r
 
     def test_skips_rule_with_no_permissions(self):
@@ -277,24 +278,38 @@ class TestExpandSinglePermissionRules:
 # --------------------------------------------------------------------------- #
 
 def _load_json():
-    p = pathlib.Path(__file__).parent.parent.parent.parent / "gcpwn" / "mappings" / "og_privilege_escalation_paths.json"
+    p = pathlib.Path(__file__).parent.parent.parent.parent / "gcpwn" / "mappings" / "og_defined_edges.json"
     return json.loads(p.read_text())
 
 
-def test_live_json_has_unified_rules_key():
+def _all_rules(d: dict) -> dict:
+    """Merge rules from all categories (skipping _schema / collapsed_role_edges)."""
+    non_cat = {"_schema", "collapsed_role_edges", "rules"}
+    if "rules" in d:
+        return d["rules"]
+    merged = {}
+    for key, val in d.items():
+        if key not in non_cat and isinstance(val, dict):
+            merged.update(val)
+    return merged
+
+
+def test_live_json_has_category_layout():
     d = _load_json()
-    assert "rules" in d
+    assert "priv_escalation" in d, "og_defined_edges.json must have a 'priv_escalation' category"
+    assert "sensitive_resource_access" in d, "og_defined_edges.json must have a 'sensitive_resource_access' category"
+    assert "rules" not in d, "flat 'rules' key should not exist in new category layout"
     assert "single_permission_rules" not in d
     assert "multi_permission_rules" not in d
 
 
 def test_live_json_all_expected_rules_present():
-    rules = _load_json()["rules"]
+    rules = _all_rules(_load_json())
     expected_single = {
         "CAN_MODIFY_PROJECT_IAM", "CAN_MODIFY_FOLDER_IAM", "CAN_MODIFY_ORG_IAM",
-        "CAN_MODIFY_SA_IAM", "CAN_MODIFY_COMPUTE_INSTANCE_IAM", "CAN_MODIFY_ClOUD_RUN_FUNCTION_IAM",
+        "CAN_MODIFY_SA_IAM", "CAN_MODIFY_COMPUTE_INSTANCE_IAM", "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM",
         "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM", "CAN_IMPERSONATE_SA", "CAN_CREATE_SA_ACCESS_TOKEN",
-        "CAN_CREATE_SA_KEY", "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY", "CAN_UPDATE_CLOUDBUILD_BUILD",
+        "CAN_CREATE_SA_KEY", "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY",
         "CAN_READ_SECRET_DATA",
     }
     expected_multi = {
@@ -313,8 +328,17 @@ def test_live_json_all_expected_rules_present():
         assert "edge" in rules[name], f"{name}: should have 'edge'"
 
 
+def test_live_json_categories_correct():
+    d = _load_json()
+    # CAN_READ_SECRET_DATA must be in sensitive_resource_access, not priv_escalation
+    assert "CAN_READ_SECRET_DATA" in d["sensitive_resource_access"]
+    assert "CAN_READ_SECRET_DATA" not in d["priv_escalation"]
+    # priv_escalation holds the bulk of the rules
+    assert len(d["priv_escalation"]) > 10
+
+
 def test_live_json_no_old_keys():
-    rules = _load_json()["rules"]
+    rules = _all_rules(_load_json())
     old_keys = {"permission", "subject_groups", "subject_edge", "subject_node", "target_edge",
                 "resource_scopes_possible"}
     for name, rule in rules.items():
@@ -330,34 +354,27 @@ def test_live_json_no_old_keys():
     (
         "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
         ["cloudscheduler.jobs.create", "iam.serviceAccounts.actAs"],
-        "CAN_CREATE_CLOUDSCHEDULER_JOB",
+        "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
         "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
     ),
     (
         "CREATE_CLOUDBUILD_AS_SA",
         ["cloudbuild.builds.create", "iam.serviceAccounts.actAs"],
-        "CAN_CREATE_CLOUDBUILD_BUILD",
+        "CREATE_CLOUDBUILD_AS_SA",
         "CREATE_CLOUDBUILD_AS_SA",
     ),
     (
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
         ["run.services.create", "iam.serviceAccounts.actAs"],
-        "CAN_CREATE_CLOUDRUN_SERVICE",
+        "CREATE_CLOUDRUN_SERVICE_AS_SA",
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
     ),
     (
         "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
         ["cloudfunctions.functions.create", "cloudfunctions.functions.sourceCodeSet",
          "cloudfunctions.functions.call", "iam.serviceAccounts.actAs"],
-        "CAN_CREATE_DEPLOY_INVOKE_CLOUDFUNCTION",
         "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-    ),
-    (
-        "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-        ["cloudfunctions.functions.update", "cloudfunctions.functions.sourceCodeSet",
-         "cloudfunctions.functions.call", "iam.serviceAccounts.actAs"],
-        "CAN_UPDATE_DEPLOY_INVOKE_CLOUDFUNCTION",
-        "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
     ),
 ])
 def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo_edge):
@@ -386,21 +403,21 @@ def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo
         "RESET_COMPUTE_STARTUP_SA",
         ["compute.instances.get", "compute.instances.setMetadata",
          "compute.instances.reset", "iam.serviceAccounts.actAs"],
-        "CAN_RESET_COMPUTE_WITH_STARTUP_SCRIPT",
+        "RESET_COMPUTE_STARTUP_SA",
         "RESET_COMPUTE_STARTUP_SA",
     ),
     (
         "START_COMPUTE_STARTUP_SA",
         ["compute.instances.get", "compute.instances.setMetadata",
          "compute.instances.start", "iam.serviceAccounts.actAs"],
-        "CAN_START_COMPUTE_WITH_STARTUP_SCRIPT",
+        "START_COMPUTE_STARTUP_SA",
         "START_COMPUTE_STARTUP_SA",
     ),
 ])
 def test_compute_combo_rules_produce_correct_edges(rule_name, perms, subject_edge, combo_edge):
     """Compute startup-script rules: require a running/stopped VM resource in the DB
     for the subject-group target_selector to match."""
-    vm_status = "RUNNING" if "reset" in perms else "STOPPED"
+    vm_status = "RUNNING" if "compute.instances.reset" in perms else "STOPPED"
     tables = {
         "iam_allow_policies": [
             _project_policy("projects/proj-a/roles/combo"),
@@ -414,7 +431,7 @@ def test_compute_combo_rules_produce_correct_edges(rule_name, perms, subject_edg
                 "project_id": "proj-a",
                 "name": "projects/proj-a/zones/us-central1-a/instances/vm1",
                 "status": vm_status,
-                "service_account": _SA_EMAIL,
+                "service_accounts": json.dumps([{"email": _SA_EMAIL}]),
             }
         ],
         "workspace_users": [],
@@ -480,7 +497,12 @@ def test_can_read_secret_data_fires_when_secret_resource_present():
         "workspace_admin_roles": [],
         "workspace_role_assignments": [],
     }
-    ctx = OpenGraphBuildContext(session=FakeSession(tables), options=OpenGraphBuildOptions())
+    ctx = OpenGraphBuildContext(
+        session=FakeSession(tables),
+        options=OpenGraphBuildOptions(
+            edge_categories=frozenset({"priv_escalation", "sensitive_resource_access"})
+        ),
+    )
     build_users_groups_graph(ctx)
     _run_iam_bindings_stage(ctx)
     assert "CAN_READ_SECRET_DATA" in _edge_kinds(ctx)

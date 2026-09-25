@@ -1,10 +1,116 @@
+# For *.access
+secretmanager.versions.access
+
+# For *.accessViaIAP
+iap.tunnelInstances.accessViaIAP
+
+# For *.actAs
+iam.serviceAccounts.actAs
+
+# For *.call
+cloudfunctions.functions.call
+
+# For *.create
+aiplatform.customJobs.create
+aiplatform.endpoints.create
+aiplatform.pipelineJobs.create
+aiplatform.reasoningEngines.create
+apigateway.apiconfigs.create
+apigateway.apis.create
+apigateway.gateways.create
+appengine.versions.create
+batch.jobs.create
+bigquery.connections.create
+bigquery.datasets.create
+cloudbuild.builds.create
+clouddeploy.deliveryPipelines.create
+clouddeploy.releases.create
+clouddeploy.rollouts.create
+clouddeploy.targets.create
+cloudfunctions.functions.create
+cloudscheduler.jobs.create
+cloudtasks.queues.create
+cloudtasks.tasks.create
+composer.environments.create
+compute.disks.create
+compute.instances.create
+config.deployments.create
+dataflow.jobs.create
+datafusion.instances.create
+datapipelines.pipelines.create
+dataplex.tasks.create
+dataproc.batches.create
+dataproc.clusters.create
+dataproc.jobs.create
+dataproc.workflowTemplates.create
+deploymentmanager.deployments.create
+firebaseapphosting.backends.create
+iam.serviceAccountKeys.create
+iam.workloadIdentityPoolProviders.create
+iam.workloadIdentityPools.create
+integrations.integrations.create
+notebooks.executions.create
+notebooks.instances.create
+run.jobs.create
+run.services.create
+run.workerPools.create
+storage.hmacKeys.create
+tpu.nodes.create
+vmmigration.imageImports.create
+vmmigration.migratingVms.create
+vmmigration.sources.create
+vmmigration.targetProjects.create
+workflows.executions.create
+workflows.workflows.create
+workstations.workstationConfigs.create
+workstations.workstations.create
+
+# For *.createTagBinding
+compute.instances.createTagBinding
+
+# For *.deploy
+aiplatform.endpoints.deploy
+
+# For *.get
+compute.instances.get
+storage.objects.get
+
+# For *.getAccessToken
+iam.serviceAccounts.getAccessToken
+
+# For *.getData
+bigquery.tables.getData
+
+# For *.getOpenIdToken
+iam.serviceAccounts.getOpenIdToken
+
+# For *.implicitDelegation
+iam.serviceAccounts.implicitDelegation
+
+# For *.instantiate
+dataproc.workflowTemplates.instantiate
+
+# For *.invoke
+cloudfunctions.functions.invoke
+run.routes.invoke
+
+# For *.reset
+compute.instances.reset
+
+# For *.run
+run.jobs.run
+
+# For *.setCommonInstanceMetadata
+compute.projects.setCommonInstanceMetadata
+
+# For *.setIamPolicy
 accesscontextmanager.policies.setIamPolicy
 aiplatform.endpoints.setIamPolicy
 aiplatform.entityTypes.setIamPolicy
 aiplatform.featureGroups.setIamPolicy
 aiplatform.featureOnlineStores.setIamPolicy
-aiplatform.featurestores.setIamPolicy
 aiplatform.featureViews.setIamPolicy
+aiplatform.featurestores.setIamPolicy
 aiplatform.notebookRuntimeTemplates.setIamPolicy
 analyticshub.dataExchanges.setIamPolicy
 analyticshub.listings.setIamPolicy
@@ -13,11 +119,11 @@ apigateway.apis.setIamPolicy
 apigateway.gateways.setIamPolicy
 apigee.deployments.setIamPolicy
 apigee.environments.setIamPolicy
+apigee.spaces.setIamPolicy
 apigeeregistry.apis.setIamPolicy
 apigeeregistry.artifacts.setIamPolicy
 apigeeregistry.specs.setIamPolicy
 apigeeregistry.versions.setIamPolicy
-apigee.spaces.setIamPolicy
 apphub.applications.setIamPolicy
 artifactregistry.repositories.setIamPolicy
 automl.datasets.setIamPolicy
@@ -38,7 +144,6 @@ bigquery.dataPolicies.setIamPolicy
 bigquery.datasets.setIamPolicy
 bigquery.reservations.setIamPolicy
 bigquery.rowAccessPolicies.setIamPolicy
-bigquery.tables.getData
 bigquery.tables.setIamPolicy
 bigtable.authorizedViews.setIamPolicy
 bigtable.backups.setIamPolicy
@@ -53,18 +158,12 @@ binaryauthorization.continuousValidationConfig.setIamPolicy
 binaryauthorization.policy.setIamPolicy
 cloudaicompanion.repositoryGroups.setIamPolicy
 cloudaicompanion.topics.setIamPolicy
-cloudbuild.builds.create
 cloudbuild.connections.setIamPolicy
-cloudbuilds.builds.create
 clouddeploy.customTargetTypes.setIamPolicy
 clouddeploy.deliveryPipelines.setIamPolicy
 clouddeploy.deployPolicies.setIamPolicy
 clouddeploy.targets.setIamPolicy
-cloudfunctions.functions.create
-cloudfunctions.functions.invoke
 cloudfunctions.functions.setIamPolicy
-cloudfunctions.functions.sourceCodeSet
-cloudfunctions.functions.update
 cloudkms.cryptoKeys.setIamPolicy
 cloudkms.ekmConfigs.setIamPolicy
 cloudkms.ekmConnections.setIamPolicy
@@ -73,28 +172,17 @@ cloudkms.keyRings.setIamPolicy
 cloudprivatecatalogproducer.catalogs.setIamPolicy
 cloudprivatecatalogproducer.producerCatalogs.setIamPolicy
 cloudprivatecatalogproducer.products.setIamPolicy
-cloudscheduler.jobs.create
 cloudsupport.accounts.setIamPolicy
 cloudtasks.queues.setIamPolicy
 compute.backendBuckets.setIamPolicy
 compute.backendServices.setIamPolicy
-compute.disks.create
 compute.disks.setIamPolicy
 compute.firewallPolicies.setIamPolicy
 compute.futureReservations.setIamPolicy
 compute.globalOperations.setIamPolicy
 compute.images.setIamPolicy
-compute.instances.create
-compute.instances.createTagBinding
-compute.instances.get
-compute.instances.reset
-compute.instances.setIamPolicy
-compute.instances.setMetadata
-compute.instances.setServiceAccount
-compute.instances.start
-compute.instances.stop
-compute.instances.update
 compute.instanceTemplates.setIamPolicy
+compute.instances.setIamPolicy
 compute.instantSnapshotGroups.setIamPolicy
 compute.instantSnapshots.setIamPolicy
 compute.licenseCodes.setIamPolicy
@@ -113,13 +201,11 @@ compute.snapshotGroups.setIamPolicy
 compute.snapshots.setIamPolicy
 compute.storagePools.setIamPolicy
 compute.subnetworks.setIamPolicy
-compute.subnetworks.use
-compute.subnetworks.useExternalIp
 compute.zoneOperations.setIamPolicy
 config.deployments.setIamPolicy
 connectors.connections.setIamPolicy
-connectors.customConnectors.setIamPolicy
 connectors.customConnectorVersions.setIamPolicy
+connectors.customConnectors.setIamPolicy
 connectors.endpointAttachments.setIamPolicy
 connectors.managedZones.setIamPolicy
 contactcenterinsights.authorizedViews.setIamPolicy
@@ -132,8 +218,6 @@ datacatalog.entryGroups.setIamPolicy
 datacatalog.tagTemplates.setIamPolicy
 datacatalog.taxonomies.setIamPolicy
 dataconnectors.connectors.setIamPolicy
-dataflow.jobs.create
-dataflow.jobs.update
 dataform.folders.setIamPolicy
 dataform.repositories.setIamPolicy
 dataform.teamFolders.setIamPolicy
@@ -151,8 +235,8 @@ dataplex.content.setIamPolicy
 dataplex.dataAttributeBindings.setIamPolicy
 dataplex.dataAttributes.setIamPolicy
 dataplex.dataProducts.setIamPolicy
-dataplex.datascans.setIamPolicy
 dataplex.dataTaxonomies.setIamPolicy
+dataplex.datascans.setIamPolicy
 dataplex.entryGroups.setIamPolicy
 dataplex.entryTypes.setIamPolicy
 dataplex.environments.setIamPolicy
@@ -161,11 +245,8 @@ dataplex.lakes.setIamPolicy
 dataplex.tasks.setIamPolicy
 dataplex.zones.setIamPolicy
 dataproc.autoscalingPolicies.setIamPolicy
-dataproc.clusters.create
 dataproc.clusters.setIamPolicy
-dataproc.jobs.create
 dataproc.jobs.setIamPolicy
-dataproc.jobs.update
 dataproc.operations.setIamPolicy
 dataproc.workflowTemplates.setIamPolicy
 datastream.connectionProfiles.setIamPolicy
@@ -175,7 +256,6 @@ datastream.streams.setIamPolicy
 datastudio.datasources.setIamPolicy
 datastudio.reports.setIamPolicy
 datastudio.workspaces.setIamPolicy
-deploymentmanager.deployments.create
 deploymentmanager.deployments.setIamPolicy
 designcenter.spaces.setIamPolicy
 discoveryengine.agents.setIamPolicy
@@ -222,22 +302,15 @@ healthcare.dicomStores.setIamPolicy
 healthcare.fhirStores.setIamPolicy
 healthcare.hl7V2Stores.setIamPolicy
 iam.googleapis.com/workforcePools.setIamPolicy
-iam.roles.update
-iam.serviceAccountKeys.create
-iam.serviceAccounts.actAs
-iam.serviceAccounts.getAccessToken
-iam.serviceAccounts.implicitDelegation
 iam.serviceAccounts.setIamPolicy
-iam.serviceAccounts.signBlob
-iam.serviceAccounts.signJwt
+iap.tunnel.setIamPolicy
 iap.tunnelDestGroups.setIamPolicy
 iap.tunnelInstances.setIamPolicy
 iap.tunnelLocations.setIamPolicy
-iap.tunnel.setIamPolicy
 iap.tunnelZones.setIamPolicy
-iap.webServices.setIamPolicy
-iap.webServiceVersions.setIamPolicy
 iap.web.setIamPolicy
+iap.webServiceVersions.setIamPolicy
+iap.webServices.setIamPolicy
 iap.webTypes.setIamPolicy
 identitytoolkit.tenants.setIamPolicy
 ids.endpoints.setIamPolicy
@@ -255,8 +328,8 @@ ml.jobs.setIamPolicy
 ml.models.setIamPolicy
 ml.studies.setIamPolicy
 networkconnectivity.groups.setIamPolicy
-networkconnectivity.hubRoutes.setIamPolicy
 networkconnectivity.hubRouteTables.setIamPolicy
+networkconnectivity.hubRoutes.setIamPolicy
 networkconnectivity.hubs.setIamPolicy
 networkconnectivity.internalRanges.setIamPolicy
 networkconnectivity.policyBasedRoutes.setIamPolicy
@@ -276,8 +349,8 @@ notebooks.schedules.setIamPolicy
 privateca.caPools.setIamPolicy
 privateca.certificateAuthorities.setIamPolicy
 privateca.certificateRevocationLists.setIamPolicy
-privateca.certificates.setIamPolicy
 privateca.certificateTemplates.setIamPolicy
+privateca.certificates.setIamPolicy
 privateca.reusableConfigs.setIamPolicy
 privilegedaccessmanager.entitlements.setIamPolicy
 proximitybeacon.beacons.setIamPolicy
@@ -292,15 +365,12 @@ resourcemanager.projects.setIamPolicy
 resourcemanager.tagKeys.setIamPolicy
 resourcemanager.tagValues.setIamPolicy
 run.jobs.setIamPolicy
-run.routes.invoke
-run.services.create
 run.services.setIamPolicy
+run.workerpools.setIamPolicy
 runtimeconfig.configs.setIamPolicy
 runtimeconfig.variables.setIamPolicy
 runtimeconfig.waiters.setIamPolicy
-run.workerpools.setIamPolicy
 secretmanager.secrets.setIamPolicy
-secretmanager.versions.access
 securesourcemanager.instances.setIamPolicy
 securesourcemanager.repositories.setIamPolicy
 securitycenter.sources.setIamPolicy
@@ -317,9 +387,7 @@ spanner.backups.setIamPolicy
 spanner.databases.setIamPolicy
 spanner.instances.setIamPolicy
 storage.buckets.setIamPolicy
-storage.hmacKeys.create
 storage.managedFolders.setIamPolicy
-storage.objects.get
 storage.objects.setIamPolicy
 telemetry.consumers.setIamPolicy
 visionai.analyses.setIamPolicy
@@ -334,4 +402,41 @@ vmwareengine.hcxActivationKeys.setIamPolicy
 vmwareengine.privateClouds.setIamPolicy
 workstations.workstationConfigs.setIamPolicy
 workstations.workstations.setIamPolicy
-cloudfunctions.functions.call
+
+# For *.setMetadata
+compute.instances.setMetadata
+
+# For *.setServiceAccount
+compute.instances.setServiceAccount
+
+# For *.signBlob
+iam.serviceAccounts.signBlob
+
+# For *.signJwt
+iam.serviceAccounts.signJwt
+
+# For *.sourceCodeSet
+cloudfunctions.functions.sourceCodeSet
+
+# For *.start
+compute.instances.start
+
+# For *.stop
+compute.instances.stop
+
+# For *.update
+appengine.applications.update
+cloudbuild.builds.update
+cloudfunctions.functions.update
+compute.instances.update
+dataflow.jobs.update
+dataproc.jobs.update
+iam.roles.update
+run.jobs.update
+run.services.update
+
+# For *.use
+compute.subnetworks.use
+
+# For *.useExternalIp
+compute.subnetworks.useExternalIp

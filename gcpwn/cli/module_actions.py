@@ -67,9 +67,19 @@ MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "process_gcp_iam_bindings": (True, True, True),
     "process_og_gcpwn_data": (True, False, False),
     "process_og_node_color_images": (True, False, False),
+    # Google Workspace modules are tenant/user-scoped, not per-GCP-project -> run once,
+    # no project-selection flags. All share (run_once=True, use_context_project=True,
+    # accepts_project_flags=False) so --project-id / --all-projects don't apply.
     "enum_cloud_identity": (True, True, False),
-    # Google Workspace modules are tenant/user-scoped, not per-GCP-project -> run once.
     "enum_drive": (True, True, False),
+    "enum_admin_roles": (True, True, False),
+    "enum_org_units": (True, True, False),
+    "enum_domains": (True, True, False),
+    "enum_mobile_devices": (True, True, False),
+    "enum_oauth_tokens": (True, True, False),
+    "enum_group_settings": (True, True, False),
+    "enum_data_transfers": (True, True, False),
+    "enum_google_workspace": (True, True, False),
 }
 
 UNAUTH_ALLOWED_MODULE_KEYS: set[str] = {
@@ -580,6 +590,9 @@ def _execute_module_for_project(
         with project_ctx:
             with run_ctx:
                 return (run_module(list(passthrough_args), session), True)
+    except SystemExit:
+        # Module's argparser rejected its arguments; treat as module failure, not REPL exit.
+        return (None, False)
     except Exception:
         print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Module failed for project {label}. Details below:{UtilityTools.RESET}")
         print(traceback.format_exc())
@@ -610,7 +623,11 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
         # (enum_all re-sets it from its own args).
         clear_cancel()
         set_stop_on_denied(False)
-        runner = _parse_runner_args(module_args)
+        try:
+            runner = _parse_runner_args(module_args)
+        except ValueError as e:
+            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] {e}{UtilityTools.RESET}")
+            return -1
         passthrough_args = list(runner.passthrough)
 
         module_import_path = str(module_path or "").replace("/", ".").strip()
@@ -677,6 +694,12 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
             run_module(list(passthrough_args), session)
             return 0
 
+        # --list-modules needs no project context (pure listing); short-circuit before
+        # _plan_execution reaches the interactive project-scope prompt.
+        if mod_short in ("enum_all", "enum_gcp") and "--list-modules" in passthrough_args:
+            run_module(list(passthrough_args), session)
+            return 0
+
         # enum_all cross-project parallel mode: drive all projects through one
         # orchestrator (RM-once -> services pool -> bindings-once) instead of the
         # per-project sequential loop. Opt-in via --parallel-services N (N>1).
@@ -722,7 +745,9 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
                     run_index=0,
                     run_total=1,
                 )
-            return 0 if ok else -1
+            if not ok:
+                return -1
+            return int(_callback) if isinstance(_callback, int) else 0
 
         original_project_id = session.project_id
         failures: list[str] = []
@@ -745,7 +770,7 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
                     run_index=index,
                     run_total=run_total,
                 )
-                if not ok:
+                if not ok or callback == -1:
                     failures.append(str(project_id))
                     index += 1
                     continue
@@ -763,7 +788,13 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
             # enum_all (top orchestrator): after the GCP per-project loop, run the
             # tenant-scoped Google Workspace phase ONCE. enum_gcp does not (GCP only);
             # the --parallel-services path runs Workspace inside run_parallel instead.
-            if mod_short == "enum_all":
+            # Skip when the user only wanted a listing/token operation (not enumeration).
+            _enum_all_list_flags = frozenset({"--list-modules", "--list-tokens"})
+            if (
+                mod_short == "enum_all"
+                and not (_enum_all_list_flags & set(passthrough_args))
+                and len(failures) < len(pending_project_ids)
+            ):
                 try:
                     from gcpwn.modules.everything.enumeration.enum_google_workspace import (
                         run_module as run_workspace_all,

@@ -46,12 +46,14 @@ def to_snake_key(name: str) -> str:
     return token.lower()
 
 
-def _normalize_keys(value: Any) -> Any:
-    """Recursively snake_case every dict key in a nested structure (in lists too).
+def _normalize_keys(value: Any, _depth: int = 0) -> Any:
+    """Snake_case dict keys up to depth 2 (the pipeline never reads deeper).
 
-    Keys that normalize to empty are dropped. Non-dict/list values pass through
-    unchanged. First pass of the save_to_table pipeline so the schema's snake_case
-    column names match regardless of whether the API returned camelCase.
+    ``_flatten_top_level_scalars`` only promotes scalar children of depth-1 dicts
+    to ``key_child`` columns, so depth-2 is the deepest key that ever gets column-
+    matched. Keys that normalize to empty are dropped. Non-dict/list values pass
+    through unchanged. Lists at depth ≥ 1 are returned verbatim — they end up in
+    ``raw_json`` and their inner keys don't need normalization.
     """
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
@@ -59,10 +61,10 @@ def _normalize_keys(value: Any) -> Any:
             out_key = to_snake_key(str(key))
             if not out_key:
                 continue
-            normalized[out_key] = _normalize_keys(child)
+            normalized[out_key] = _normalize_keys(child, _depth + 1) if _depth < 2 else child
         return normalized
-    if isinstance(value, list):
-        return [_normalize_keys(item) for item in value]
+    if isinstance(value, list) and _depth == 0:
+        return [_normalize_keys(item, _depth + 1) for item in value]
     return value
 
 

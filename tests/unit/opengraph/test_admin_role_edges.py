@@ -1,4 +1,4 @@
-"""Stage-1 Workspace super-admin edge tests (CAN_IMPERSONATE / CAN_RESET_PASSWORD).
+"""Stage-1 Workspace super-admin edge tests (CanImpersonate / CanResetPassword).
 
 Locks the ADD-ONLY contract for the OpenGraph admin-role edges: with no super-admin
 role data the graph is untouched (so every graph built before Workspace admin-role
@@ -49,9 +49,9 @@ def test_super_admin_gets_impersonate_and_reset_edges_to_every_other_user():
     # edge_map is keyed (source_id, edge_type, destination_id).
     admin = "user:admin@corp.com"
     for target in ("user:alice@corp.com", "user:bob@corp.com"):
-        assert (admin, "CAN_IMPERSONATE", target) in b.edge_map
-        assert (admin, "CAN_RESET_PASSWORD", target) in b.edge_map
-    assert (admin, "CAN_IMPERSONATE", admin) not in b.edge_map  # no self-edge
+        assert (admin, "CanImpersonate", target) in b.edge_map
+        assert (admin, "CanResetPassword", target) in b.edge_map
+    assert (admin, "CanImpersonate", admin) not in b.edge_map  # no self-edge
     assert len(b.edge_map) == 4  # 2 other users x 2 edge kinds
 
 
@@ -69,7 +69,7 @@ def test_assigned_to_email_fallback():
     _add_admin_role_edges(
         b, admin_roles=_ROLES, role_assignments=[{"role_id": "R1", "assigned_to": "admin@corp.com"}], workspace_users=_USERS
     )
-    assert ("user:admin@corp.com", "CAN_IMPERSONATE", "user:alice@corp.com") in b.edge_map
+    assert ("user:admin@corp.com", "CanImpersonate", "user:alice@corp.com") in b.edge_map
 
 
 def test_edge_kinds_match_bloodhound_regex():

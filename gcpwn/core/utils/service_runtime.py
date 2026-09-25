@@ -32,6 +32,8 @@ from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 
+API_DISABLED_SENTINEL = "Not Enabled"
+
 _API_DISABLED_SUBSTRINGS = (
     "Enable it by visiting",
     "has not been used in project",
@@ -90,7 +92,7 @@ except Exception:  # pragma: no cover
     _NOTFOUND_EXCEPTIONS: tuple[type[BaseException], ...] = ()
 
 
-STANDARD_ARGUMENT_SPECS = {
+_STANDARD_ARGUMENT_SPECS = {
     "iam": {
         "flags": ("--iam",),
         "kwargs": {
@@ -281,12 +283,12 @@ def add_standard_arguments(
     *,
     overrides: dict[str, dict] | None = None,
 ) -> argparse.ArgumentParser:
-    """Register the named standard flags (from STANDARD_ARGUMENT_SPECS) onto ``parser``.
+    """Register the named standard flags (from _STANDARD_ARGUMENT_SPECS) onto ``parser``.
 
     ``argument_names`` are keys like "iam"/"get"/"threads"; ``overrides`` can swap
     a flag's strings or kwargs per-call. Raises ValueError for an unknown name."""
     for argument_name in argument_names or []:
-        spec = STANDARD_ARGUMENT_SPECS.get(argument_name)
+        spec = _STANDARD_ARGUMENT_SPECS.get(argument_name)
         if spec is None:
             raise ValueError(f"Unknown standard argument: {argument_name}")
         flags = spec["flags"]
@@ -509,6 +511,7 @@ def parallel_map(
     except Exception:
         parsed_threads = 3
     if parsed_threads < 1:
+        print(f"[!] --threads value {threads!r} is invalid; using 1 thread.")
         parsed_threads = 1
     worker_count = min(parsed_threads, 32, len(entries))
     if worker_count <= 1:
@@ -516,7 +519,10 @@ def parallel_map(
         for idx, item in enumerate(entries, start=1):
             if cancel_requested():
                 break
-            output.append(worker(item))
+            try:
+                output.append(worker(item))
+            except Exception:
+                output.append(None)
             if show_progress and _should_emit(idx):
                 print(f"[*] {label}: {idx}/{total} completed (last={_progress_token(item)})")
         return output
@@ -574,7 +580,13 @@ def map_regions_with_disabled_short_circuit(
         return []
 
     first_region = region_list[0]
-    first_result = worker(first_region)
+    try:
+        first_result = worker(first_region)
+    except Exception:
+        # Match parallel_map's per-future exception handling: a worker error in the
+        # first (serial) probe must not abort the entire scan. Return None (no data)
+        # so callers iterate empty — same as any other failed region in the pool.
+        first_result = None
     results: list[tuple[str, Any]] = [(first_region, first_result)]
     if first_result == "Not Enabled":
         if show_progress:
@@ -591,14 +603,24 @@ def map_regions_with_disabled_short_circuit(
     if not remaining_regions:
         return results
 
+    def _safe_worker(region: str) -> tuple[str, Any]:
+        try:
+            return (region, worker(region))
+        except Exception:
+            return (region, None)
+
     remaining_results = parallel_map(
         remaining_regions,
-        lambda region: (region, worker(region)),
+        _safe_worker,
         threads=threads,
         progress_label=progress_label,
         show_progress=show_progress,
     )
-    return [*results, *remaining_results]
+    # parallel_map yields plain None for futures that were queued but not collected
+    # when a cancel event fires mid-pool (the break exits as_completed before every
+    # future is drained). Filter those out so callers always get (region, result)
+    # tuples and never hit: TypeError: cannot unpack non-iterable NoneType object.
+    return [*results, *(r for r in remaining_results if r is not None)]
 
 
 def get_cached_rows(
@@ -703,16 +725,35 @@ def flush_actions(session, project_id, column_name, accumulators, *, credname_ov
     tagged ACTION_EVIDENCE_TEST_IAM_PERMISSIONS. Empty accumulators are skipped.
     DB write -- MAIN THREAD ONLY (must run after all parallel_map workers return)."""
     scope_actions, api_actions, iam_actions = accumulators
-    if has_recorded_actions(scope_actions):
-        session.insert_actions(scope_actions, project_id, column_name=column_name, credname_override=credname_override)
-    if has_recorded_actions(api_actions):
-        session.insert_actions(api_actions, project_id, column_name=column_name, credname_override=credname_override)
-    if has_recorded_actions(iam_actions):
-        session.insert_actions(
-            iam_actions,
-            project_id,
-            column_name=column_name,
-            evidence_type=ACTION_EVIDENCE_TEST_IAM_PERMISSIONS,
-            credname_override=credname_override,
-        )
+    with session.batched_writes():
+        if has_recorded_actions(scope_actions):
+            session.insert_actions(scope_actions, project_id, column_name=column_name, credname_override=credname_override)
+        if has_recorded_actions(api_actions):
+            session.insert_actions(api_actions, project_id, column_name=column_name, credname_override=credname_override)
+        if has_recorded_actions(iam_actions):
+            session.insert_actions(
+                iam_actions,
+                project_id,
+                column_name=column_name,
+                evidence_type=ACTION_EVIDENCE_TEST_IAM_PERMISSIONS,
+                credname_override=credname_override,
+            )
+
+
+def get_bearer_token(session) -> str:
+    """Return a refreshed OAuth2 access token from the session credentials."""
+    creds = getattr(session, "credentials", None)
+    if creds is None:
+        return getattr(session, "access_token", "") or ""
+    try:
+        from google.auth.transport.requests import Request as _Req
+        if not getattr(creds, "valid", True):
+            if hasattr(creds, "with_scopes") and not getattr(creds, "scopes", None):
+                creds = creds.with_scopes(
+                    ["https://www.googleapis.com/auth/cloud-platform"]
+                )
+            creds.refresh(_Req())
+        return getattr(creds, "token", None) or ""
+    except Exception:
+        return getattr(session, "access_token", "") or ""
 

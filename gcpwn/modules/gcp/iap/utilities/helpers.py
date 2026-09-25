@@ -2,60 +2,30 @@ from __future__ import annotations
 
 import json
 
-import requests as _rlib
+from google.cloud import compute_v1
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.module_helpers import get_bearer_token
 
-_COMPUTE_BASE = "https://compute.googleapis.com/compute/v1"
 _IAP_FW_RANGE = "35.235.240.0/20"
 
 
-def _req(tok: str, url: str, params=None) -> dict:
-    try:
-        r = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, params=params, timeout=20)
-        if r.status_code == 200:
-            return r.json()
-        return {}
-    except Exception:
-        return {}
+def _normalize_instance(inst, zone: str, *, iap_fw_rules: list[str]) -> dict:
+    """Produce a DB-ready row from a compute_v1.Instance protobuf."""
+    name = inst.name or ""
+    sa_email = inst.service_accounts[0].email if inst.service_accounts else ""
 
+    has_external = any(nic.access_configs for nic in inst.network_interfaces)
 
-def _list_paged(tok: str, url: str, key: str) -> list[dict]:
-    results: list[dict] = []
-    pt = None
-    while True:
-        params: dict = {"maxResults": 500}
-        if pt:
-            params["pageToken"] = pt
-        data = _req(tok, url, params)
-        results.extend(data.get(key, []))
-        pt = data.get("nextPageToken")
-        if not pt:
-            break
-    return results
-
-
-def _normalize_instance(inst: dict, zone: str, *, iap_fw_rules: list[str]) -> dict:
-    """Produce a DB-ready row from a raw GCE instance dict."""
-    name = inst.get("name", "")
-    sa_list = inst.get("serviceAccounts", [])
-    sa_email = sa_list[0].get("email", "") if sa_list else ""
-
-    nics = inst.get("networkInterfaces", [])
-    has_external = any(nic.get("accessConfigs") for nic in nics)
-
-    metadata_items = inst.get("metadata", {}).get("items", [])
+    metadata_items = (inst.metadata.items if inst.metadata else [])
     oslogin_enabled = any(
-        item.get("key") == "enable-oslogin" and item.get("value", "").lower() == "true"
+        item.key == "enable-oslogin" and item.value.lower() == "true"
         for item in metadata_items
     )
 
     iap_candidate = not has_external or oslogin_enabled or bool(iap_fw_rules)
 
-    # Derive region from zone (e.g. "us-central1-a" -> "us-central1")
     parts = zone.rsplit("-", 1)
     region = parts[0] if len(parts) == 2 else zone
 
@@ -64,7 +34,7 @@ def _normalize_instance(inst: dict, zone: str, *, iap_fw_rules: list[str]) -> di
         "instance_id": name,
         "zone": zone,
         "location": region,
-        "state": inst.get("status", ""),
+        "state": inst.status or "",
         "iap_enabled": "true" if iap_candidate else "false",
         "service_account": sa_email,
     }
@@ -77,9 +47,6 @@ class IAPTunnelInstancesResource(GcpListResource):
     compute.instances.osAdminLogin allows SSH into any IAP-enabled GCE VM
     via ``gcloud compute ssh --tunnel-through-iap``. The metadata server
     inside the VM then exposes the attached SA's OAuth2 token.
-
-    Since the IAP API itself has no GAPIC client for tunnel enumeration,
-    this class uses the Compute REST API directly.
     """
 
     SERVICE_LABEL = "IAP Tunnel Instances"
@@ -97,34 +64,33 @@ class IAPTunnelInstancesResource(GcpListResource):
     ACTION_RESOURCE_TYPE = "iap_instances"
     LIST_PERMISSION = "compute.instances.list"
     ID_FIELD = "instance_id"
-    # Caller passes parent= directly (not constructed from project/location).
     PARENT_FROM_PROJECT_LOCATION = False
     PARENT_FROM_PROJECT = False
 
     def _build_client(self, session):
-        return None  # REST-only; no GAPIC client needed
+        return compute_v1.InstancesClient(credentials=session.credentials)
+
+    def _firewalls_client(self):
+        return compute_v1.FirewallsClient(credentials=self.session.credentials)
 
     def check_iap_firewall(self, project_id: str) -> list[str]:
         """Return names of firewall rules that allow 35.235.240.0/20 on tcp:22."""
-        tok = get_bearer_token(self.session)
-        rules = _list_paged(
-            tok,
-            f"{_COMPUTE_BASE}/projects/{project_id}/global/firewalls",
-            "items",
-        )
         iap_rules: list[str] = []
-        for rule in rules:
-            if rule.get("direction", "") == "EGRESS":
-                continue
-            for allowed in rule.get("allowed", []):
-                if allowed.get("IPProtocol") not in ("tcp", "all"):
+        try:
+            for rule in self._firewalls_client().list(project=project_id):
+                if rule.direction == "EGRESS":
                     continue
-                ports = allowed.get("ports", [])
-                if ports and "22" not in ports and "0-65535" not in ports:
-                    continue
-                src_ranges = rule.get("sourceRanges", [])
-                if _IAP_FW_RANGE in src_ranges or not src_ranges:
-                    iap_rules.append(rule.get("name", ""))
+                for allowed in rule.allowed:
+                    proto = allowed.I_p_protocol
+                    if proto not in ("tcp", "all"):
+                        continue
+                    ports = list(allowed.ports)
+                    if ports and "22" not in ports and "0-65535" not in ports:
+                        continue
+                    if _IAP_FW_RANGE in list(rule.source_ranges) or not rule.source_ranges:
+                        iap_rules.append(rule.name)
+        except Exception:
+            pass
         return iap_rules
 
     def list(
@@ -137,29 +103,17 @@ class IAPTunnelInstancesResource(GcpListResource):
         zone: str | None = None,
         **_,
     ) -> list[dict]:
-        """List GCE instances for the project, optionally filtered by ``zone``.
-
-        Internally checks project-level IAP firewall rules and uses them to
-        set the ``iap_enabled`` field on each returned row. Records
-        ``compute.instances.list`` once on success.
-        """
-        tok = get_bearer_token(self.session)
+        """List GCE instances for the project, optionally filtered by ``zone``."""
         iap_fw_rules = self.check_iap_firewall(project_id or "")
 
+        pairs: list[tuple[str, object]] = []
         if zone:
-            url = f"{_COMPUTE_BASE}/projects/{project_id}/zones/{zone}/instances"
-            raw_instances = _list_paged(tok, url, "items")
-            pairs: list[tuple[str, dict]] = [(zone, inst) for inst in raw_instances]
+            for inst in self.client.list(project=project_id, zone=zone):
+                pairs.append((zone, inst))
         else:
-            agg = _req(
-                tok,
-                f"{_COMPUTE_BASE}/projects/{project_id}/aggregated/instances",
-                params={"maxResults": 500},
-            )
-            pairs = []
-            for zone_key, zone_data in agg.get("items", {}).items():
+            for zone_key, scope in self.client.aggregated_list(project=project_id):
                 z = zone_key.replace("zones/", "")
-                for inst in zone_data.get("instances", []):
+                for inst in scope.instances:
                     pairs.append((z, inst))
 
         rows = [_normalize_instance(inst, z, iap_fw_rules=iap_fw_rules) for z, inst in pairs]
@@ -204,21 +158,15 @@ class IAPTunnelInstancesResource(GcpListResource):
             print(f"{UtilityTools.YELLOW}[!] No output received from SSH command.{UtilityTools.RESET}")
 
     def check_iap_access(self, project_id: str, instance_name: str, zone: str) -> bool:
-        """Return True if ``instance_name`` in ``zone`` appears accessible via IAP tunnel.
-
-        Checks no-external-IP and OS Login signals on the live instance metadata.
-        Does NOT verify that firewall rules allow the IAP source range.
-        """
-        tok = get_bearer_token(self.session)
-        url = f"{_COMPUTE_BASE}/projects/{project_id}/zones/{zone}/instances/{instance_name}"
-        data = _req(tok, url)
-        if not data:
+        """Return True if ``instance_name`` in ``zone`` appears accessible via IAP tunnel."""
+        try:
+            inst = self.client.get(project=project_id, zone=zone, instance=instance_name)
+        except Exception:
             return False
-        nics = data.get("networkInterfaces", [])
-        has_external = any(nic.get("accessConfigs") for nic in nics)
-        metadata_items = data.get("metadata", {}).get("items", [])
+        has_external = any(nic.access_configs for nic in inst.network_interfaces)
+        metadata_items = inst.metadata.items if inst.metadata else []
         oslogin_enabled = any(
-            item.get("key") == "enable-oslogin" and item.get("value", "").lower() == "true"
+            item.key == "enable-oslogin" and item.value.lower() == "true"
             for item in metadata_items
         )
         return not has_external or oslogin_enabled

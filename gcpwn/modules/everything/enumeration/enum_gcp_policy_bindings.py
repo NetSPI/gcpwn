@@ -166,6 +166,7 @@ def run_module(user_args, session):
         except Exception:
             ledger.mark(group, "failed", error=traceback.format_exc())  # re-runs on resume
             raise
-    ledger.clear()  # every requested group finished -> nothing to resume; drop this run's token
+    if to_run:  # only clear when work ran; empty to_run means all selected groups were already done
+        ledger.clear()  # every requested group finished -> nothing to resume; drop this run's token
     return 1
 

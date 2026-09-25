@@ -38,7 +38,7 @@ def _parse_args(user_args):
         description="Enumerate Pub/Sub resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS),
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on Pub/Sub topics, subscriptions, schemas, and snapshots"},
         },

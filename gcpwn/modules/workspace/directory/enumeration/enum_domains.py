@@ -47,7 +47,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace domains (Admin SDK Directory API)",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 
@@ -68,10 +68,6 @@ def run_module(user_args, session):
     # `my_customer` alias. Use the resolved customer ID for the API call when we have
     # it, else fall back to the `my_customer` selector.
     customer_selector = customer_id or str(args.directory_customer or "my_customer")
-    # `customer_id` is also the table scope; if we never resolved one, scope/save
-    # under whatever selector we used so rows stay tenant-scoped.
-    scope_customer_id = customer_id or customer_selector
-
     UtilityTools.dlog(
         debug,
         "workspace domains scope resolved",
@@ -98,10 +94,10 @@ def run_module(user_args, session):
     )
 
     if raw_domains:
-        domains_resource.save(raw_domains, customer_id=scope_customer_id)
+        domains_resource.save(raw_domains, customer_id=customer_selector)
 
     if domains_resource.last_call_ok:
-        _track_workspace_permission(workspace_actions, customer_id=scope_customer_id, permission="domains.read")
+        _track_workspace_permission(workspace_actions, customer_id=customer_selector, permission="domains.read")
         if workspace_actions["workspace_permissions"]:
             session.insert_actions(workspace_actions)
 

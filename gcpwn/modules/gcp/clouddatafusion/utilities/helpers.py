@@ -45,8 +45,9 @@ class DataFusionInstancesResource(GcpListResource):
         )
 
     def _get_item(self, resource_id, parent=None, **_):
+        df = _data_fusion()
         name = resource_id if "/" in resource_id else f"{parent}/instances/{resource_id}"
-        return self.client.get_instance(name=name)
+        return self.client.get_instance(request=df.GetInstanceRequest(name=name))
 
     def _extra_save_fields(self, raw: dict) -> dict:
         return {
@@ -71,8 +72,11 @@ class DataFusionInstancesResource(GcpListResource):
             )
         )
 
-    def get(self, *, name: str) -> object:
-        return self.client.get_instance(name=name)
+    def get_instance_proto(self, *, name: str) -> object:
+        """Return the raw GAPIC Instance proto (for exploit polling that needs proto attributes)."""
+        df = _data_fusion()
+        return self.client.get_instance(request=df.GetInstanceRequest(name=name))
 
     def delete(self, *, name: str) -> None:
-        self.client.delete_instance(name=name)
+        df = _data_fusion()
+        self.client.delete_instance(request=df.DeleteInstanceRequest(name=name))

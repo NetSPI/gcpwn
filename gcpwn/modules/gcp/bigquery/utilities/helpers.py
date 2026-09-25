@@ -699,13 +699,18 @@ class BigQueryConnectionResource:
             resp = client.create_connection(
                 request=_conn_types.CreateConnectionRequest(
                     parent=parent, connection=connection
-                )
+                ),
+                timeout=60.0,
             )
             sa = getattr(getattr(resp, "spark", None), "service_account_id", "") or ""
             conn_resource = resp.name
             conn_id = conn_resource.split("/")[-1]
             return conn_id, sa, conn_resource
         except ImportError:
+            return self._create_spark_rest(
+                project_id=project_id, location=location, connection_name=connection_name
+            )
+        except Exception:
             return self._create_spark_rest(
                 project_id=project_id, location=location, connection_name=connection_name
             )

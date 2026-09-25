@@ -21,14 +21,11 @@ def _parse_args(user_args):
         description="Enumerate Storage Transfer resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS),
-        standard_args=("download", "get", "debug"),
-        standard_arg_overrides={"download": {"help": "Reserved for future transfer job content downloads"}},
+        standard_args=("iam", "get"),
     )
 
 
 def run_module(user_args, session):
     args = _parse_args(user_args)
-    discovered = run_components(session, args, components=COMPONENTS, column_name=None, module_name="enum_storagetransfer")
-    if getattr(args, "download", False) and discovered.get("transfer_jobs"):
-        print("[*] Transfer job download is not yet implemented for this module.")
+    run_components(session, args, components=COMPONENTS, column_name=None, module_name="enum_storagetransfer")
     return 1

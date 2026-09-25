@@ -80,7 +80,7 @@ def trim_service_account_binding_islands(
             for in_edge_key in sa_in:
                 source_id, edge_type, _dest_id = in_edge_key
                 source_node = node_by_id.get(source_id)
-                if edge_type != "GCP_SERVICE_ACCOUNT_KEY_FOR" or not source_node or str(source_node.node_type) != "GCPServiceAccountKey":
+                if edge_type != "ServiceAccountKeyFor" or not source_node or str(source_node.node_type) != "GCPServiceAccountKey":
                     key_only = False
                     break
                 key_in_edges.append(in_edge_key)
@@ -138,7 +138,7 @@ def trim_service_account_binding_islands(
         connected_key_nodes: set[str] = set()
         for edge_key in active_incident_keys:
             src_id, edge_type, dst_id = edge_key
-            if edge_type != "GCP_SERVICE_ACCOUNT_KEY_FOR":
+            if edge_type != "ServiceAccountKeyFor":
                 key_only = False
                 break
             other_id = src_id if dst_id == service_account_id else dst_id

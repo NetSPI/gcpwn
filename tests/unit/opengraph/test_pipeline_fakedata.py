@@ -5,8 +5,8 @@ the actual stage builders, and asserts the emitted nodes/edges. This catches WIR
 gaps the per-function unit tests miss -- e.g. a table missing from context._ROW_TABLES
 (which silently makes context.rows() return [] and a whole edge family disappear).
 
-Covers: identity edges (GOOGLE_MEMBER_OF), the Workspace super-admin edges
-(CAN_IMPERSONATE / CAN_RESET_PASSWORD, end-to-end through context.rows), and Workload
+Covers: identity edges (MemberOf), the Workspace super-admin edges
+(CanImpersonate / CanResetPassword, end-to-end through context.rows), and Workload
 Identity Federation edges end-to-end through context.rows. (IAM binding / ROLE_OWNER /
 org->project inheritance wiring is covered by test_fakedata_inheritance.py.)
 """
@@ -63,7 +63,7 @@ def _build_stage1(tables, **opts):
 
 def test_group_membership_edge_emitted():
     ctx = _build_stage1(_identity_tables())
-    assert ("user:alice@corp.com", "GOOGLE_MEMBER_OF", "group:eng@corp.com") in _edges(ctx)
+    assert ("user:alice@corp.com", "MemberOf", "group:eng@corp.com") in _edges(ctx)
     types = _node_types(ctx)
     assert types.get("user:alice@corp.com") == "GoogleUser"
     assert types.get("group:eng@corp.com") == "GoogleGroup"
@@ -76,10 +76,10 @@ def test_super_admin_edges_emit_end_to_end_through_context_rows():
     edges = _edges(ctx)
     admin = "user:admin@corp.com"
     for target in ("user:alice@corp.com", "user:bob@corp.com"):
-        assert (admin, "CAN_IMPERSONATE", target) in edges
-        assert (admin, "CAN_RESET_PASSWORD", target) in edges
+        assert (admin, "CanImpersonate", target) in edges
+        assert (admin, "CanResetPassword", target) in edges
     # the helpdesk (non-super) admin gets NO impersonation edges
-    assert not any(src == "user:alice@corp.com" and kind == "CAN_IMPERSONATE" for src, kind, _ in edges)
+    assert not any(src == "user:alice@corp.com" and kind == "CanImpersonate" for src, kind, _ in edges)
 
 
 def test_no_workspace_admin_data_means_no_admin_edges():
@@ -87,8 +87,8 @@ def test_no_workspace_admin_data_means_no_admin_edges():
     tables["workspace_admin_roles"] = []
     tables["workspace_role_assignments"] = []
     ctx = _build_stage1(tables)
-    assert "CAN_IMPERSONATE" not in _edge_kinds(ctx)
-    assert "CAN_RESET_PASSWORD" not in _edge_kinds(ctx)
+    assert "CanImpersonate" not in _edge_kinds(ctx)
+    assert "CanResetPassword" not in _edge_kinds(ctx)
 
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +98,7 @@ def test_no_workspace_admin_data_means_no_admin_edges():
 
 def test_wif_edges_emit_end_to_end_through_context_rows():
     # Regression: workload_identity_pools/providers must be in context._ROW_TABLES, else
-    # context.rows() returns [] in resource expansion and WIF_PROVIDER_IN_POOL (and the
+    # context.rows() returns [] in resource expansion and IdentityProviderInPool (and the
     # rest of the WIF family) silently never emit despite being documented edges.
     pool = "projects/123/locations/global/workloadIdentityPools/mypool"
     provider = f"{pool}/providers/myprovider"
@@ -125,4 +125,4 @@ def test_wif_edges_emit_end_to_end_through_context_rows():
     build_users_groups_graph(ctx)
     _run_iam_bindings_stage(ctx)
     build_resource_expansion_graph(ctx)
-    assert (f"resource:{provider}", "WIF_PROVIDER_IN_POOL", f"resource:{pool}") in _edges(ctx)
+    assert (f"resource:{provider}", "IdentityProviderInPool", f"resource:{pool}") in _edges(ctx)

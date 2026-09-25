@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 
-from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
+from gcpwn.core.utils.enum_framework import NESTED, REGION, Component, build_extra_args, component_args, run_components
 from gcpwn.core.utils.service_runtime import parse_component_args
 from gcpwn.modules.gcp.clouddeploy.utilities.helpers import (
     CloudDeployDeliveryPipelinesResource,
     CloudDeployReleasesResource,
+    CloudDeployRolloutsResource,
     CloudDeployTargetsResource,
     resolve_locations,
 )
@@ -25,6 +26,14 @@ COMPONENTS = [
               manual_template=("projects", "{project_id}", "locations", 0, "targets", 1),
               manual_error="Invalid target ID format. Use LOCATION/TARGET_ID or projects/PROJECT_ID/locations/LOCATION/targets/TARGET_ID.",
               manual_help="Target IDs as LOCATION/TARGET_ID or full projects/.../targets/... names."),
+    Component("releases", CloudDeployReleasesResource, "Cloud Deploy Releases", "Releases",
+              help_text="Enumerate Cloud Deploy releases (nested under each delivery pipeline)",
+              scope=NESTED, parent_key="delivery_pipelines", dependency_label="Delivery Pipelines",
+              primary_sort_key="release_id", supports_iam=False),
+    Component("rollouts", CloudDeployRolloutsResource, "Cloud Deploy Rollouts", "Rollouts",
+              help_text="Enumerate Cloud Deploy rollouts (nested under each release)",
+              scope=NESTED, parent_key="releases", dependency_label="Releases",
+              primary_sort_key="rollout_id", supports_iam=False),
 ]
 
 
@@ -40,7 +49,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Deploy resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("download", "iam", "get", "debug"),
+        standard_args=("download", "iam", "get"),
         standard_arg_overrides={
             "download": {
                 "help": (

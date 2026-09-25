@@ -32,7 +32,7 @@ def _parse_args(user_args):
         user_args,
         description="Enumerate Cloud Bigtable resources (read-only)",
         components=component_args(COMPONENTS),
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on Bigtable instances and tables"}},
     )
 

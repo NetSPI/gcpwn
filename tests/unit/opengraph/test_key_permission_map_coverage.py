@@ -46,6 +46,7 @@ class _BuilderContext:
             allow_resources=allow_resources,
             allow_resources_by_project=by_project,
             allow_resources_by_project_type=by_project_type,
+            resource_sa_by_name={},
         )
         self._artifacts = {
             "resolved_bindings_composite": list(entries),
@@ -95,25 +96,24 @@ def test_key_permission_map_coverage_marks_rule_unsupported_when_permission_miss
 
 
 def test_key_multi_binding_builder_skips_unsupported_rule_names() -> None:
+    # Use CREATE_CLOUDRUN_SERVICE_AS_SA (via=capability) so no resource is needed.
     matching_permissions = {
-        "compute.instances.get",
-        "compute.instances.setMetadata",
-        "compute.instances.reset",
+        "run.services.create",
         "iam.serviceAccounts.actAs",
     }
     entries = [
         make_binding_entry(
-            role_name="roles/editor",
+            role_name="projects/proj-a/roles/CloudRunDeployer",
             permissions=matching_permissions,
         )
     ]
 
     supported_context = _BuilderContext(entries=entries, unsupported_rule_names=[])
     supported_stats = build_iam_bindings_multi_permission_graph(supported_context)
-    assert any(edge.edge_type == "RESET_COMPUTE_STARTUP_SA" for edge in supported_context.builder.edge_map.values())
+    assert any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_AS_SA" for edge in supported_context.builder.edge_map.values())
     assert supported_stats["dangerous_edges_emitted"] >= 1
 
-    blocked_context = _BuilderContext(entries=entries, unsupported_rule_names=["RESET_COMPUTE_STARTUP_SA"])
+    blocked_context = _BuilderContext(entries=entries, unsupported_rule_names=["CREATE_CLOUDRUN_SERVICE_AS_SA"])
     blocked_stats = build_iam_bindings_multi_permission_graph(blocked_context)
-    assert not any(edge.edge_type == "RESET_COMPUTE_STARTUP_SA" for edge in blocked_context.builder.edge_map.values())
+    assert not any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_AS_SA" for edge in blocked_context.builder.edge_map.values())
     assert blocked_stats["dangerous_edges_emitted"] <= supported_stats["dangerous_edges_emitted"]

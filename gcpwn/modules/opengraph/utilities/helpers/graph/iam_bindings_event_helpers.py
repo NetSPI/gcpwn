@@ -55,12 +55,31 @@ def collect_rule_events(
                 emission_mode = str(match.get("emission_mode") or "binding").strip().lower()
                 emission_mode = emission_mode if emission_mode in {"binding", "combo"} else "binding"
 
+                # Skip complex combo events where every contributor is a primitive
+                # role (roles/owner or roles/editor). The collapsed ROLE_OWNER/
+                # ROLE_EDITOR single-hop edges already cover these attack paths;
+                # emitting combo/CAP nodes on top adds noise without new information.
+                # Note: single-role combos produce emission_mode="binding", not
+                # "combo", so we gate on combo_hop presence (marks complex rules)
+                # rather than emission_mode.
+                if (
+                    isinstance(rule.get("combo_hop"), dict)
+                    and rule["combo_hop"]
+                    and contributors
+                    and all(
+                        str(getattr(c, "role_name", "") or "").strip().split("_withcond_")[0]
+                        in {"roles/owner", "roles/editor"}
+                        for c in contributors
+                    )
+                ):
+                    continue
+
                 events.append(
                     {
                         "rule_name": str(rule.get("name") or ""),
                         "rule_description": str(rule.get("description") or "").strip(),
                         "example_command": str(rule.get("example_command") or "").strip(),
-                        "edge_type": str(rule.get("edge_type") or "POLICY_BINDINGS"),
+                        "edge_type": str(rule.get("edge_type") or "HAS_IAM_BINDING"),
                         "target_selector": rule.get("target_selector") or {},
                         "contributors": contributors,
                         "matched_permissions": matched_permissions,
@@ -90,6 +109,7 @@ def collect_rule_events(
                         "combo_hop": rule.get("combo_hop") or {},
                         "targets_from_permissions": set(rule.get("targets_from_permissions") or ()),
                         "privilege_escalation": True,
+                        "via": str(rule.get("via") or "").strip().lower(),
                     }
                 )
                 matched_events += 1

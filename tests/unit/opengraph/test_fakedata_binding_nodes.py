@@ -8,7 +8,7 @@ Asserts:
 - HAS_IAM_BINDING edge: principal -> binding node.
 - include_all=True materializes benign binding nodes that are suppressed otherwise.
 - roles/owner collapses to ROLE_OWNER and roles/editor collapses to ROLE_EDITOR.
-- DOMAIN_MEMBER_OF: a workspace user whose email suffix matches a domain node
+- InDomain: a workspace user whose email suffix matches a domain node
   (seeded as an IAM member) gets a user -> domain edge from stage 1.
 
 Mirrors the harness in test_pipeline_fakedata.py (FakeSession + stage builders).
@@ -131,7 +131,7 @@ def test_role_owner_and_role_editor_collapse_distinctly():
 
 
 # --------------------------------------------------------------------------- #
-# Stage 1: DOMAIN_MEMBER_OF (user email suffix -> domain node)
+# Stage 1: InDomain (user email suffix -> domain node)
 # --------------------------------------------------------------------------- #
 
 
@@ -165,12 +165,12 @@ def test_domain_member_of_edge_from_workspace_user_suffix():
     # the domain node exists (seeded from the IAM member domain:corp.com)
     assert types.get("domain:corp.com") == "GCPDomainPrincipal"
     # and the workspace user maps into it by email suffix.
-    assert ("user:alice@corp.com", "DOMAIN_MEMBER_OF", "domain:corp.com") in _edges(ctx)
+    assert ("user:alice@corp.com", "InDomain", "domain:corp.com") in _edges(ctx)
 
 
 def test_no_domain_node_means_no_domain_member_of():
-    # Remove the domain IAM member -> no domain node -> no DOMAIN_MEMBER_OF edge.
+    # Remove the domain IAM member -> no domain node -> no InDomain edge.
     tables = _domain_tables()
     tables["iam_allow_policies"] = []
     ctx = _build_stage1(tables)
-    assert "DOMAIN_MEMBER_OF" not in _edge_kinds(ctx)
+    assert "InDomain" not in _edge_kinds(ctx)

@@ -3,13 +3,12 @@ from __future__ import annotations
 import json as _json
 
 import requests as _rlib
-from google.auth.transport.requests import Request as GoogleRequest
 
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
+from gcpwn.core.utils.service_runtime import get_bearer_token
 from gcpwn.core.utils.module_helpers import (
-    get_bearer_token,
     static_locations,
 )
 
@@ -53,6 +52,18 @@ class IntegrationsResource(GcpListResource):
 
     def _build_client(self, session):
         return None  # REST-only
+
+    def create_version(self, project_id: str, region: str, integration_name: str, body: dict) -> tuple[int, dict]:
+        return create_integration_version(get_bearer_token(self.session), project_id, region, integration_name, body)
+
+    def publish_version(self, version_name: str) -> tuple[int, dict]:
+        return publish_integration_version(get_bearer_token(self.session), version_name)
+
+    def execute(self, project_id: str, region: str, integration_name: str, trigger_name: str) -> tuple[int, dict]:
+        return execute_integration(get_bearer_token(self.session), project_id, region, integration_name, trigger_name)
+
+    def delete(self, project_id: str, region: str, integration_name: str) -> tuple[int, dict]:
+        return delete_integration(get_bearer_token(self.session), project_id, region, integration_name)
 
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         tok = get_bearer_token(self.session)
@@ -101,33 +112,6 @@ def _req(token: str, url: str, body=None, method: str | None = None) -> tuple[in
     except Exception:
         return resp.status_code, {"_raw": resp.text[:800]}
 
-
-def caller_token(session) -> str:
-    creds = session.credentials
-    if not creds.valid:
-        creds.refresh(GoogleRequest())
-    return creds.token
-
-
-def list_integrations(token: str, project_id: str, region: str) -> list[dict]:
-    """Return raw integration dicts from the App Integration REST API."""
-    url = f"{_INT_BASE}/projects/{project_id}/locations/{region}/integrations"
-    headers = {"Authorization": f"Bearer {token}"}
-    results = []
-    page_token = None
-    while True:
-        params = {"pageSize": 200}
-        if page_token:
-            params["pageToken"] = page_token
-        resp = _rlib.get(url, headers=headers, params=params, timeout=20)
-        if resp.status_code != 200:
-            break
-        data = resp.json()
-        results.extend(data.get("integrations", []))
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-    return results
 
 
 def list_integration_versions(token: str, project_id: str, region: str, integration_name: str) -> list[dict]:

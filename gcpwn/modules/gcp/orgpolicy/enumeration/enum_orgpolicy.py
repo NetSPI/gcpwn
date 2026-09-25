@@ -22,7 +22,7 @@ def _parse_args(user_args):
         description="Enumerate Organization Policy constraints",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS),
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get"),
     )
 
 

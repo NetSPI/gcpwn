@@ -26,6 +26,11 @@ class OpenGraphBuildOptions:
     # has been disabled).  cross_project=False ignores the set entirely.
     cross_project: bool = False
     cross_project_sa_projects: "frozenset[str]" = frozenset()
+    # Edge categories to include from og_defined_edges.json.
+    # Non-empty frozenset = only those categories; empty frozenset = all categories.
+    # Default includes priv_escalation + sensitive_resource_access (secret access edges).
+    # Empty frozenset = all categories. Non-empty = only those categories.
+    edge_categories: "frozenset[str]" = frozenset({"priv_escalation", "sensitive_resource_access"})
 
 
 def _build_hierarchy_data(
@@ -101,8 +106,11 @@ class OpenGraphBuildContext:
         "iam_sa_keys": "iam_sa_keys",
         "cloudcompute_instances": "cloudcompute_instances",
         "cloudfunctions_functions": "cloudfunctions_functions",
+        "secretsmanager_secrets": "secretsmanager_secrets",
         "cloudrun_services": "cloudrun_services",
         "cloudrun_jobs": "cloudrun_jobs",
+        "cloudscheduler_jobs": "cloudscheduler_jobs",
+        "cloudworkflows_workflows": "cloudworkflows_workflows",
         # WIF tables feed stage-4 resource expansion (WIF_PROVIDER_IN_POOL /
         # GCP_FEDERATION_POSSIBLE / WIF EXISTS_IN_PROJECT). Without these mappings
         # context.rows() returns [] and those edges silently never emit.
@@ -240,6 +248,10 @@ class OpenGraphBuildContext:
             flattened_member_rows=(simplified_base.get("flattened_member_rows") or []),
             cloudcompute_instances_rows=self.rows("cloudcompute_instances"),
             service_account_rows=self.rows("iam_service_accounts"),
+            cloudfunctions_functions_rows=self.rows("cloudfunctions_functions"),
+            secretsmanager_secrets_rows=self.rows("secretsmanager_secrets"),
+            cloudrun_services_rows=self.rows("cloudrun_services"),
+            cloudrun_jobs_rows=self.rows("cloudrun_jobs"),
         )
         return self._scope_resource_indexes_cache
 

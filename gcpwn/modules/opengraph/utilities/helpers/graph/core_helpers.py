@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from gcpwn.core.utils.iam_principals import canonical_iam_member
 from gcpwn.core.utils.module_helpers import extract_path_tail, load_mapping_data, parse_json_value, split_path_tokens
@@ -419,6 +419,112 @@ class OpenGraphBuilder:
             edge_type=edge_type,
             properties=properties,
         )
+
+    def _dedup_nodes_by_fingerprint(
+        self,
+        node_ids: "set[str]",
+        prefix_fn: "Callable[[str], str]",
+    ) -> "Tuple[int, int]":
+        """
+        Shared dedup core: merge nodes in *node_ids* that share a (prefix, outgoing-edge-set)
+        fingerprint.  The canonical survivor per group is the member with the shortest ID.
+        Incoming edges are redirected to the canonical; merged nodes and their now-duplicate
+        outgoing edges are removed.
+
+        Returns (nodes_removed, edges_removed).
+        """
+        from collections import defaultdict
+
+        if not node_ids:
+            return 0, 0
+
+        outgoing: dict[str, set] = {nid: set() for nid in node_ids}
+        for (src, etype, dst) in self.edge_map:
+            if src in node_ids:
+                outgoing[src].add((etype, dst))
+
+        groups: dict[tuple, list[str]] = defaultdict(list)
+        for nid in node_ids:
+            key = (prefix_fn(nid), frozenset(outgoing[nid]))
+            groups[key].append(nid)
+
+        nodes_removed = edges_removed = 0
+
+        for members in groups.values():
+            if len(members) <= 1:
+                continue
+
+            canonical_id = min(members, key=len)
+            for old_id in members:
+                if old_id == canonical_id:
+                    continue
+
+                for old_key in [(s, e, d) for (s, e, d) in list(self.edge_map) if d == old_id]:
+                    src, etype, _ = old_key
+                    new_key = (src, etype, canonical_id)
+                    old_edge = self.edge_map.pop(old_key)
+                    if new_key not in self.edge_map:
+                        self.edge_map[new_key] = OpenGraphEdge(
+                            source_id=src,
+                            destination_id=canonical_id,
+                            edge_type=etype,
+                            properties=old_edge.properties,
+                        )
+                    else:
+                        edges_removed += 1
+
+                for out_key in [(s, e, d) for (s, e, d) in list(self.edge_map) if s == old_id]:
+                    del self.edge_map[out_key]
+                    edges_removed += 1
+
+                del self.node_map[old_id]
+                nodes_removed += 1
+
+        return nodes_removed, edges_removed
+
+    def dedup_cap_nodes(self) -> Tuple[int, int]:
+        """
+        Post-processing pass: merge redundant intermediate attack-path nodes.
+
+        Handles two node families that accumulate per-binding duplicates:
+
+        1. CAP nodes (``CAP:RULE@scope_type:scope_name:hop_N:binding_id``):
+           Created once per qualifying binding. When multiple bindings at the same
+           scope satisfy the same rule and reach the same SA targets, their CAP
+           nodes are semantically identical.  Two CAP nodes merge iff they share
+           the ``CAP:RULE@scope_type:scope_name:hop_N`` prefix AND have an identical
+           outgoing edge set.
+
+        2. combo_iambinding nodes (``combo_iambinding:RULE@scope#hash``):
+           Created once per unique pair of contributing bindings satisfying a
+           multi-permission rule.  Two combo nodes merge iff they share the
+           ``combo_iambinding:RULE@scope`` prefix (stripping the ``#hash``) AND
+           have an identical outgoing edge set.
+
+        The canonical survivor in each group is the member with the shortest ID.
+        All incoming edges to merged nodes are redirected to the canonical; merged
+        nodes and their now-duplicate outgoing edges are deleted.
+
+        Returns (nodes_removed, edges_removed).
+        """
+        _cap_prefix_re = re.compile(r'^(CAP:[^@]+@[^:]+:[^:]+:hop_\d+)')
+        _combo_prefix_re = re.compile(r'^(combo_iambinding:[^#]+)')
+
+        def _cap_prefix(nid: str) -> str:
+            m = _cap_prefix_re.match(nid)
+            return m.group(1) if m else nid
+
+        def _combo_prefix(nid: str) -> str:
+            m = _combo_prefix_re.match(nid)
+            return m.group(1) if m else nid
+
+        cap_ids = {nid for nid in self.node_map if nid.startswith("CAP:")}
+        combo_ids = {nid for nid in self.node_map if nid.startswith("combo_iambinding:")}
+
+        n1, e1 = self._dedup_nodes_by_fingerprint(cap_ids, _cap_prefix)
+        n2, e2 = self._dedup_nodes_by_fingerprint(combo_ids, _combo_prefix)
+
+        return n1 + n2, e1 + e2
 
 
 PRINCIPAL_KINDS = {

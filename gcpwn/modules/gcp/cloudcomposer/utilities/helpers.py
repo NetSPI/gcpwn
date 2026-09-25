@@ -205,6 +205,8 @@ class ComposerEnvironmentsResource:
                     "state": raw.get("state") or "",
                     "dag_gcs_prefix": _extract_dag_gcs_prefix(raw),
                     "worker_service_account": _extract_worker_service_account(raw),
+                    "config_gke_cluster": str((raw.get("config") or {}).get("gke_cluster") or "").strip(),
+                    "config_airflow_uri": str((raw.get("config") or {}).get("airflow_uri") or "").strip(),
                 },
             )
 

@@ -2,7 +2,7 @@
 
 Each test plants an iam_allow_policies binding that grants a CUSTOM role whose
 included_permissions contain exactly one rule-triggering permission from
-og_privilege_escalation_paths.json, then runs stage_1 (build_users_groups_graph)
+og_defined_edges.json, then runs stage_1 (build_users_groups_graph)
 followed by stage_2 (_run_iam_bindings_stage) and asserts the corresponding
 dangerous edge_kind is emitted on the resolved binding node.
 
@@ -26,6 +26,8 @@ Edge-target shape per rule:
 from __future__ import annotations
 
 import json
+
+import pytest
 
 from gcpwn.modules.opengraph.processing.process_og_gcpwn_data import _run_iam_bindings_stage
 from gcpwn.modules.opengraph.utilities.helpers.graph.context import (
@@ -196,20 +198,14 @@ def _assert_sa_edge(permission: str, edge_kind: str) -> None:
     assert (_PROJECT_BINDING_NODE, edge_kind, _SA_TARGET_NODE) in _edges(ctx)
 
 
-def test_can_modify_sa_iam_edge_emitted():
-    _assert_sa_edge("iam.serviceAccounts.setIamPolicy", "CAN_MODIFY_SA_IAM")
-
-
-def test_can_impersonate_sa_edge_emitted():
-    _assert_sa_edge("iam.serviceAccounts.implicitDelegation", "CAN_IMPERSONATE_SA")
-
-
-def test_can_create_sa_access_token_edge_emitted():
-    _assert_sa_edge("iam.serviceAccounts.getAccessToken", "CAN_CREATE_SA_ACCESS_TOKEN")
-
-
-def test_can_create_sa_key_edge_emitted():
-    _assert_sa_edge("iam.serviceAccountKeys.create", "CAN_CREATE_SA_KEY")
+@pytest.mark.parametrize("permission,edge_kind", [
+    ("iam.serviceAccounts.setIamPolicy", "CAN_MODIFY_SA_IAM"),
+    ("iam.serviceAccounts.implicitDelegation", "CAN_IMPERSONATE_SA"),
+    ("iam.serviceAccounts.getAccessToken", "CAN_CREATE_SA_ACCESS_TOKEN"),
+    ("iam.serviceAccountKeys.create", "CAN_CREATE_SA_KEY"),
+])
+def test_sa_edge_emitted(permission: str, edge_kind: str) -> None:
+    _assert_sa_edge(permission, edge_kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -218,13 +214,19 @@ def test_can_create_sa_key_edge_emitted():
 
 
 def test_can_read_secret_data_edge_emitted():
-    ctx = _run(
-        _project_binding_with_resource_tables(
-            permission="secretmanager.versions.access",
-            resource_type="secrets",
-            resource_name="projects/proj-a/secrets/db-password",
-        )
+    tables = _project_binding_with_resource_tables(
+        permission="secretmanager.versions.access",
+        resource_type="secrets",
+        resource_name="projects/proj-a/secrets/db-password",
     )
+    ctx = OpenGraphBuildContext(
+        session=FakeSession(tables),
+        options=OpenGraphBuildOptions(
+            edge_categories=frozenset({"priv_escalation", "sensitive_resource_access"})
+        ),
+    )
+    build_users_groups_graph(ctx)
+    _run_iam_bindings_stage(ctx)
     assert "CAN_READ_SECRET_DATA" in _edge_kinds(ctx)
     assert (
         _PROJECT_BINDING_NODE,

@@ -9,7 +9,7 @@ from gcpwn.core.utils.serialization import resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
 
 
-def build_cloudshell_client(session):
+def _build_cloudshell_client(session):
     return shell_v1.CloudShellServiceClient(credentials=session.credentials)
 
 
@@ -21,7 +21,7 @@ def get_environment(session, *, environment_name: str = "users/me/environments/d
     custom image can persist tooling), and ``ssh_host``/``web_host`` of the running box.
     With a service-account credential there is usually no Cloud Shell -> 404/403 (graceful).
     """
-    client = build_cloudshell_client(session)
+    client = _build_cloudshell_client(session)
     try:
         env = client.get_environment(request=shell_v1.GetEnvironmentRequest(name=environment_name))
         data = resource_to_dict(env)

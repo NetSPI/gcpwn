@@ -77,7 +77,10 @@ class WorkspaceOAuthTokensResource:
             status, detail = _http_error_details(exc)
             self.last_error_status = status
             self.last_error_message = detail
-            if status == 403:
+            text = str(exc).lower()
+            # A SA DWD token lacking the requested scope raises RefreshError with
+            # 'unauthorized_client' -- no HTTP status code, but it is a denial.
+            if status in (401, 403) or "unauthorized_client" in text or "login required" in text:
                 print(f"[*] Admin SDK user.security access denied for {user_key}; skipping its OAuth tokens.")
                 return []
             if status == 404:

@@ -188,8 +188,11 @@ class WorkspaceUsersResource:
         except Exception as exc:
             self.last_call_ok = False
             status = _http_error_status(exc)
-            if status == 403:
-                print("[*] Admin SDK Directory API access denied; skipping user enumeration.")
+            text = str(exc).lower()
+            # A SA DWD token lacking the requested scope raises RefreshError with
+            # 'unauthorized_client' -- no HTTP status code, but it is a denial.
+            if status in (401, 403) or "unauthorized_client" in text or "login required" in text:
+                print("[*] Admin SDK Directory API access denied (check the credential's scopes / DWD authorization); skipping user enumeration.")
                 return []
             if status == 404:
                 print("[*] Admin SDK Directory API not enabled or no Google Workspace org; skipping user enumeration.")
@@ -240,14 +243,6 @@ class WorkspaceGroup:
     create_time: str = ""
     update_time: str = ""
     raw: dict[str, Any] | None = None
-
-
-def _extract_group_email(group: dict[str, Any]) -> str:
-    for key in ("preferredGroupKey", "groupKey", "preferred_group_key", "group_key"):
-        value = group.get(key)
-        if isinstance(value, dict) and value.get("id"):
-            return str(value["id"])
-    return ""
 
 
 def _paged_execute(collection, request, collection_key: str, *, rebuild=None):

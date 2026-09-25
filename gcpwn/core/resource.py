@@ -260,7 +260,10 @@ class GcpListResource:
                     self.TABLE_NAME,
                     row,
                     defaults=defaults,
-                    extra_builder=lambda _obj, raw: {self.ID_FIELD: extract_path_tail(raw.get("name", "")), **self._extra_save_fields(raw)},
+                    extra_builder=lambda _obj, raw: {
+                        **({self.ID_FIELD: extract_path_tail(raw.get("name", ""))} if self.ID_FIELD else {}),
+                        **self._extra_save_fields(raw),
+                    },
                 )
 
 

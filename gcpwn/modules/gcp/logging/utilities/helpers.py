@@ -30,7 +30,13 @@ def _metrics(session):
 
 
 def _err(session, exc, api_name, resource_name):
-    handle_service_error(exc, api_name=api_name, resource_name=resource_name, service_label="Cloud Logging")
+    handle_service_error(
+        exc,
+        api_name=api_name,
+        resource_name=resource_name,
+        service_label="Cloud Logging",
+        project_id=getattr(session, "project_id", None),
+    )
 
 
 def list_sinks(session, project_id: str) -> list[dict[str, Any]]:

@@ -10,6 +10,13 @@
             "info_blurb": "Enumerate API Gateway gateways, APIs, and API configs, with optional direct targeting by ID and testIamPermissions.",
             "location": "gcpwn.modules.gcp.apigateway.enumeration.enum_apigateway"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_apigateway_as_sa_oidc",
+            "info_blurb": "Privilege escalation via API Gateway: deploy a gateway config that issues a Google-signed OIDC JWT as the target SA to a callback URL. REQUIRES apigateway.{apis,apiconfigs,gateways}.create + iam.serviceAccounts.actAs on target SA. Use --wif-provider to exchange the OIDC JWT for a full federated access token.",
+            "location": "gcpwn.modules.gcp.apigateway.exploit.exploit_apigateway_as_sa_oidc"
+          }
         ]
       }
     },
@@ -163,6 +170,11 @@
             "module_name": "exploit_cloudbuild_build_as_sa",
             "info_blurb": "Exploit Cloud Build for lateral movement: create new build or (attempt to) update existing build to run arbitrary code as an attached service account. Recovers token via in-project Cloud Logging (secure) or external URL exfil. REQUIRES cloudbuild.builds.create/update + iam.serviceAccounts.actAs on target SA. Note: .update() permission exists in IAM but Cloud Build REST API does not expose the endpoint.",
             "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_build_as_sa"
+          },
+          {
+            "module_name": "exploit_cloudbuild_trigger_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Build trigger: create a trigger (optionally with a Cloud Source Repository) that runs a build as the target SA, recovering the OAuth2 token via Cloud Logging or URL callback. REQUIRES cloudbuild.triggers.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_trigger_as_sa"
           }
         ]
       }
@@ -289,9 +301,9 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_bucket_upload",
-            "info_blurb": "Authenticated upload of a local file or STDIN to a Cloud Storage Bucket. You can specify the arbitrary path you want to send the file contents/STDIN to. See wiki for more details.",
-            "location": "gcpwn.modules.gcp.cloudstorage.exploit.exploit_bucket_upload"
+            "module_name": "exploit_bucket_action",
+            "info_blurb": "Upload, download, delete, or list objects in a Cloud Storage bucket. Supports both standard service-account and HMAC/XML API modes. Use --action to select the operation.",
+            "location": "gcpwn.modules.gcp.cloudstorage.exploit.exploit_bucket_action"
           },
           {
             "module_name": "exploit_storage_hmac",
@@ -320,6 +332,13 @@
             "info_blurb": "Enumerate Cloud Tasks queues and tasks across supported locations, with optional HTTP task request sample downloads.",
             "location": "gcpwn.modules.gcp.cloudtasks.enumeration.enum_cloudtasks"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_cloudtasks_task_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Tasks: create a queue + HTTP task that runs as the target SA, sending an oidcToken or oauthToken to a callback URL. REQUIRES cloudtasks.queues.create + cloudtasks.tasks.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.cloudtasks.exploit.exploit_cloudtasks_task_as_sa"
+          }
         ]
       }
     },
@@ -345,9 +364,9 @@
         ],
         "Exploit": [
           {
-            "module_name": "exploit_instance_ssh_keys",
-            "info_blurb": "Upload the public portion of an SSH key either to a project or instance. This might allow for SSH access depending on if no other restrictions are in place. Project edits will impact all instances in the project. Ergo uploading SSH keys to a project grants SSH access to all instances",
-            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_instance_ssh_keys"
+            "module_name": "exploit_compute_instance_ssh_keys",
+            "info_blurb": "Upload an SSH public key to a Compute Engine instance (compute.instances.setMetadata) or project (compute.projects.setCommonInstanceMetadata) to gain SSH access. Project-level upload affects all instances in the project.",
+            "location": "gcpwn.modules.gcp.cloudcompute.exploit.exploit_compute_instance_ssh_keys"
           },
           {
             "module_name": "exploit_compute_instance_as_sa",
@@ -494,6 +513,21 @@
             "module_name": "exploit_service_account_keys",
             "info_blurb": "Generate an account key for a service account and assume it within GCPwn (--assume) to pivot to a different user. Note unlike the access token which usually lasts for around 1 hour, a service key can last for much longer and is a much more permanent pivot.",
             "location": "gcpwn.modules.gcp.iam.exploit.exploit_service_account_keys"
+          },
+          {
+            "module_name": "exploit_get_oidc_token",
+            "info_blurb": "Generate a Google-signed OIDC token (ID token) for a service account using iam.serviceAccounts.getOpenIdToken. The token is audience-specific and can be used with WIF exchange.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_get_oidc_token"
+          },
+          {
+            "module_name": "exploit_sign_jwt_as_sa",
+            "info_blurb": "Sign a JWT as a service account using signJwt or signBlob, then exchange for an OAuth2 access token. Requires iam.serviceAccounts.signJwt or iam.serviceAccounts.signBlob.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_sign_jwt_as_sa"
+          },
+          {
+            "module_name": "exploit_wif_impersonation",
+            "info_blurb": "Privilege escalation via Workload Identity Federation: create a WIF pool + provider, bind to a target SA, and exchange an external token for a federated GCP access token. Supports Google/GitHub/GitLab/AWS/custom identity providers.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_wif_impersonation"
           }
         ]
       }
@@ -639,6 +673,13 @@
             "info_blurb": "Enumerate Cloud Workflows workflows (state, revision, and the service account each workflow runs as -- a priv-esc signal) across supported locations.",
             "location": "gcpwn.modules.gcp.cloudworkflows.enumeration.enum_cloudworkflows"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_cloudworkflows_execution_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Workflows: create a workflow that issues an HTTP request as the target SA (service-agent bypass \u2014 no personal actAs needed), exfiling the Bearer token to a callback URL or Cloud Logging. REQUIRES workflows.workflows.create + workflows.executions.create.",
+            "location": "gcpwn.modules.gcp.cloudworkflows.exploit.exploit_cloudworkflows_execution_as_sa"
+          }
         ]
       }
     },
@@ -710,6 +751,13 @@
             "module_name": "enum_workstations",
             "info_blurb": "Enumerate Cloud Workstations clusters, configs (incl. the SA each workstation runs as) and workstations (state/host) across supported locations.",
             "location": "gcpwn.modules.gcp.workstations.enumeration.enum_workstations"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_workstation_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Workstations: create a workstation config + workstation running as the target SA; extract its OAuth2 token via container boot startup or Cloud Logging. REQUIRES workstations.workstationConfigs.create + workstations.workstations.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.workstations.exploit.exploit_workstation_as_sa"
           }
         ]
       }
@@ -788,6 +836,18 @@
             "info_blurb": "Enumerate Dataflow Data Pipelines (scheduled / streaming pipeline configs).",
             "location": "gcpwn.modules.gcp.dataflow.enumeration.enum_dataflow_datapipelines"
           }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_dataflow_job_as_sa",
+            "info_blurb": "Privilege escalation via Dataflow Flex Template job: create a job running as the target SA, extracting its OAuth2 token via Cloud Logging or URL callback. REQUIRES dataflow.jobs.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.dataflow.exploit.exploit_dataflow_job_as_sa"
+          },
+          {
+            "module_name": "exploit_dataflow_datapipeline_as_sa",
+            "info_blurb": "Privilege escalation via Dataflow Data Pipeline: create a pipeline running as the target SA, extracting its OAuth2 token via Cloud Logging or URL callback. REQUIRES dataflow.dataPipelines.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.dataflow.exploit.exploit_dataflow_datapipeline_as_sa"
+          }
         ]
       }
     },
@@ -799,6 +859,18 @@
             "module_name": "enum_notebooks",
             "info_blurb": "Enumerate Vertex AI Workbench instances (notebooks_v2) across regions; extracts the gce_setup service-account run-as identity and proxy URI. Supports --get and testIamPermissions.",
             "location": "gcpwn.modules.gcp.notebooks.enumeration.enum_notebooks"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_workbench_instance_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Workbench: create a Workbench instance (GCE VM) running as the target SA, extracting its OAuth2 token via startup script URL callback or Cloud Logging. REQUIRES notebooks.instances.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.notebooks.exploit.exploit_workbench_instance_as_sa"
+          },
+          {
+            "module_name": "exploit_notebooks_execution_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Workbench Executions (v1 API): create a notebook execution (Vertex AI Custom Training) running as the target SA, extracting its OAuth2 token via URL callback or GCS notebook output. REQUIRES notebooks.executions.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.notebooks.exploit.exploit_notebooks_execution_as_sa"
           }
         ]
       }
@@ -918,6 +990,133 @@
             "module_name": "exploit_tpu_node_as_sa",
             "info_blurb": "PE via Cloud TPU: create a TPU node with serviceAccount=TARGET_SA; the node's GCE metadata server exposes the target SA token, exfilled via startup-script POST or GCS write.",
             "location": "gcpwn.modules.gcp.tpu.exploit.exploit_tpu_node_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Vertex AI",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_vertex",
+            "info_blurb": "Enumerate Vertex AI resources (custom jobs, pipeline jobs, deployment resource pools, tuning jobs, reasoning engines, endpoints, models) and the service accounts they run as.",
+            "location": "gcpwn.modules.gcp.vertex.enumeration.enum_vertex"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_vertex_custom_job_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Custom Job: Vertex service agent (Cat 2 bypass) runs the job as target SA; token exfil via GCS blob or URL callback. REQUIRES aiplatform.customJobs.create; Vertex service agent must have tokenCreator on target SA.",
+            "location": "gcpwn.modules.gcp.vertex.exploit.exploit_vertex_custom_job_as_sa"
+          },
+          {
+            "module_name": "exploit_vertex_pipeline_job_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Pipeline Job: Vertex service agent (Cat 2 bypass) runs the KFP v2 inline pipeline as target SA; token exfil via URL callback. REQUIRES aiplatform.pipelineJobs.create; Vertex service agent must have tokenCreator on target SA.",
+            "location": "gcpwn.modules.gcp.vertex.exploit.exploit_vertex_pipeline_job_as_sa"
+          },
+          {
+            "module_name": "exploit_vertex_endpoint_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Endpoint: deploy an endpoint + model running as target SA; token exfil via URL callback, GCS, or Cloud Logging. REQUIRES aiplatform.endpoints.create + deploy + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.vertex.exploit.exploit_vertex_endpoint_as_sa"
+          },
+          {
+            "module_name": "exploit_vertex_reasoning_engine_as_sa",
+            "info_blurb": "Privilege escalation via Vertex AI Reasoning Engine: create or patch a reasoning engine running as target SA; token exfil via URL callback on platform initialization. REQUIRES aiplatform.reasoningEngines.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.vertex.exploit.exploit_vertex_reasoning_engine_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Infrastructure Manager",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_inframanager",
+            "info_blurb": "Enumerate Infrastructure Manager (Config Controller) deployments including the deployment service account and source GCS URI.",
+            "location": "gcpwn.modules.gcp.inframanager.enumeration.enum_inframanager"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_inframanager_deployment_as_sa",
+            "info_blurb": "Privilege escalation via Infrastructure Manager: stage a Terraform null_resource module in GCS that exfils the target SA token via HTTP POST. REQUIRES config.deployments.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.inframanager.exploit.exploit_inframanager_deployment_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "VM Migration",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_vmmigration_resources",
+            "info_blurb": "Enumerate VM Migration (Migrate to Virtual Machines) sources, migrating VMs, migration groups, and target projects.",
+            "location": "gcpwn.modules.gcp.vmmigration.enumeration.enum_vmmigration_resources"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_vmmigration_image_import_as_sa",
+            "info_blurb": "Privilege escalation via VM Migration ImageImport: create an image import targeting a SA-attached GCE VM (Cat 1 bypass \u2014 no personal actAs required). Use --api-confirm-only for a no-resource HTTP-404 bypass proof, or full exploit to launch the VM and query IMDS.",
+            "location": "gcpwn.modules.gcp.vmmigration.exploit.exploit_vmmigration_image_import_as_sa"
+          },
+          {
+            "module_name": "exploit_vmmigration_migrating_vm_as_sa",
+            "info_blurb": "Privilege escalation via VM Migration MigratingVm: create a migration source + migrating VM entry for a SA-attached instance (Cat 1 bypass \u2014 no personal actAs indicated). Use --api-confirm-only for HTTP-400 bypass proof, or full exploit to launch the migrated VM.",
+            "location": "gcpwn.modules.gcp.vmmigration.exploit.exploit_vmmigration_migrating_vm_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Dataform",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_dataform",
+            "info_blurb": "Enumerate Dataform repositories (git remotes, service accounts), workspaces, release configs, and workflow configs (invocation service account).",
+            "location": "gcpwn.modules.gcp.dataform.enumeration.enum_dataform"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Dataplex",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_dataplex",
+            "info_blurb": "Enumerate Dataplex / Knowledge Catalog resources: lakes, zones, assets, data scans, and governance entries.",
+            "location": "gcpwn.modules.gcp.dataplex.enumeration.enum_dataplex"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_dataplex_task_as_sa",
+            "info_blurb": "Privilege escalation via Dataplex Spark Task: create a Dataplex lake + Spark task running as the target SA, extracting its OAuth2 token via staging bucket, GCS exfil bucket, or URL callback. REQUIRES dataplex.tasks.create + iam.serviceAccounts.actAs on target SA.",
+            "location": "gcpwn.modules.gcp.dataplex.exploit.exploit_dataplex_task_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Data Fusion",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_datafusion_resources",
+            "info_blurb": "Enumerate Cloud Data Fusion instances including the Dataproc service account, service endpoint, and API endpoint.",
+            "location": "gcpwn.modules.gcp.clouddatafusion.enumeration.enum_datafusion_resources"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_datafusion_instance_as_sa",
+            "info_blurb": "Privilege escalation via Cloud Data Fusion: create a CDAP pipeline that reads IMDS and POSTs the target SA token to a callback URL. REQUIRES datafusion.instances.create + iam.serviceAccounts.actAs on target SA. Note: instance creation takes 45-90 minutes.",
+            "location": "gcpwn.modules.gcp.clouddatafusion.exploit.exploit_datafusion_instance_as_sa"
           }
         ]
       }

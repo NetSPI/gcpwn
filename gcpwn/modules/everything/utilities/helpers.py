@@ -142,7 +142,7 @@ def generate_summary_of_roles_or_vulns(
 
     if txt:
         mode = "w" if first_run else "a"
-        with open(txt_output, mode) as txt_file:
+        with open(txt_output, mode, encoding="utf-8") as txt_file:
             txt_file.write(formatted_string)
 
     if csv:
@@ -270,7 +270,7 @@ def split_members_by_kind(members: Iterable[str]) -> tuple[list[str], list[str]]
     return convenience, normal
 
 
-def add_convenience_roles(data_dict: dict[str, Any], convenience_summary: dict[str, Any]) -> None:
+def _add_convenience_roles(data_dict: dict[str, Any], convenience_summary: dict[str, Any]) -> None:
     """Fold project convenience-role grants onto buckets as Inherited Permissions.
 
     For each bucket in convenience_summary whose project carries a matching
@@ -307,7 +307,7 @@ def consolidate_convenience_roles(
 
     For each projectViewer/Editor/Owner member, collects the roles it holds on
     each resource and buckets them by the resource and resolved project name, so
-    add_convenience_roles can later attribute them to direct members of that
+    _add_convenience_roles can later attribute them to direct members of that
     project. project_name_cache is shared by the caller so each project_id is
     resolved with a single get_project_name (avoids re-querying under the DB lock).
     """
@@ -372,7 +372,7 @@ def build_roles_and_assets_for_member(
     common_name/parent_id/parent_name. Inheritance flows project<-folder<-org via
     find_ancestors; non-hierarchy resources inherit from their parent project (and
     its ancestors). convenience_summary, when given, folds project basic roles onto
-    child resources via add_convenience_roles.
+    child resources via _add_convenience_roles.
 
     project_name_cache and ancestor_cache are shared across members by the caller
     (materialize_member_permissions) so the recursive-CTE find_ancestors and
@@ -460,5 +460,5 @@ def build_roles_and_assets_for_member(
                     info["Inherited Permissions"].append({"ancestor": anc_name, "roles": roles})
 
     if convenience_summary:
-        add_convenience_roles(data_dict, convenience_summary)
+        _add_convenience_roles(data_dict, convenience_summary)
     return data_dict

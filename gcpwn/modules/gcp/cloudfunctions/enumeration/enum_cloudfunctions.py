@@ -35,8 +35,6 @@ def _resolve_regions(session, args):
 
 def _parse_args(user_args):
     def _add_extra_args(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--version", required=False, choices=["1", "2"],
-                            help="Function generation when manually targeting LOCATION/FUNCTION_ID entries")
         regions_group = parser.add_mutually_exclusive_group()
         regions_group.add_argument("--v1-regions", action="store_true", required=False, help="Target known Cloud Functions v1 region list")
         regions_group.add_argument("--v2-regions", action="store_true", required=False, help="Target known Cloud Functions v2 region list")
@@ -50,7 +48,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud Functions resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "download", "get", "debug"),
+        standard_args=("iam", "download", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on functions"},
             "download": {"help": "Attempt to download function source bundles"},

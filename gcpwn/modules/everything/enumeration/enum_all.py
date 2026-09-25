@@ -91,6 +91,20 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("cloud_deploy", "--cloud-deploy"),
     ("bigquery_datatransfer", "--bigquery-datatransfer"),
     ("service_usage", "--service-usage"),
+    ("agent_platform", "--agent-platform"),
+    ("api_gateway", "--api-gateway"),
+    ("app_integration", "--app-integration"),
+    ("cloud_datafusion", "--cloud-datafusion"),
+    ("dataform", "--dataform"),
+    ("dataplex", "--dataplex"),
+    ("deployment_manager", "--deployment-manager"),
+    ("firebase", "--firebase"),
+    ("iap", "--iap"),
+    ("infra_manager", "--infra-manager"),
+    ("integration_connectors", "--integration-connectors"),
+    ("cloud_tpu", "--cloud-tpu"),
+    ("vertex_ai", "--vertex-ai"),
+    ("vm_migration", "--vm-migration"),
 )
 
 # Umbrella / once-per-run selectors that aren't in _PARALLEL_SERVICES but are still
@@ -145,6 +159,20 @@ _MODULE_TOKEN_ALIASES: dict[str, str] = {
     "projects": "resource_manager", "hierarchy": "resource_manager",
     "workspace": "workspace_identity", "cloud-identity": "workspace_identity",
     "workspace-cloud-identity": "workspace_identity",
+    "agentplatform": "agent_platform", "agent": "agent_platform",
+    "apigateway": "api_gateway", "gateway": "api_gateway",
+    "appintegration": "app_integration",
+    "datafusion": "cloud_datafusion",
+    "dataform": "dataform",
+    "dataplex": "dataplex",
+    "deploymentmanager": "deployment_manager", "dm": "deployment_manager",
+    "firebase": "firebase",
+    "iap": "iap",
+    "inframanager": "infra_manager",
+    "connectors": "integration_connectors",
+    "tpu": "cloud_tpu",
+    "vertex": "vertex_ai", "vertexai": "vertex_ai",
+    "vmmigration": "vm_migration", "migrate": "vm_migration",
 }
 
 
@@ -246,6 +274,20 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "cloud_deploy": ("clouddeploy.googleapis.com",),
     "bigquery_datatransfer": ("bigquerydatatransfer.googleapis.com",),
     "asset_inventory": ("cloudasset.googleapis.com",),
+    "agent_platform": ("aiplatform.googleapis.com",),
+    "api_gateway": ("apigateway.googleapis.com",),
+    "app_integration": ("integrations.googleapis.com",),
+    "cloud_datafusion": ("datafusion.googleapis.com",),
+    "dataform": ("dataform.googleapis.com",),
+    "dataplex": ("dataplex.googleapis.com",),
+    "deployment_manager": ("deploymentmanager.googleapis.com",),
+    "firebase": ("firebaseapphosting.googleapis.com",),
+    "iap": ("iap.googleapis.com",),
+    "infra_manager": ("config.googleapis.com",),
+    "integration_connectors": ("connectors.googleapis.com",),
+    "cloud_tpu": ("tpu.googleapis.com",),
+    "vertex_ai": ("aiplatform.googleapis.com",),
+    "vm_migration": ("vmmigration.googleapis.com",),
 }
 
 # Under --filter-enabled-services these run REGARDLESS of the enabled-API probe:
@@ -379,7 +421,7 @@ _SERVICES: tuple[ServiceSpec, ...] = (
     ServiceSpec(("orgpolicy",), "gcpwn.modules.gcp.orgpolicy.enumeration.enum_orgpolicy"),
     # Opt-in: slow org-wide scan, skipped by default; runs only with --asset-inventory.
     ServiceSpec(("asset_inventory",), "gcpwn.modules.gcp.assetinventory.enumeration.enum_asset_inventory",
-                opt_in=True),
+                opt_in=True, get=False),
     ServiceSpec(("eventarc",), "gcpwn.modules.gcp.eventarc.enumeration.enum_eventarc",
                 threads=True, regions=True),
     ServiceSpec(("workstations",), "gcpwn.modules.gcp.workstations.enumeration.enum_workstations",
@@ -399,6 +441,30 @@ _SERVICES: tuple[ServiceSpec, ...] = (
                 threads=True, regions=True),
     ServiceSpec(("service_usage",), "gcpwn.modules.gcp.serviceusage.enumeration.enum_serviceusage",
                 threads=True, get=False),
+    ServiceSpec(("agent_platform",), "gcpwn.modules.gcp.agentplatform.enumeration.enum_agentplatform"),
+    ServiceSpec(("api_gateway",), "gcpwn.modules.gcp.apigateway.enumeration.enum_apigateway",
+                regions=True),
+    ServiceSpec(("app_integration",), "gcpwn.modules.gcp.applicationintegration.enumeration.enum_app_integration_resources",
+                regions=True),
+    ServiceSpec(("cloud_datafusion",), "gcpwn.modules.gcp.clouddatafusion.enumeration.enum_datafusion_resources",
+                regions=True),
+    ServiceSpec(("dataform",), "gcpwn.modules.gcp.dataform.enumeration.enum_dataform",
+                regions=True),
+    ServiceSpec(("dataplex",), "gcpwn.modules.gcp.dataplex.enumeration.enum_dataplex",
+                regions=True),
+    ServiceSpec(("deployment_manager",), "gcpwn.modules.gcp.deploymentmanager.enumeration.enum_deploymentmanager"),
+    ServiceSpec(("firebase",), "gcpwn.modules.gcp.firebase.enumeration.enum_firebase"),
+    ServiceSpec(("iap",), "gcpwn.modules.gcp.iap.enumeration.enum_iap"),
+    ServiceSpec(("infra_manager",), "gcpwn.modules.gcp.inframanager.enumeration.enum_inframanager",
+                regions=True),
+    ServiceSpec(("integration_connectors",), "gcpwn.modules.gcp.integration_connectors.enumeration.enum_integration_connectors",
+                regions=True),
+    ServiceSpec(("cloud_tpu",), "gcpwn.modules.gcp.tpu.enumeration.enum_tpu",
+                regions=True),
+    ServiceSpec(("vertex_ai",), "gcpwn.modules.gcp.vertex.enumeration.enum_vertex",
+                regions=True),
+    ServiceSpec(("vm_migration",), "gcpwn.modules.gcp.vmmigration.enumeration.enum_vmmigration_resources",
+                regions=True),
 )
 
 
@@ -504,6 +570,20 @@ _SERVICE_NAME_OVERRIDES = {
     "enum_bigquerydatatransfer": "BigQuery Data Transfer",
     "enum_serviceusage": "Service Usage",
     "enum_gcp_policy_bindings": "IAM Policy Bindings",
+    "enum_agentplatform": "Agent Platform",
+    "enum_apigateway": "API Gateway",
+    "enum_app_integration_resources": "Application Integration",
+    "enum_datafusion_resources": "Cloud Data Fusion",
+    "enum_dataform": "Dataform",
+    "enum_dataplex": "Dataplex",
+    "enum_deploymentmanager": "Deployment Manager",
+    "enum_firebase": "Firebase App Hosting",
+    "enum_iap": "Identity-Aware Proxy",
+    "enum_inframanager": "Infrastructure Manager",
+    "enum_integration_connectors": "Integration Connectors",
+    "enum_tpu": "Cloud TPU",
+    "enum_vertex": "Vertex AI",
+    "enum_vmmigration_resources": "VM Migration",
 }
 
 DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
@@ -1563,8 +1643,10 @@ def run_module(user_args, session):
     if getattr(args, "resume", None) and int(getattr(args, "parallel_services", 1) or 1) <= 1:
         print(
             f"{UtilityTools.YELLOW}[!] --resume only applies to --parallel-services runs "
-            f"(the resumable ledger is built there); ignoring it for this sequential run.{UtilityTools.RESET}"
+            f"(the resumable ledger is built there). "
+            f"Drop --resume for a fresh sequential run, or add --parallel-services N to honour the token.{UtilityTools.RESET}"
         )
+        return -1
 
     try:
         project_allowlist_inline = parse_id_input_values(
@@ -1804,10 +1886,11 @@ def run_module(user_args, session):
     # Per-project resource enumerators run only in the 'services' phase
     # (and in 'all'). RM/bindings phases skip them.
     run_services = run_non_rm_for_project and do_services
-    # Workspace Cloud Identity is a once-per-run (first_run) discovery, like RM.
+    # Workspace is once-per-run (first_run). When --modules workspace is passed we want
+    # the full suite (enum_google_workspace orchestrator), not just Cloud Identity alone.
     if do_rm and run_non_rm_for_project and first_run and args.workspace_identity:
         module_args = ["-v"] if args.debug else []
-        _run_other_module(session, module_args, "gcpwn.modules.workspace.cloud_identity.enumeration.enum_cloud_identity")
+        _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_google_workspace")
 
     # --filter-enabled-services: probe this project's ENABLED APIs once, then run only the
     # services whose API is enabled. None -> probe failed/empty, so fall back to run all.

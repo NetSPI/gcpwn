@@ -8,6 +8,7 @@ helpers. No real GCP client, network, or DB is touched: a fake session records
 
 from __future__ import annotations
 
+import contextlib
 from collections import defaultdict
 
 import pytest
@@ -28,6 +29,10 @@ class _RecordingSession:
 
     def insert_actions(self, action_dict, project_id, **kwargs):
         self.calls.append((action_dict, project_id, dict(kwargs)))
+
+    @contextlib.contextmanager
+    def batched_writes(self):
+        yield
 
 
 # --------------------------------------------------------------------------- #
@@ -385,6 +390,37 @@ def test_process_with_progress_shows_counter_on_tty(monkeypatch, capsys) -> None
 
 
 # --------------------------------------------------------------------------- #
+# parallel_map: serial-path exception contract
+# --------------------------------------------------------------------------- #
+def test_parallel_map_serial_path_swallows_exception_like_parallel_path() -> None:
+    """parallel_map serial path (single item) must return None on worker error.
+
+    The documented contract says "A failing worker yields None in that slot
+    (errors are swallowed, never raised)." Before the fix, the serial path
+    (worker_count <= 1) propagated exceptions instead of returning None,
+    violating the contract for single-item inputs or threads=1.
+    """
+    def boom(_item):
+        raise RuntimeError("worker failure")
+
+    # Single item → worker_count=min(threads,32,1)=1 → serial path taken.
+    result = sr.parallel_map(["item"], boom, show_progress=False)
+    assert result == [None], f"expected [None] from failed serial worker, got {result!r}"
+
+
+def test_parallel_map_serial_path_mixed_success_and_failure() -> None:
+    """With threads=1, some succeed and some fail → None slots for failures."""
+
+    def worker(item):
+        if item == "bad":
+            raise ValueError("kaboom")
+        return item.upper()
+
+    result = sr.parallel_map(["a", "bad", "c"], worker, threads=1, show_progress=False)
+    assert result == ["A", None, "C"]
+
+
+# --------------------------------------------------------------------------- #
 # map_regions_with_disabled_short_circuit
 # --------------------------------------------------------------------------- #
 def test_map_regions_empty_returns_empty() -> None:
@@ -464,3 +500,106 @@ def test_map_regions_strips_whitespace_in_region_names() -> None:
     )
     # Region keys are stripped before the worker sees them.
     assert out == [("us", "us"), ("eu", "eu")]
+
+
+# --------------------------------------------------------------------------- #
+# Regression: worker exception in remaining regions must yield (region, None),
+# not bare None — bare None breaks the caller's `for loc, listed in results` loop
+# with TypeError: cannot unpack non-iterable NoneType object
+# --------------------------------------------------------------------------- #
+def test_map_regions_exception_in_remaining_region_yields_none_tuple() -> None:
+    """Worker that raises on a non-first region must produce (region, None), not None."""
+
+    def worker(region):
+        if region == "eu":
+            raise RuntimeError("simulated transient API failure")
+        return f"ok-{region}"
+
+    out = sr.map_regions_with_disabled_short_circuit(
+        ["us", "eu", "asia"], worker, show_progress=False
+    )
+
+    assert len(out) == 3, f"expected 3 results, got {len(out)}: {out!r}"
+    # Every slot must be a 2-tuple; bare None would fail the for-loop in the caller.
+    for pair in out:
+        assert isinstance(pair, tuple) and len(pair) == 2, (
+            f"slot is not a 2-tuple: {pair!r}"
+        )
+    assert out[0] == ("us", "ok-us")
+    assert out[1] == ("eu", None)   # exception -> (region, None), NOT bare None
+    assert out[2] == ("asia", "ok-asia")
+
+
+def test_map_regions_all_remaining_regions_raise_yields_none_tuples() -> None:
+    """All remaining regions raising must still produce properly shaped output."""
+
+    def worker(region):
+        if region != "us":
+            raise ConnectionError("network down")
+        return "ok"
+
+    out = sr.map_regions_with_disabled_short_circuit(
+        ["us", "eu", "asia"], worker, show_progress=False
+    )
+
+    assert len(out) == 3
+    assert out[0] == ("us", "ok")
+    assert out[1] == ("eu", None)
+    assert out[2] == ("asia", None)
+
+
+def test_map_regions_first_region_exception_yields_none_tuple() -> None:
+    """The first (serially-probed) region raising must also become (region, None)."""
+
+    def worker(region):
+        raise OSError("probe failed")
+
+    out = sr.map_regions_with_disabled_short_circuit(
+        ["us", "eu"], worker, show_progress=False
+    )
+
+    assert len(out) == 2
+    # First slot: serial try/except catches the error.
+    assert out[0] == ("us", None)
+    # Second slot: also fails, must be a tuple not bare None.
+    assert out[1] == ("eu", None)
+
+
+def test_map_regions_cancel_mid_pool_filters_none_slots() -> None:
+    """When a cancel fires during the remaining-regions parallel_map, plain None
+    slots (futures queued but not collected before the break) must be filtered out.
+
+    parallel_map breaks out of as_completed on cancel_requested() and the executor
+    shuts down; futures not yet visited keep their initialized-None slot value.
+    Callers do ``for region, listed in ...`` — a bare None would raise TypeError.
+    """
+    from unittest.mock import patch
+
+    # Simulate parallel_map returning a mix of good tuples and plain-None slots
+    # (the cancel-path artifact: some futures completed after the break and were
+    # not collected, so their slots stay at the initialized None value).
+    def _fake_parallel_map(items, worker, **kwargs):
+        results = []
+        for item in items:
+            results.append(worker(item))  # call the safe wrapper directly
+        # inject two bare-None slots to simulate the cancel path
+        return [results[0], None, None] if len(results) >= 1 else results
+
+    def worker(region):
+        return f"ok-{region}"
+
+    with patch.object(sr, "parallel_map", side_effect=_fake_parallel_map):
+        out = sr.map_regions_with_disabled_short_circuit(
+            ["us-central1", "us-east1", "eu-west1", "ap-east1"],
+            worker,
+            show_progress=False,
+        )
+
+    # The None slots must be gone; each surviving entry must be a (region, result) tuple.
+    for entry in out:
+        assert entry is not None, "bare None from cancel path must be filtered out"
+        assert isinstance(entry, tuple) and len(entry) == 2, f"expected (region, result) tuple, got {entry!r}"
+
+    # Callers must be able to unpack without TypeError.
+    for region, listed in out:
+        assert isinstance(region, str)

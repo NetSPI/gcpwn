@@ -74,5 +74,5 @@ class CloudSchedulerJobsResource(GcpListResource):
     def delete(self, *, name: str) -> None:
         try:
             self.client.delete_job(request=scheduler_v1.DeleteJobRequest(name=name))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Cleanup warning — delete_job({name}): {e}")

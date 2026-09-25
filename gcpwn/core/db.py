@@ -42,9 +42,9 @@ import ast
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
-import traceback
 from contextlib import contextmanager
 from functools import lru_cache, wraps
 from pathlib import Path
@@ -387,19 +387,33 @@ class DataController:
                 sql_query += " WHERE " + conditions
             return [dict(row) for row in self._run(cursor, sql_query, params or (), fetch="all")]
         except sqlite3.Error as exc:
-            print("SQLite error:", exc)
+            # "no such table" is expected when a service hasn't been enumerated yet;
+            # suppress it. All other SQLite errors are unexpected and warrant visibility.
+            if "no such table" not in str(exc).lower():
+                print("SQLite error:", exc)
             return []
 
     def _where_clause(self, columns: Iterable[str]) -> str:
-        return " AND ".join(f'"{column}" = ?' for column in columns)
+        # Backtick quoting avoids SQLite's "double-quoted string literal" (DQS) fallback:
+        # with double quotes, an unresolvable identifier silently becomes a string literal
+        # instead of raising an error. Backtick-quoted identifiers raise on bad names.
+        return " AND ".join(f'`{column}` = ?' for column in columns)
 
     def _columns_clause(self, columns: str | Iterable[str]) -> str:
-        """Build a quoted SELECT column list ("*", one quoted name, or a comma-joined set)."""
+        """Build a quoted SELECT column list ("*", one quoted name, or a comma-joined set).
+
+        Uses backtick quoting (not double quotes) to prevent SQLite's DQS fallback, where
+        an unresolvable double-quoted identifier is silently coerced to a string literal,
+        returning fabricated rows with the column-name string as every value.
+        """
         if columns == "*":
             return "*"
         if isinstance(columns, str):
-            return f'"{columns}"'
-        return ", ".join(f'"{column}"' for column in columns)
+            return f"`{columns}`"
+        columns_list = list(columns)
+        if not columns_list:
+            raise ValueError("columns list must not be empty; pass '*' to select all columns")
+        return ", ".join(f"`{column}`" for column in columns_list)
 
     def _select_one(
         self,
@@ -770,8 +784,9 @@ class DataController:
             )
             if not incoming_provenance:
                 continue
+            cur_col = current_provenance.get(target_column, {})
             merged_column, column_changed = self._merge_permission_tree(
-                current_provenance.get(target_column, {}) if isinstance(current_provenance.get(target_column, {}), dict) else {},
+                cur_col if isinstance(cur_col, dict) else {},
                 incoming_provenance,
                 leaf_depth=2,
             )
@@ -834,6 +849,14 @@ class DataController:
                      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE)
                     """
                 )
+                # Lightweight migration: add delegates column to existing session table.
+                existing_session_cols = {
+                    row[1]
+                    for row in conn.execute('PRAGMA table_info("session")').fetchall()
+                }
+                if "delegates" not in existing_session_cols:
+                    conn.execute('ALTER TABLE "session" ADD COLUMN delegates TEXT')
+
                 resource_columns = ", ".join(f"{column_name} TEXT" for column_name in ACTION_COLUMNS)
                 conn.execute(
                     f"""
@@ -972,6 +995,8 @@ class DataController:
         try:
             project_blob = self.get_workspace(workspace_id, columns="global_project_list")
             current_projects = set(_decode_python_list(project_blob) if project_blob else [])
+            if not add and not remove:
+                return sorted(current_projects)
             if add:
                 current_projects.update(add)
             if remove:
@@ -1175,12 +1200,36 @@ class DataController:
         # All three groups now live in one file; the selector only labels the
         # response. _ensure_service_database keeps __new__-constructed instances safe.
         self._ensure_service_database()
-        conn = self.conn
         cursor = self.cursor
         db_path = self.database_path
 
         query_prefix = sql.lstrip().lower()
-        is_read_query = query_prefix.startswith(("select", "pragma", "with"))
+        # Write-form PRAGMAs (PRAGMA name = value) must be treated as writes even though
+        # they start with "pragma", otherwise they bypass the control-plane guard.
+        _is_write_pragma = bool(re.match(r"pragma\s+\w+\s*=", query_prefix))
+        _with_is_write = (
+            query_prefix.startswith("with")
+            and bool(re.search(r"\b(insert|update|delete)\b", query_prefix))
+        )
+        is_read_query = (
+            query_prefix.startswith(("select", "pragma", "with"))
+            and not _is_write_pragma
+            and not _with_is_write
+        )
+
+        # Block DDL — DROP/CREATE/ALTER/TRUNCATE can destroy the schema.
+        if query_prefix.startswith(("drop ", "create ", "alter ", "truncate ")):
+            raise ValueError(
+                "DDL statements (DROP/CREATE/ALTER/TRUNCATE) are blocked in data sql. "
+                "Use SELECT/INSERT/UPDATE/DELETE only."
+            )
+        # Block writes to control-plane tables (workspaces, session, session_actions).
+        if not is_read_query:
+            for _t in self._CONTROL_PLANE_TABLES:
+                if re.search(r"\b" + re.escape(_t) + r"\b", sql, re.IGNORECASE):
+                    raise ValueError(
+                        f"Writing to control-plane table '{_t}' is blocked in data sql."
+                    )
 
         cursor.execute(sql)
         if is_read_query:
@@ -1193,7 +1242,7 @@ class DataController:
                 "rows_affected": None,
             }
 
-        conn.commit()
+        self._commit_unless_batched()
         return {
             "db": target,
             "db_path": db_path,
@@ -1230,9 +1279,14 @@ class DataController:
             if not db_path.exists():
                 continue
 
-            conn = cls._connect_database_for_path(db_path)
-            cursor = conn.cursor()
+            conn = None
+            cursor = None
             try:
+                # _connect_database_for_path runs _apply_pragmas (PRAGMA journal_mode=WAL etc.)
+                # which also raises sqlite3.DatabaseError on a non-SQLite file, so the
+                # entire open+query block must be inside the try to catch it uniformly.
+                conn = cls._connect_database_for_path(db_path)
+                cursor = conn.cursor()
                 tables = cursor.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
                 ).fetchall()
@@ -1254,9 +1308,15 @@ class DataController:
                         },
                         records,
                     )
+            except sqlite3.DatabaseError as exc:
+                # File exists but is not a valid SQLite database (corrupted, wrong format, etc.).
+                # Match the "non-existent paths are silently skipped" contract with a warning.
+                print(f"[!] Skipping {db_path}: not a valid SQLite database ({exc})")
             finally:
-                cursor.close()
-                conn.close()
+                if cursor is not None:
+                    cursor.close()
+                if conn is not None:
+                    conn.close()
 
     @_synchronized
     def get_actions(
@@ -1637,6 +1697,11 @@ class DataController:
                 {"workspace_id": workspace_id, "credname": credname},
             )
             return True
-        except Exception:
-            print(traceback.format_exc())
+        except Exception as exc:
+            # Print a terse warning rather than a raw traceback so modules stay
+            # readable when a column is missing or the DB schema drifts.  The
+            # root cause is usually an action column that hasn't been registered
+            # in action_schema.ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE yet.
+            col_hint = f" (column: {column_name})" if column_name else ""
+            print(f"[X] Failed to record actions{col_hint}: {exc}")
             return False

@@ -110,7 +110,7 @@ def _parse_args(user_args):
             ("blobs", "Enumerate Cloud Storage blobs"),
         ],
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("download", "iam", "get", "debug"),
+        standard_args=("download", "iam", "get"),
         standard_arg_overrides={
             "download": {"help": "Attempt to download enumerated blobs"},
             "iam": {"help": "Run bucket TestIamPermissions checks"},

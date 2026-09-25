@@ -167,22 +167,13 @@ def _collect_resource_rows(
                 rate_calls_per_min = (calls_per_window * 60.0) / float(window_seconds)
                 pause_windows = max(0, total_calls - 1) // max(1, calls_per_window)
                 approx_eta_minutes = (pause_windows * window_seconds) / 60.0
-                if args.record_failed_permissions:
-                    print(
-                        f"[*] Checking {total_permissions} permissions for {resource_name}; "
-                        f"batch_size={FAILED_PERMISSION_RECORD_BATCH_SIZE}, "
-                        f"rate≈{rate_calls_per_min:.2f} calls/min "
-                        f"({calls_per_window} calls/{window_seconds}s), "
-                        f"total_calls={total_calls}, ETA≈{approx_eta_minutes:.1f} min"
-                    )
-                else:
-                    print(
-                        f"[*] Checking {total_permissions} permissions for {resource_name}; "
-                        f"batch_size={batch_size}, "
-                        f"rate≈{rate_calls_per_min:.2f} calls/min "
-                        f"({calls_per_window} calls/{window_seconds}s), "
-                        f"total_calls={total_calls}, ETA≈{approx_eta_minutes:.1f} min"
-                    )
+                print(
+                    f"[*] Checking {total_permissions} permissions for {resource_name}; "
+                    f"batch_size={batch_size}, "
+                    f"rate≈{rate_calls_per_min:.2f} calls/min "
+                    f"({calls_per_window} calls/{window_seconds}s), "
+                    f"total_calls={total_calls}, ETA≈{approx_eta_minutes:.1f} min"
+                )
             permissions = resource.test_iam_permissions(
                 resource_name=resource_name,
                 permissions=permission_catalog,

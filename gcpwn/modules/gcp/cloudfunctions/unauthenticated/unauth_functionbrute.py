@@ -14,10 +14,10 @@ def _generate_base_urls(project: str, region: str | None) -> list[str]:
 
 def _load_permutations(wordlist_path: str | None) -> list[str]:
     if wordlist_path:
-        with open(wordlist_path, "r") as f:
+        with open(wordlist_path, encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip()]
     default = module_data_file(__file__, "..", "utilities", "data", "gcpfunctionsbrute_permutations.txt")
-    with open(default, "r") as f:
+    with open(default, encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
 
@@ -96,3 +96,4 @@ def run_module(user_args, session):
         print(f"  {h}")
     if cancelled:
         print("[!] Scan was interrupted.")
+    return 1

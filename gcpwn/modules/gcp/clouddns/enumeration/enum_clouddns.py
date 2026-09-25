@@ -30,7 +30,7 @@ def _parse_args(user_args):
         description="Enumerate Cloud DNS resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "download", "get", "debug"),
+        standard_args=("iam", "download", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on managed zones"},
             "download": {"help": "Write record sets to per-zone CSV-style text files"},

@@ -34,7 +34,7 @@ def _parse_args(user_args):
         description="Read Google Workspace group access/posting settings",
         components=[],
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get"),
     )
 
 

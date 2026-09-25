@@ -66,9 +66,14 @@ class KmsCryptoKeysResource(_KmsResource):
     PARENT_FROM_PROJECT_LOCATION = False  # listed under a parent keyring
 
     def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Flatten the nested ``primary.state`` into the row's ``primary_state`` column."""
+        """Flatten ``primary.state`` and derive ``keyring_name`` from the resource path."""
+        name = str(raw.get("name", "") or "")
         primary = raw.get("primary")
-        return {"primary_state": primary.get("state") if isinstance(primary, dict) else ""}
+        return {
+            "primary_state": primary.get("state") if isinstance(primary, dict) else "",
+            # name = projects/P/locations/L/keyRings/KR/cryptoKeys/CK
+            "keyring_name": name.partition("/cryptoKeys/")[0],
+        }
 
 
 class KmsCryptoKeyVersionsResource(_KmsResource):
@@ -88,3 +93,8 @@ class KmsCryptoKeyVersionsResource(_KmsResource):
     GET_METHOD = "get_crypto_key_version"
     ID_FIELD = "version_id"
     PARENT_FROM_PROJECT_LOCATION = False  # listed under a parent crypto key
+
+    def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
+        # name = projects/P/locations/L/keyRings/KR/cryptoKeys/CK/cryptoKeyVersions/N
+        name = str(raw.get("name", "") or "")
+        return {"key_name": name.partition("/cryptoKeyVersions/")[0]}

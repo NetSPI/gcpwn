@@ -327,7 +327,7 @@ def _parse_args(user_args):
             ("providers", "Enumerate Workload Identity Providers (WIF)"),
         ],
         add_extra_args=build_extra_args([SA_COMPONENT], extra=_add_extra_args),
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={"iam": {"help": "Run TestIamPermissions on service accounts"}},
     )
 

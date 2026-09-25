@@ -28,10 +28,6 @@ def _parse_args(user_args):
             "--zone", default=None,
             help="Specific zone to enumerate (default: all zones)",
         )
-        parser.add_argument(
-            "--all-instances", action="store_true",
-            help="Show all instances, not just IAP candidates",
-        )
 
     return parse_component_args(
         user_args,
@@ -42,7 +38,7 @@ def _parse_args(user_args):
         ),
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("debug",),
+        standard_args=("iam", "get"),
     )
 
 

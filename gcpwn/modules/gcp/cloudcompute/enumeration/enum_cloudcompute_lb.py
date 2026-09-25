@@ -45,7 +45,7 @@ def _parse_args(user_args):
         description="Enumerate Compute Engine load balancing resources",
         components=COMPONENTS,
         add_extra_args=_add_extra_args,
-        standard_args=("iam", "get", "debug"),
+        standard_args=("iam", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on supported load balancing resources"},
         },
@@ -195,7 +195,7 @@ def run_module(user_args, session):
         session.insert_actions(scope_actions, project_id, column_name="compute_actions_allowed")
     if has_recorded_actions(api_actions):
         session.insert_actions(api_actions, project_id, column_name="compute_actions_allowed")
-    if has_recorded_actions(iam_actions):
+    if args.iam and has_recorded_actions(iam_actions):
         session.insert_actions(
             iam_actions,
             project_id,

@@ -50,7 +50,7 @@ def _parse_args(user_args):
         description="Enumerate Application Integration integrations and flag runAsServiceAccount PE candidates",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("debug",),
+        standard_args=("iam", "get"),
     )
 
 
@@ -60,7 +60,7 @@ def _region_resolver(session, args):
     if getattr(args, "regions_list", None):
         return [r.strip() for r in args.regions_list.split(",") if r.strip()]
     if getattr(args, "regions_file", None):
-        with open(args.regions_file) as f:
+        with open(args.regions_file, encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip()]
     return _DEFAULT_REGIONS
 

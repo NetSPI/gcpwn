@@ -16,6 +16,8 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.context import (
 from gcpwn.modules.opengraph.utilities.stage_1_principals import build_users_groups_graph
 from gcpwn.modules.opengraph.utilities.stage_4_resource_expansion import build_resource_expansion_graph
 
+from conftest import _edges
+
 
 class _CaiSession:
     """A get_data-only session backed by CAI-mapped tables (the CaiFileSource shape)."""
@@ -60,10 +62,6 @@ _RECORDS = [
 ]
 
 
-def _edges(ctx):
-    return {(e.source_id, e.edge_type, e.destination_id) for e in ctx.builder.edge_map.values()}
-
-
 def _nodes(ctx):
     return {n.node_id for n in ctx.builder.node_map.values()}
 
@@ -101,10 +99,10 @@ def test_cai_ingest_builds_expected_graph():
     # alice holds the owner binding
     assert any(s == "user:alice@corp.com" and k == "HAS_IAM_BINDING" for s, k, _ in edges)
     # SA key -> SA edge
-    assert any(k == "GCP_SERVICE_ACCOUNT_KEY_FOR" for _, k, _ in edges)
+    assert any(k == "ServiceAccountKeyFor" for _, k, _ in edges)
     # WIF provider -> pool edge
     assert ("resource:projects/proj-a/locations/global/workloadIdentityPools/pool1/providers/gh",
-            "WIF_PROVIDER_IN_POOL",
+            "IdentityProviderInPool",
             "resource:projects/proj-a/locations/global/workloadIdentityPools/pool1") in edges
 
 
@@ -131,5 +129,5 @@ def test_process_og_cai_file_end_to_end(tmp_path):
     node_ids = {str(n.get("id") or "") for n in (graph.get("nodes") or [])}
     edge_kinds = {str(e.get("kind") or "") for e in (graph.get("edges") or [])}
     assert "resource:projects/proj-a" in node_ids
-    assert "WIF_PROVIDER_IN_POOL" in edge_kinds
-    assert "GCP_SERVICE_ACCOUNT_KEY_FOR" in edge_kinds
+    assert "IdentityProviderInPool" in edge_kinds
+    assert "ServiceAccountKeyFor" in edge_kinds

@@ -161,12 +161,12 @@ class CloudRunServicesResource(_CloudRunResource):
 
     def get_by_name(self, *, name: str) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         return client.get_service(request=run_v2.GetServiceRequest(name=name))
 
     def create(self, *, parent: str, service_id: str, service: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.create_service(request=run_v2.CreateServiceRequest(
             parent=parent, service_id=service_id, service=service,
         ))
@@ -174,13 +174,13 @@ class CloudRunServicesResource(_CloudRunResource):
 
     def update(self, *, service: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.update_service(request=run_v2.UpdateServiceRequest(service=service))
         return op.result(timeout=300)
 
     def delete(self, *, name: str) -> None:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         try:
             op = client.delete_service(request=run_v2.DeleteServiceRequest(name=name))
             op.result(timeout=120)
@@ -249,12 +249,12 @@ class CloudRunJobsResource(_CloudRunResource):
 
     def get_by_name(self, *, name: str) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         return client.get_job(request=run_v2.GetJobRequest(name=name))
 
     def create(self, *, parent: str, job_id: str, job: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.create_job(request=run_v2.CreateJobRequest(
             parent=parent, job_id=job_id, job=job,
         ))
@@ -262,19 +262,19 @@ class CloudRunJobsResource(_CloudRunResource):
 
     def update(self, *, job: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.update_job(request=run_v2.UpdateJobRequest(job=job))
         return op.result(timeout=300)
 
     def run_job(self, *, name: str) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.run_job(request=run_v2.RunJobRequest(name=name))
         return op.result(timeout=600)
 
     def delete(self, *, name: str) -> None:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         try:
             op = client.delete_job(request=run_v2.DeleteJobRequest(name=name))
             op.result(timeout=60)
@@ -299,18 +299,18 @@ class CloudRunWorkerPoolsResource(_CloudRunResource):
         template = raw.get("template") or {}
         scaling = raw.get("scaling") or {}
         return {
-            "service_account": template.get("serviceAccount") or template.get("service_account") or "",
-            "min_instance_count": scaling.get("minInstanceCount") or scaling.get("manual_instance_count") or 0,
+            "service_account": template.get("service_account") or "",
+            "min_instance_count": scaling.get("min_instance_count") or scaling.get("manual_instance_count") or 0,
         }
 
     def get_by_name(self, *, name: str) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         return client.get_worker_pool(request=run_v2.GetWorkerPoolRequest(name=name))
 
     def create(self, *, parent: str, worker_pool_id: str, worker_pool: Any) -> Any:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         op = client.create_worker_pool(request=run_v2.CreateWorkerPoolRequest(
             parent=parent, worker_pool_id=worker_pool_id, worker_pool=worker_pool,
         ))
@@ -319,7 +319,7 @@ class CloudRunWorkerPoolsResource(_CloudRunResource):
     def update(self, *, worker_pool: Any, update_mask: list[str] | None = None) -> Any:
         from google.cloud import run_v2  # type: ignore
         from google.protobuf import field_mask_pb2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         req = run_v2.UpdateWorkerPoolRequest(worker_pool=worker_pool)
         if update_mask:
             req.update_mask = field_mask_pb2.FieldMask(paths=update_mask)
@@ -328,7 +328,7 @@ class CloudRunWorkerPoolsResource(_CloudRunResource):
 
     def delete(self, *, name: str) -> None:
         from google.cloud import run_v2  # type: ignore
-        client = self._build_client(self.session)
+        client = self.client
         try:
             op = client.delete_worker_pool(request=run_v2.DeleteWorkerPoolRequest(name=name))
             op.result(timeout=120)

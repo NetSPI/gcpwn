@@ -16,9 +16,9 @@ from typing import Any, Callable, Mapping
 import requests
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.modules.gcp.apikeys.unauthenticated._shared import prompt_yes_no
-from gcpwn.modules.gcp.apikeys.unauthenticated._shared import set_tls_verification
-from gcpwn.modules.gcp.apikeys.unauthenticated._shared import tls_verify
+from gcpwn.modules.gcp.apikeys.utilities.helpers import prompt_yes_no
+from gcpwn.modules.gcp.apikeys.utilities.helpers import set_tls_verification
+from gcpwn.modules.gcp.apikeys.utilities.helpers import tls_verify
 from gcpwn.modules.gcp.apikeys.utilities.helpers import _key_fingerprint
 from gcpwn.modules.gcp.apikeys.utilities.helpers import _key_preview
 from gcpwn.modules.gcp.apikeys.utilities.helpers import _safe_json

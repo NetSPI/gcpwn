@@ -4,11 +4,11 @@ These prove two edge families survive future refactors:
 
 1. Stage 3 (`build_iam_inferred_permissions_graph`): from a credential's recorded
    permission EVIDENCE (`session.get_actions()`), a principal that holds a dangerous
-   single permission gets ``HAS_IMPLIED_PERMISSIONS`` to an implied-grant node and an
-   ``INFERRED_<KIND>`` edge to the affected resource (e.g. INFERRED_CAN_MODIFY_PROJECT_IAM).
+   single permission gets ``HasImpliedPermissions`` to an implied-grant node and an
+   ``INFERRED_<KIND>`` edge to the affected resource (e.g. INFERRED_ModifyProjectIam).
 
 2. Stage 2 multi-permission combos (`_run_iam_bindings_stage`): when one principal holds
-   ALL permissions in a multi-permission rule set (og_privilege_escalation_paths.json), the
+   ALL permissions in a multi-permission rule set (og_defined_edges.json), the
    pipeline models a combo hop: subject -> (combo binding) -> GCPIamCapability -> the combo
    edge (CREATE_CLOUDSCHEDULER_JOB_AS_SA) on the target SA. When the permissions arrive via
    TWO bindings, a GCPIamMultiBinding node + HAS_COMBO_BINDING / CONTRIBUTES_TO_COMBO appear.
@@ -93,12 +93,12 @@ def test_inferred_project_iam_edge_from_credential_evidence():
     edges = _edges(ctx)
     kinds = _edge_kinds(ctx)
 
-    assert "HAS_IMPLIED_PERMISSIONS" in kinds
+    assert "HasImpliedPermissions" in kinds
     assert "INFERRED_CAN_MODIFY_PROJECT_IAM" in kinds
 
     # principal -> implied grant node -> INFERRED edge -> the project resource node.
     implied_from_principal = [
-        (src, dst) for src, kind, dst in edges if kind == "HAS_IMPLIED_PERMISSIONS"
+        (src, dst) for src, kind, dst in edges if kind == "HasImpliedPermissions"
     ]
     assert implied_from_principal == [("user:eve@corp.com", implied_from_principal[0][1])]
     implied_node_id = implied_from_principal[0][1]
@@ -143,7 +143,7 @@ def test_no_inferred_edges_without_dangerous_evidence():
     )
     kinds = _edge_kinds(ctx)
     assert not any(kind.startswith("INFERRED_") for kind in kinds)
-    assert "HAS_IMPLIED_PERMISSIONS" not in kinds
+    assert "HasImpliedPermissions" not in kinds
 
 
 # --------------------------------------------------------------------------- #
@@ -196,11 +196,11 @@ def test_combo_edge_single_role_emits_capability_hop_and_combo_edge():
     kinds = _edge_kinds(ctx)
     types = _node_types(ctx)
 
-    # capability hop edge (binding -> GCPIamCapability) and the combo edge (capability -> SA).
-    assert "CAN_CREATE_CLOUDSCHEDULER_JOB" in kinds
+    # capability hop edge (binding -> GCPCloudSchedulerJob) and the combo edge (capability -> SA).
+    assert "CREATE_CLOUDSCHEDULER_JOB_AS_SA" in kinds
     assert "CREATE_CLOUDSCHEDULER_JOB_AS_SA" in kinds
 
-    capability_nodes = [nid for nid, ntype in types.items() if ntype == "GCPIamCapability"]
+    capability_nodes = [nid for nid in types if nid.startswith("CAP:CREATE_CLOUDSCHEDULER_JOB_AS_SA")]
     assert len(capability_nodes) == 1
     capability_id = capability_nodes[0]
 
@@ -216,7 +216,8 @@ def test_combo_edge_single_role_emits_capability_hop_and_combo_edge():
 
 def test_combo_two_bindings_emit_multi_binding_node_and_combo_binding_edges():
     # The two combo permissions arrive via TWO separate role bindings on the same principal.
-    # That triggers a GCPIamMultiBinding combo node with HAS_COMBO_BINDING + CONTRIBUTES_TO_COMBO.
+    # That triggers a GCPIamMultiBinding combo node with HAS_COMBO_BINDING; contributing
+    # binding IDs are stored as a property on the combo edge (not separate CONTRIBUTES_TO_COMBO edges).
     ctx = _run_combo(
         iam_roles=[
             {"name": "projects/proj-a/roles/sched", "included_permissions": ["cloudscheduler.jobs.create"]},
@@ -240,18 +241,21 @@ def test_combo_two_bindings_emit_multi_binding_node_and_combo_binding_edges():
     types = _node_types(ctx)
 
     assert "HAS_COMBO_BINDING" in kinds
-    assert "CONTRIBUTES_TO_COMBO" in kinds
     assert "CREATE_CLOUDSCHEDULER_JOB_AS_SA" in kinds
 
     combo_nodes = [nid for nid, ntype in types.items() if ntype == "GCPIamMultiBinding"]
     assert len(combo_nodes) == 1
     combo_id = combo_nodes[0]
 
-    # subject -> combo node, and each of the two simple bindings -> combo node.
+    # subject -> combo node via HAS_COMBO_BINDING; contributing binding IDs are stored on that edge.
     assert ("user:eve@corp.com", "HAS_COMBO_BINDING", combo_id) in edges
-    contributing = sorted(
-        src for src, kind, dst in edges if kind == "CONTRIBUTES_TO_COMBO" and dst == combo_id
+    combo_edge = next(
+        (e for e in ctx.builder.edge_map.values()
+         if e.edge_type == "HAS_COMBO_BINDING" and e.destination_id == combo_id),
+        None,
     )
+    assert combo_edge is not None
+    contributing = sorted(combo_edge.properties.get("contributing_binding_ids") or [])
     assert contributing == [
         "iambinding:projects/proj-a/roles/actas@project:proj-a",
         "iambinding:projects/proj-a/roles/sched@project:proj-a",

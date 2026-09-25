@@ -57,7 +57,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace admin roles and role assignments",
         components=COMPONENTS,
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 
@@ -90,7 +90,7 @@ def run_module(user_args, session):
 
     # The Directory API customer selector: explicit override, else the resolved
     # customer id, else the literal `my_customer`.
-    directory_customer = str(args.directory_customer or customer_id or "my_customer")
+    directory_customer = str(args.directory_customer or customer_id)
 
     roles_resource = WorkspaceAdminRolesResource(session, subject=subject)
     assignments_resource = WorkspaceRoleAssignmentsResource(session, subject=subject)

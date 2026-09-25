@@ -61,7 +61,7 @@ def _parse_args(user_args):
         description="Enumerate Google Workspace / Cloud Identity resources",
         components=COMPONENTS,
         add_extra_args=_add_extra_args,
-        standard_args=("get", "debug"),
+        standard_args=("iam", "get", "debug"),
     )
 
 
@@ -312,7 +312,12 @@ def run_module(user_args, session):
             print(f"{UtilityTools.YELLOW}[*] Cannot enumerate users without a customer ID (directoryCustomerId).{UtilityTools.RESET}")
             return 1
 
-        directory_users = users_resource.list(customer=str(args.directory_customer), max_results=500, order_by="email")
+        # Prefer the already-resolved customer_id over the --directory-customer default
+        # ("my_customer"). "my_customer" resolves correctly for user OAuth credentials but
+        # fails with 400 "Invalid Input" when a service account impersonates via DWD --
+        # the impersonated token needs the explicit customer ID to avoid this error.
+        _customer_selector = customer_id
+        directory_users = users_resource.list(customer=_customer_selector, max_results=500, order_by="email")
         if directory_users:
             users_resource.save_users(customer_id=customer_id, users=directory_users)
         if users_resource.last_call_ok:

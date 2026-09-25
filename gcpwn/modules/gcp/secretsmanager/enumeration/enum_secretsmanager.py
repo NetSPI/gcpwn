@@ -23,18 +23,19 @@ def _access_values(rows, *, resource, args, api_actions):
         value = resource.access_value(resource_id=name, action_dict=api_actions)
         if not value:
             continue
-        payload = value.payload.data
+        payload_bytes = value.payload.data
+        payload_str = payload_bytes.decode("utf-8", errors="replace")
         if getattr(args, "values", False):
-            version["secret_value"] = payload.decode("utf-8", errors="replace")
+            version["secret_value"] = payload_str
         session.insert_data(
             "secretsmanager_secretversions",
-            {"primary_keys_to_match": {"name": name}, "data_to_insert": {"secret_value": payload}},
+            {"primary_keys_to_match": {"name": name}, "data_to_insert": {"secret_value": payload_str}},
             update_only=True,
         )
         if getattr(args, "download", False):
             secret_name = name.split("/secrets/", 1)[1].split("/", 1)[0] if "/secrets/" in name else ""
             resource.download(project_id=session.project_id, secret_name=secret_name,
-                              version=extract_path_tail(name, default=name), payload=payload)
+                              version=extract_path_tail(name, default=name), payload=payload_bytes)
     return rows
 
 
@@ -55,14 +56,13 @@ ALL_KEYS = ["secrets", "versions", "values"]
 def _parse_args(user_args):
     def _add_extra_args(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--values", action="store_true", help="Attempt to access secret values (sensitive)")
-        parser.add_argument("--version-range", type=str, required=False, help="(reserved) Version range like 1-5,7,latest")
 
     return parse_component_args(
         user_args,
         description="Enumerate Secret Manager resources",
         components=component_args(COMPONENTS),
         add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "download", "get", "debug"),
+        standard_args=("iam", "download", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on secrets and versions"},
             "download": {"help": "Download secret values to local files"},
