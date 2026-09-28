@@ -27,15 +27,24 @@ permission analysis and BloodHound-style attack-path graphing (OpenGraph).
     and all SQL. `workspaces` is the parent table; `session`/`session_actions`
     and every service table carry a `workspaces(id)` FK with `ON DELETE CASCADE`
     (one file so FKs can span the groups; `foreign_keys=ON`).
-  - `service_runtime.py` — shared module helpers (arg parsing, error handling,
+  - `utils/service_runtime.py` — shared module helpers (arg parsing, error handling,
     paging, `parallel_map`).
   - `action_schema.py` — the permission/provenance column model.
-- `gcpwn/modules/<service>/<category>/<module>.py` — modules. Categories:
-  `enumeration`, `exploit`, `unauthenticated`, `process`, `utilities`.
-  Per-service `utilities/helpers.py` holds the real API logic; the module file
-  is a thin CLI wrapper.
+- `gcpwn/modules/` — module tree, grouped by domain:
+  - `gcp/<service>/<category>/<module>.py` — GCP service modules. Categories:
+    `enumeration`, `exploit`, `unauthenticated`, `process`, `utilities`.
+    Per-service `utilities/helpers.py` holds the real API logic; the module
+    file is a thin CLI wrapper.
+  - `workspace/` — Google Workspace / Cloud Identity modules.
+  - `everything/` — cross-cutting orchestrators (`enum_all`, `enum_gcp`,
+    `enum_gcp_policy_bindings`, `exploit_gcp_setiampolicy`,
+    `process_gcp_iam_bindings`).
+  - `opengraph/` — BloodHound OpenGraph build/export and text attack-path
+    analysis (`process_og_gcpwn_data`, `process_og_attack_paths`, etc.).
 - `gcpwn/mappings/*.json` — module registry + static IAM/escalation data.
-- `databases/` — runtime SQLite stores (gitignored).
+- `databases/` — runtime SQLite stores (gitignored). Dev checkout uses
+  `databases/gcpwn.db` relative to the repo root; pip-installed builds use
+  `~/.gcpwn/databases/gcpwn.db` (or `$GCPWN_HOME/databases/gcpwn.db`).
 
 ## Run / test / lint
 
@@ -59,7 +68,7 @@ def run_module(user_args, session):
 ```
 
 - `user_args` is a `list[str]` (argparse-style); parse it with the helpers in
-  `service_runtime.py` (`parse_component_args`, `add_standard_arguments`).
+  `gcpwn/core/utils/service_runtime.py` (`parse_component_args`, `add_standard_arguments`).
 - `session` is the `SessionUtility` (or `PassthroughSession` for unauth runs).
 - Some modules take an extra `dependency=`/`callback=` flag used when one module
   calls another; default it to `False`.
@@ -110,12 +119,13 @@ def run_module(user_args, session):
 
 - Output goes through `gcpwn.core.console.UtilityTools` (colors, `summary_wrapup`,
   the `print_403/404/500` helpers). Don't hand-roll ANSI codes.
-- Handle Google API errors with `service_runtime.handle_service_error` /
-  `handle_discovery_error` so "API disabled" vs "403 denied" vs "404" is
-  reported consistently and short-circuits region fan-out.
+- Handle Google API errors with `handle_service_error` / `handle_discovery_error`
+  from `gcpwn.core.utils.service_runtime` so "API disabled" vs "403 denied"
+  vs "404" is reported consistently and short-circuits region fan-out.
 - Keep non-Google runtime dependencies minimal (eases enterprise install
   approval). `boto3` is REQUIRED (HMAC/XML Cloud Storage access); `prettytable`
-  and `xlsxwriter` are optional extras.
+  (`pip install .[table]`) and `xlsxwriter` (`pip install .[excel]`) are
+  optional extras in separate named groups.
 
 ## Exploit module testing protocol
 

@@ -89,7 +89,7 @@ pip install -r requirements.txt
 Install optional table output support:
 
 ```bash
-pip install prettytable==3.17.0
+pip install prettytable==3.18.0
 ```
 
 Install optional Excel export support:
@@ -647,6 +647,47 @@ WHERE (sa2:GCPServiceAccount OR sa2:GCPServiceAccountResource)
   AND sa1 <> sa2
 RETURN p
 LIMIT 500
+```
+
+### Text-Based Attack Path Analysis TLDR
+
+If BloodHound is unavailable or the graph is too large to navigate visually, `process_og_attack_paths` runs PMapper-style text pathfinding directly over the exported OpenGraph JSON. Pass `--graph-json` pointing at your exported file or directory.
+
+Find all principals that can reach `roles/owner`:
+
+```bash
+# compact one-liner per path
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --compact
+
+# full detail (shows roles that granted each hop)
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner
+```
+
+Example output:
+
+```text
+ [direct] serviceAccount:test-gcpwn@my-project → holds roles/owner on organizations/123456789
+
+ [1 hop ] serviceAccount:gcpwn-poc-target@my-project
+        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> serviceAccount:test-gcpwn@my-project  (via roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
+        └─ holds roles/owner on organizations/123456789
+
+ [1 hop ] serviceAccount:service-799134222906@dataflow-service-producer-prod
+        └─[CAN_CREATE_SA_ACCESS_TOKEN]─> serviceAccount:test-gcpwn@my-project  (via roles/dataflow.serviceAgent on projects/799134222906)
+        └─ holds roles/owner on organizations/123456789
+```
+
+Other target selectors:
+
+```bash
+# find paths to a specific service account
+modules run process_og_attack_paths --graph-json output.json --to-sa target-sa@my-project.iam.gserviceaccount.com
+
+# filter to paths starting from a specific principal
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --from serviceAccount:attacker@my-project.iam.gserviceaccount.com
+
+# machine-readable JSON output
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --json --output paths.json
 ```
 
 ## Module/Data Output TLDR
