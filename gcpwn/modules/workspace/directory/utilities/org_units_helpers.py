@@ -66,18 +66,6 @@ def org_unit_to_row(*, customer_id: str, unit: dict[str, Any]) -> dict[str, Any]
 
 
 class WorkspaceOrgUnitsResource:
-    TABLE_NAME = "workspace_org_units"
-    COLUMNS = [
-        "customer_id",
-        "org_unit_id",
-        "org_unit_path",
-        "name",
-        "parent_org_unit_path",
-        "parent_org_unit_id",
-        "description",
-        "block_inheritance",
-        "raw_json",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

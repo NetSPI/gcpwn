@@ -569,6 +569,11 @@
             "module_name": "process_og_node_color_images",
             "info_blurb": "Sync OpenGraph custom node color/image metadata to a BloodHound custom-node endpoint.",
             "location": "gcpwn.modules.opengraph.processing.process_og_node_color_images"
+          },
+          {
+            "module_name": "process_og_attack_paths",
+            "info_blurb": "PMapper-style text attack-path analysis over an exported OpenGraph JSON graph -- no BloodHound UI needed. Answers 'who can reach roles/owner', 'who can reach this service account', or 'who can reach resources at this project/folder/org', shortest path first. Defaults to roles/owner + roles/editor. Use --list-targets/--stats to explore, --all-paths for full enumeration, --json for machine-readable output.",
+            "location": "gcpwn.modules.opengraph.processing.process_og_attack_paths"
           }
         ]
       }

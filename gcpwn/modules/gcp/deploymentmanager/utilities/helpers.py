@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from gcpwn.core.resource import DiscoveryListResource
+from gcpwn.core.utils.module_helpers import extract_path_tail
 
 
 class DeploymentManagerDeploymentResource(DiscoveryListResource):
@@ -34,6 +35,8 @@ class DeploymentManagerDeploymentResource(DiscoveryListResource):
     DISCOVERY_API = "deploymentmanager"
     DISCOVERY_VERSION = "v2"
     ID_FIELD = "deployment_id"
+    # deployments.list returns {"deployments": [...]}, not the Compute-style "items".
+    LIST_ITEMS_KEY = "deployments"
 
     def _list_request(self, *, project_id: str, parent: str | None, page_token: str | None = None, **_):
         return self.service.deployments().list(project=project_id, pageToken=page_token)
@@ -44,7 +47,7 @@ class DeploymentManagerDeploymentResource(DiscoveryListResource):
     def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
         name = raw.get("name", "")
         # deployment_id is the last path segment of the resource name, or the name itself
-        deployment_id = name.rsplit("/", 1)[-1] if "/" in name else name
+        deployment_id = extract_path_tail(name)
 
         # state from update.state (steady-state) or operation.status (in-progress)
         update = raw.get("update") or {}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,52 @@ def safe_path_component(value: str) -> str:
     text = text.replace("/", "_").replace("\\", "_").replace(":", "_")
     text = re.sub(r"\s+", "_", text)
     return re.sub(r"[^A-Za-z0-9_.\-]", "", text).strip("._-")
+
+
+# A ".." path segment is the one thing that cannot be written verbatim without
+# escaping the download directory. Percent-encoding it keeps the name faithful and
+# reversible instead of dropping information the operator may care about.
+PARENT_SEGMENT_ESCAPE = "%2E%2E"
+
+
+def safe_relative_path(name: str, *, fallback: str = "file") -> str:
+    """Turn a remote object name into a relative path that cannot escape its root.
+
+    PRESERVES the name -- ``.env``, ``...`` and ``report..v2`` are valid, distinct
+    objects and the operator wants the real filename on disk -- and neutralizes only
+    what traverses: a literal ``..`` segment becomes ``%2E%2E``, absolute anchors and
+    ``\\`` separators are dropped, ``:`` is handled on Windows. Escaping rather than
+    collapsing ``..`` keeps ``a/../b`` distinct from ``a/b``, which are different
+    objects in Cloud Storage's flat namespace.
+
+    Join the result with :func:`resolve_within`, which is the actual guarantee.
+    """
+    segments = []
+    for raw in str(name or "").replace("\\", "/").split("/"):
+        if raw in ("", "."):
+            continue
+        if raw == "..":
+            segments.append(PARENT_SEGMENT_ESCAPE)
+            continue
+        segments.append(raw.replace(":", "_") if os.name == "nt" else raw)
+    return "/".join(segments) or fallback
+
+
+def resolve_within(root: str | Path, relative_name: str, *, fallback: str = "file") -> Path:
+    """Join ``relative_name`` under ``root``, guaranteed to stay inside it.
+
+    Resolves symlinks before comparing, and collapses the name to one safe segment
+    if it would still land outside. Makes containment a property of the code rather
+    than of :func:`safe_relative_path` being correct.
+    """
+    root_path = Path(root).expanduser()
+    root_path.mkdir(parents=True, exist_ok=True)
+    resolved_root = root_path.resolve()
+
+    candidate = (resolved_root / safe_relative_path(relative_name, fallback=fallback)).resolve()
+    if candidate == resolved_root or resolved_root in candidate.parents:
+        return candidate
+    return resolved_root / (compact_filename_component(relative_name) or fallback)
 
 
 def compact_filename_component(filename: str, *, max_len: int = 128) -> str:

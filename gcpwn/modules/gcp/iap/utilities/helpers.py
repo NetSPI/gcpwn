@@ -156,17 +156,3 @@ class IAPTunnelInstancesResource(GcpListResource):
             print(output[:500])
         else:
             print(f"{UtilityTools.YELLOW}[!] No output received from SSH command.{UtilityTools.RESET}")
-
-    def check_iap_access(self, project_id: str, instance_name: str, zone: str) -> bool:
-        """Return True if ``instance_name`` in ``zone`` appears accessible via IAP tunnel."""
-        try:
-            inst = self.client.get(project=project_id, zone=zone, instance=instance_name)
-        except Exception:
-            return False
-        has_external = any(nic.access_configs for nic in inst.network_interfaces)
-        metadata_items = inst.metadata.items if inst.metadata else []
-        oslogin_enabled = any(
-            item.key == "enable-oslogin" and item.value.lower() == "true"
-            for item in metadata_items
-        )
-        return not has_external or oslogin_enabled

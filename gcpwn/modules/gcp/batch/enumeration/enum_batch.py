@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import argparse
 
 from gcpwn.core.output_paths import resolve_download_path
-from gcpwn.core.utils.enum_framework import REGION, Component, component_args, run_components
+from gcpwn.core.utils.enum_framework import Component, REGION, parse_enum_args, run_components
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.service_runtime import DownloadBudget, parse_component_args
+from gcpwn.core.utils.service_runtime import DownloadBudget
 from gcpwn.modules.gcp.batch.utilities.helpers import BatchJobsResource, resolve_locations
 
 
@@ -74,17 +73,12 @@ def _download_scripts(session, *, project_id: str, job_rows: list[dict]) -> None
 
 
 def _parse_args(user_args):
-    def _add_extra_args(parser: argparse.ArgumentParser) -> None:
-        regions_group = parser.add_mutually_exclusive_group()
-        regions_group.add_argument("--all-regions", action="store_true", required=False, help="Try wildcard location (-) when supported")
-        regions_group.add_argument("--regions-list", required=False, help="Regions in comma-separated format")
-        regions_group.add_argument("--regions-file", required=False, help="File containing regions, one per line")
-
-    return parse_component_args(
+    return parse_enum_args(
         user_args,
+        COMPONENTS,
         description="Enumerate Batch resources (read-only)",
-        components=component_args(COMPONENTS),
-        add_extra_args=_add_extra_args,
+        region_label="regions",
+        region_all_help="Try wildcard location (-) when supported",
         standard_args=("iam", "download", "get"),
     )
 

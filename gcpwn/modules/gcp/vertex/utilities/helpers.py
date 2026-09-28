@@ -5,9 +5,9 @@ from typing import Any
 
 import requests as _rlib
 
-from gcpwn.core.resource import GcpListResource
-from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.service_runtime import get_bearer_token
+from gcpwn.core.console import UtilityTools
+from gcpwn.core.resource import RestListResource
+from gcpwn.core.utils.service_runtime import bearer_headers, get_bearer_token, rest_call
 from gcpwn.core.utils.module_helpers import (
     region_resolver_for,
     static_locations,
@@ -31,32 +31,10 @@ resolve_locations = region_resolver_for("vertex")
 _DEFAULT_REGIONS = static_locations("vertex")
 
 
-def _req(tok: str, method: str, url: str, body=None, params=None) -> dict:
-    hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
-    fn = {"GET": _rlib.get, "POST": _rlib.post, "PUT": _rlib.put,
-          "PATCH": _rlib.patch, "DELETE": _rlib.delete}[method]
-    r = fn(url, headers=hdrs, json=body, params=params, timeout=30)
-    try:
-        return r.status_code, r.json()
-    except Exception:
-        return r.status_code, {"_raw": r.text[:600]}
+def _req(tok: str, method: str, url: str, body=None, params=None) -> tuple[int, dict]:
+    """Authenticated REST call to the Vertex AI API (see service_runtime.rest_call)."""
+    return rest_call(method, url, token=tok, body=body, params=params)
 
-
-def _list_paged(tok: str, url: str, key: str, page_size: int = 100) -> list[dict]:
-    results, page_token = [], None
-    while True:
-        params: dict = {"pageSize": page_size}
-        if page_token:
-            params["pageToken"] = page_token
-        r = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, params=params, timeout=20)
-        if r.status_code != 200:
-            return results
-        data = r.json()
-        results.extend(data.get(key, []))
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-    return results
 
 
 def _lro_wait(tok: str, lro_name: str, region_base: str, timeout: int = 300) -> dict:
@@ -65,7 +43,7 @@ def _lro_wait(tok: str, lro_name: str, region_base: str, timeout: int = 300) -> 
         time.sleep(10)
         r = _rlib.get(
             f"{region_base}/{lro_name}",
-            headers={"Authorization": f"Bearer {tok}"},
+            headers=bearer_headers(tok, json_content=False),
             timeout=20,
         )
         if r.status_code == 200:
@@ -85,28 +63,26 @@ def _sa_from_job(job: dict) -> str:
     return job.get("serviceAccount", "")
 
 
-class _VertexRestResource(GcpListResource):
+class _VertexRestResource(RestListResource):
     """Base class for Vertex AI REST-based resources."""
 
     COLLECTION_KEY: str = ""
     API_BASE: str = _AI_BASE
     API_PATH: str = ""
 
-    def _build_client(self, session):
-        return None
+    # list() now comes from RestListResource (paging + failure classification via
+    # service_runtime.rest_list). PAGE_SIZE stays 100, as this service always used.
+    PAGE_SIZE = 100
 
-    def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
-        tok = get_bearer_token(self.session)
-        url = f"{self.API_BASE}/{parent or f'projects/{project_id}/locations/{location}'}/{self.API_PATH}"
-        items = _list_paged(tok, url, self.COLLECTION_KEY)
-        if items is not None and self.LIST_PERMISSION:
-            record_permissions(
-                action_dict,
-                permissions=self.LIST_PERMISSION,
-                scope_key="project_permissions",
-                scope_label=project_id,
-            )
-        return [self._normalize(i) for i in (items or [])]
+    def _normalize_rest_row(self, raw: dict[str, Any], *, location: str | None = None) -> dict[str, Any]:
+        """Route list rows through this service's own ``_normalize``.
+
+        Deliberately NOT renaming the 7 subclasses' ``_normalize`` to the base's
+        ``_normalize_row``: GcpListResource.get() also calls ``_normalize_row``, and
+        vertex's get() currently gets the base no-op. Renaming would silently start
+        normalizing get() results too.
+        """
+        return self._normalize(raw)
 
     def _normalize(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
@@ -156,7 +132,7 @@ class VertexCustomJobsResource(_VertexRestResource):
             tok = get_bearer_token(self.session)
             r = _rlib.get(
                 f"{self.API_BASE}/{name}",
-                headers={"Authorization": f"Bearer {tok}"},
+                headers=bearer_headers(tok, json_content=False),
                 timeout=20,
             )
             if r.status_code == 200:
@@ -380,13 +356,12 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
             "deploymentResourcePoolId": pool_id,
         }
         r = _rlib.post(url, json=body,
-                       headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                       headers=bearer_headers(tok),
                        timeout=30)
         return r.status_code, r.json() if r.content else {}
 
     @staticmethod
     def poll_drp_lro(tok: str, op_name: str, timeout: int, interval: int = 15) -> dict | None:
-        from gcpwn.core.console import UtilityTools
         url = f"https://us-central1-aiplatform.googleapis.com/v1/{op_name}"
         if op_name.startswith("projects/"):
             parts = op_name.split("/")
@@ -396,7 +371,7 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                r = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+                r = _rlib.get(url, headers=bearer_headers(tok, json_content=False), timeout=15)
                 op = r.json() if r.content else {}
                 status = "done" if op.get("done") else "pending"
                 err = op.get("error", {})
@@ -415,14 +390,14 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
     def get_drp(tok: str, project_id: str, region: str, pool_id: str) -> tuple[int, dict]:
         url = (f"https://{region}-aiplatform.googleapis.com/v1"
                f"/projects/{project_id}/locations/{region}/deploymentResourcePools/{pool_id}")
-        r = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        r = _rlib.get(url, headers=bearer_headers(tok, json_content=False), timeout=15)
         return r.status_code, r.json() if r.content else {}
 
     @staticmethod
     def delete_drp(tok: str, project_id: str, region: str, pool_id: str) -> int:
         url = (f"https://{region}-aiplatform.googleapis.com/v1"
                f"/projects/{project_id}/locations/{region}/deploymentResourcePools/{pool_id}")
-        r = _rlib.delete(url, headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        r = _rlib.delete(url, headers=bearer_headers(tok, json_content=False), timeout=15)
         return r.status_code
 
     @staticmethod
@@ -432,7 +407,7 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
                f"/projects/{project_id}/locations/{region}/endpoints")
         body = {"displayName": display_name}
         r = _rlib.post(url, json=body,
-                       headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                       headers=bearer_headers(tok),
                        timeout=30)
         return r.status_code, r.json() if r.content else {}
 
@@ -455,7 +430,7 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
             },
         }
         r = _rlib.post(url, json=body,
-                       headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                       headers=bearer_headers(tok),
                        timeout=30)
         try:
             return r.status_code, r.json() if r.content else {}
@@ -479,7 +454,7 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
             deployed_model["serviceAccount"] = service_account
         body = {"deployedModel": deployed_model}
         r = _rlib.post(url, json=body,
-                       headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                       headers=bearer_headers(tok),
                        timeout=30)
         return r.status_code, r.json() if r.content else {}
 
@@ -487,14 +462,14 @@ class VertexDeploymentResourcePoolsResource(_VertexRestResource):
     def delete_drp_endpoint(tok: str, project_id: str, region: str, endpoint_id: str) -> int:
         url = (f"https://{region}-aiplatform.googleapis.com/v1"
                f"/projects/{project_id}/locations/{region}/endpoints/{endpoint_id}")
-        r = _rlib.delete(url, headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        r = _rlib.delete(url, headers=bearer_headers(tok, json_content=False), timeout=15)
         return r.status_code
 
     @staticmethod
     def delete_drp_model(tok: str, project_id: str, region: str, model_id: str) -> int:
         url = (f"https://{region}-aiplatform.googleapis.com/v1"
                f"/projects/{project_id}/locations/{region}/models/{model_id}")
-        r = _rlib.delete(url, headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        r = _rlib.delete(url, headers=bearer_headers(tok, json_content=False), timeout=15)
         return r.status_code
 
 
@@ -545,7 +520,6 @@ class VertexTuningJobsResource(_VertexRestResource):
     def ensure_dataset(session, project: str, region: str) -> str | None:
         from google.cloud import storage as _gcs
         from google.api_core import exceptions as gax_exceptions
-        from gcpwn.core.console import UtilityTools
         bucket_name = f"{project}-gcpwn-tune-staging"
         blob_name = "gcpwn-pe-tuning-dataset.jsonl"
         gcs = _gcs.Client(credentials=session.credentials, project=project)
@@ -749,7 +723,6 @@ class VertexEndpointsResource(_VertexRestResource):
     def build_and_push_image(session, project: str, region: str, image: str,
                               exfil_url: str, output_bucket: str) -> bool:
         import io, tarfile
-        from gcpwn.core.console import UtilityTools
         build_yaml = _ENDPOINT_CLOUDBUILD_YAML.format(image=image)
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:

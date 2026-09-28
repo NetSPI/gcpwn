@@ -34,17 +34,6 @@ USER_SECURITY_SCOPES = (
 class WorkspaceOAuthTokensResource:
     """Admin SDK Directory API: `tokens().list(userKey=...)` per user (read-only)."""
 
-    TABLE_NAME = "workspace_oauth_tokens"
-    COLUMNS = [
-        "customer_id",
-        "user_email",
-        "client_id",
-        "display_text",
-        "scopes",
-        "anonymous",
-        "native_app",
-        "raw_json",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

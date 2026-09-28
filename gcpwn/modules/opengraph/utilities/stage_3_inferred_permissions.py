@@ -14,6 +14,7 @@ import sys
 from typing import Any, Iterable
 
 from gcpwn.core.utils.hierarchy import descendants
+from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.iam_simplifier import split_member_credname_key
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_bindings_event_helpers import (
     collect_rule_events as _collect_rule_events_shared,
@@ -50,17 +51,10 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import normal
 #   principal -> HAS_IMPLIED_PERMISSIONS -> implied-IAM-binding -> INFERRED_<EDGE_NAME> -> resource
 
 
-def _progress_interval(total: int) -> int:
-    if total <= 0:
-        return 1
-    return max(1, total // 100)
-
-
-def _should_emit_progress(processed: int, total: int) -> bool:
-    if total <= 0 or processed <= 0:
-        return False
-    step = _progress_interval(total)
-    return processed == 1 or processed == total or processed % step == 0
+# Shared progress helpers (see UtilityTools); aliased so the call sites below
+# keep their existing names.
+_progress_interval = UtilityTools.progress_interval
+_should_emit_progress = UtilityTools.should_emit_progress
 
 
 def _print_stage3_progress_inline(

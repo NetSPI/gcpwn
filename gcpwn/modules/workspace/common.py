@@ -1,3 +1,11 @@
+"""Shared Google Workspace infrastructure for the Cloud Identity and Admin SDK
+Directory module trees.
+
+Pure infra: OAuth scopes, the client builders (including service-account
+domain-wide delegation), HTTP error helpers, and customer-id / organization
+resolution via GCP Resource Manager.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -10,32 +18,34 @@ from gcpwn.core.utils.module_helpers import extract_path_tail
 from gcpwn.core.utils.persistence import save_to_table
 
 
-def _sa_email_from_credentials(credentials) -> str:
-    """Extract the effective service-account email from any credential type.
+def _is_impersonated(credentials) -> bool:
+    """True when ``credentials`` is an impersonated (implicit-delegation) credential.
 
-    service_account.Credentials exposes .service_account_email directly.
-    impersonated_credentials.Credentials uses .target_principal instead (the
-    final SA in the delegation chain is the one whose DWD config matters).
-    Falls back to "" when neither attribute is present.
+    By TYPE on purpose: google-auth exposes no public ``target_principal``, so an
+    attribute-presence test silently never fires.
+    """
+    try:
+        from google.auth import impersonated_credentials as _imp_creds
+
+        return isinstance(credentials, _imp_creds.Credentials)
+    except Exception:
+        return False
+
+
+def _sa_email_from_credentials(credentials) -> str:
+    """The effective service-account email for any credential type.
+
+    ``service_account_email`` answers both cases: a plain SA reports itself, an
+    impersonated credential reports its TARGET principal -- the SA whose DWD config
+    matters. Returns "" for user/ADC credentials.
     """
     email = getattr(credentials, "service_account_email", None)
     if email:
         return str(email).strip()
-    # Impersonated credentials: the target SA is the effective identity
-    target = getattr(credentials, "target_principal", None)
+    target = getattr(credentials, "_target_principal", None)
     if target:
         return str(target).strip()
     return ""
-
-"""
-Shared Google Workspace infrastructure used by BOTH the Cloud Identity API
-(``cloudidentity.googleapis.com``) and the Admin SDK Directory API
-(``admin.googleapis.com``) module trees.
-
-This module holds pure infra: OAuth scopes, the Directory/Cloud-Identity client
-builders (including service-account domain-wide delegation), HTTP error helpers,
-and customer-id / organization resolution via GCP Resource Manager.
-"""
 
 
 CLOUD_IDENTITY_SCOPES = ("https://www.googleapis.com/auth/cloud-identity.groups.readonly",)
@@ -62,29 +72,25 @@ def ensure_scoped_credentials(credentials, scopes: Iterable[str]):
 def apply_workspace_delegation(credentials, subject: str | None, *, target_scopes=None):
     """Impersonate a Workspace admin via domain-wide delegation (SA path).
 
-    GCP credentials do NOT grant Workspace access on their own. A user that is a
-    Workspace admin works directly; a service account must have domain-wide
-    delegation configured in the Workspace Admin console (its OAuth client ID
-    authorized for the scopes) AND impersonate an admin user -- that impersonation
-    is ``credentials.with_subject(subject)``. No-op for user/ADC creds (no
-    ``with_subject``) or when ``subject`` is empty, so the admin-user path is
-    unaffected.
+    GCP credentials grant no Workspace access on their own: an SA needs DWD
+    configured in the Workspace Admin console AND must impersonate an admin user,
+    which is ``credentials.with_subject(subject)``. No-op for user/ADC creds or an
+    empty ``subject``.
 
-    For implicit-delegation chains (impersonated_credentials.Credentials), the
-    credential has no ``with_subject`` method. Instead, the credential must be
-    reconstructed with ``subject=`` and the Workspace-appropriate ``target_scopes``
-    (replacing the default ``cloud-platform`` scope). Pass ``target_scopes`` from
-    the caller so the reconstructed credential has the scopes the Workspace API needs.
-    DWD must be authorized for target_principal (the final SA in the chain) in the
-    Workspace Admin console.
+    Impersonated credentials have no ``with_subject``, so they are rebuilt with
+    ``subject=`` and Workspace ``target_scopes`` (replacing cloud-platform) -- pass
+    those from the caller. DWD must be authorized for the chain's TARGET principal,
+    not the source. The chain is read from google-auth's private
+    ``_target_principal``/``_source_credentials``/``_delegates``; it has no public
+    accessors.
     """
     subject = str(subject or "").strip()
     if not subject:
         return credentials
     # Implicit-delegation path: impersonated_credentials.Credentials has no
     # with_subject(); reconstruct it with the workspace scopes and subject set.
-    if getattr(credentials, "target_principal", None) and not getattr(credentials, "service_account_email", None):
-        effective_sa = str(credentials.target_principal).strip()
+    if _is_impersonated(credentials):
+        effective_sa = _sa_email_from_credentials(credentials) or "(unknown target)"
         print(
             f"{UtilityTools.YELLOW}[!] Workspace DWD via implicit delegation: "
             f"DWD must be configured for the target SA ({effective_sa}), "
@@ -96,7 +102,7 @@ def apply_workspace_delegation(credentials, subject: str | None, *, target_scope
                 from google.auth import impersonated_credentials as _imp_creds
                 return _imp_creds.Credentials(
                     source_credentials=credentials._source_credentials,
-                    target_principal=credentials.target_principal,
+                    target_principal=credentials._target_principal,
                     target_scopes=list(target_scopes),
                     delegates=list(getattr(credentials, "_delegates", []) or []),
                     subject=subject,

@@ -11,10 +11,10 @@ from __future__ import annotations
 import argparse
 
 from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
+from gcpwn.core.utils.module_helpers import region_resolver_for
 from gcpwn.core.utils.service_runtime import parse_component_args
 from gcpwn.modules.gcp.applicationintegration.utilities.helpers import (
     IntegrationsResource,
-    _DEFAULT_REGIONS,
     enumerate_integration_versions,
 )
 
@@ -54,15 +54,11 @@ def _parse_args(user_args):
     )
 
 
-def _region_resolver(session, args):
-    if getattr(args, "all_regions", False):
-        return _DEFAULT_REGIONS
-    if getattr(args, "regions_list", None):
-        return [r.strip() for r in args.regions_list.split(",") if r.strip()]
-    if getattr(args, "regions_file", None):
-        with open(args.regions_file, encoding="utf-8") as f:
-            return [line.strip() for line in f if line.strip()]
-    return _DEFAULT_REGIONS
+# Shared resolver: --regions-list/--regions-file, then the workspace's
+# preferred_regions, else the full static location set. The local copy this
+# replaces never consulted preferred_regions, so `configs set regions` was
+# silently ignored for this service.
+_region_resolver = region_resolver_for("applicationintegration")
 
 
 def run_module(user_args, session):

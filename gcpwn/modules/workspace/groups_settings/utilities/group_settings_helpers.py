@@ -21,17 +21,6 @@ GROUP_SETTINGS_SCOPES = ("https://www.googleapis.com/auth/apps.groups.settings",
 
 
 class WorkspaceGroupSettingsResource:
-    TABLE_NAME = "workspace_group_settings"
-    COLUMNS = [
-        "group_email",
-        "name",
-        "who_can_join",
-        "who_can_post_message",
-        "who_can_view_membership",
-        "who_can_view_group",
-        "allow_external_members",
-        "is_archived",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

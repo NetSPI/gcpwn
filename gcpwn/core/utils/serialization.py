@@ -85,6 +85,14 @@ def field_from_row(row: Any, payload: dict[str, Any] | None = None, *field_names
     return ""
 
 
+def resource_name_from_row(row: Any) -> str:
+    """The ``name`` of a resource row/object, whatever shape it arrived in.
+
+    Services whose name is not simply the ``name`` field keep their own.
+    """
+    return field_from_row(row, resource_to_dict(row), "name")
+
+
 def hydrate_get_request_rows(
     rows: Iterable[Any] | None,
     fetcher: Callable[[Any, dict[str, Any]], Any | None],

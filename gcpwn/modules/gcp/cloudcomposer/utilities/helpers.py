@@ -18,7 +18,7 @@ from gcpwn.core.utils.module_helpers import (
 )
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import resource_to_dict
-from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_error
+from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_error, lazy_download_budget
 
 
 resolve_regions = region_resolver_for("cloudcomposer")
@@ -211,15 +211,7 @@ class ComposerEnvironmentsResource:
             )
 
     def _configs_download_budget(self) -> DownloadBudget:
-        # Lazily created once per resource instance (the caller constructs one
-        # ComposerEnvironmentsResource per project run and calls download_environment_configs
-        # per environment in a loop), so this caps total wall-clock time for the
-        # "composer configs" download type without a caller-threaded budget.
-        budget = getattr(self, "_download_budget", None)
-        if budget is None:
-            budget = DownloadBudget(self.session, label="composer configs")
-            self._download_budget = budget
-        return budget
+        return lazy_download_budget(self, "composer configs")
 
     def download_environment_configs(self, *, row: dict[str, Any], project_id: str) -> Path | None:
         if self._configs_download_budget().exceeded():

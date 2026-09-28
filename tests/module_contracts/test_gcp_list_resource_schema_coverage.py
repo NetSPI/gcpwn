@@ -45,8 +45,13 @@ def _gcp_list_resource_descendants(tree: ast.Module) -> set[str]:
 
     Handles chains like _KmsResource(GcpListResource) → KmsCryptoKeysResource(_KmsResource)
     that the direct-base check misses.
+
+    Seeded with every core base that IS a GcpListResource, not just the name itself:
+    RestListResource subclasses it, so its descendants save() through the same path
+    and owe the same schema contract. Add any future core base here or its
+    subclasses silently drop out of this coverage.
     """
-    gcp_derived: set[str] = {"GcpListResource"}
+    gcp_derived: set[str] = {"GcpListResource", "RestListResource"}
     # Iterate to a fixed point (handles chains of arbitrary depth).
     changed = True
     while changed:

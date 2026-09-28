@@ -5,6 +5,7 @@ import sys
 from typing import Any, Iterable
 
 from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, parse_json_value
+from gcpwn.core.console import UtilityTools
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     canonical_target_node_ref,
     gcp_resource_node_type,
@@ -49,34 +50,11 @@ _WIF_GKE_CLUSTER_SELECTOR_RE = re.compile(
 )
 
 
-def _progress_interval(total: int) -> int:
-    if total <= 0:
-        return 1
-    return max(1, total // 100)
-
-
-def _should_emit_progress(processed: int, total: int) -> bool:
-    if total <= 0 or processed <= 0:
-        return False
-    step = _progress_interval(total)
-    return processed == 1 or processed == total or processed % step == 0
-
-
-def _print_inline_progress(label: str, processed: int, total: int, *, force: bool = False) -> None:
-    if total <= 0:
-        return
-    if not force and not _should_emit_progress(processed, total):
-        return
-    message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
-    if sys.stdout.isatty():
-        print(f"\r{message}", end="", flush=True)
-        if force:
-            print("")
-        return
-    # Non-TTY: force=True after a loop that already emitted at processed==total would
-    # print the same line twice. Skip when the regular emit would already cover it.
-    if not (force and _should_emit_progress(processed, total)):
-        print(message)
+# Shared progress helpers (see UtilityTools); aliased so the call sites below
+# keep their existing names.
+_print_inline_progress = UtilityTools.print_inline_progress
+_progress_interval = UtilityTools.progress_interval
+_should_emit_progress = UtilityTools.should_emit_progress
 
 
 def _print_stage4_section_progress(
@@ -276,6 +254,7 @@ _RESOURCE_EXPANSION_STAGE_STAT_KEYS: tuple[str, ...] = (
     "project_resource_edges_added",
     "compute_executes_with_edges_added",
     "cloudrun_runs_as_edges_added",
+    "cloudfunction_runs_as_edges_added",
     "cloudscheduler_runs_as_edges_added",
     "cloudworkflow_runs_as_edges_added",
     "wif_provider_pool_edges_added",

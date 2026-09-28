@@ -23,7 +23,8 @@ from google.api_core.exceptions import FailedPrecondition
 from google.api_core.exceptions import ResourceExhausted
 from gcpwn.core.contracts import HashableResourceProxy
 from gcpwn.core.utils.service_runtime import (
-    build_discovery_service,
+    cached_discovery_service,
+    CLOUD_PLATFORM_SCOPE as _SHARED_CLOUD_PLATFORM_SCOPE,
     extract_discovery_http_error,
     handle_discovery_error,
     is_api_disabled_error,
@@ -38,22 +39,16 @@ from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_t
 
 class _IAMBaseDiscoveryResource:
     SERVICE_LABEL = "IAM"
-    CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+    CLOUD_PLATFORM_SCOPE = _SHARED_CLOUD_PLATFORM_SCOPE
 
     def __init__(self, session) -> None:
         self.session = session
         self._discovery_service = None
 
     def _get_discovery_service(self):
-        if self._discovery_service is None:
-            self._discovery_service = build_discovery_service(
-                getattr(self.session, "credentials", None),
-                "iam",
-                "v1",
-                scopes=(self.CLOUD_PLATFORM_SCOPE,),
-            )
-        return self._discovery_service
-
+        return cached_discovery_service(self, "iam", "v1",
+            scopes=(_SHARED_CLOUD_PLATFORM_SCOPE,),
+        )
 
 def _get_iam_policy_generic(
     iam_client,
@@ -92,51 +87,6 @@ def _get_iam_policy_generic(
     return None
 
 
-def _set_iam_policy_generic(
-    iam_client,
-    resource_name: str,
-    policy,
-    *,
-    permission: str,
-    not_found_message: str | None = None,
-    debug_label: str | None = None,
-):
-    """Generic setIamPolicy over the v1 iam_policy proto API; returns policy / ``404`` / None.
-
-    Mirrors _get_iam_policy_generic. Returns the updated Policy on success, int ``404`` on
-    NotFound, None on 403/unexpected. WHY: the shared write path behind IAM privesc modules.
-    """
-    if debug_label:
-        print(f"[DEBUG] Setting IAM bindings for {resource_name} ...")
-
-    try:
-        request = iam_policy_pb2.SetIamPolicyRequest(resource=str(resource_name or "").strip(), policy=policy)
-        result = iam_client.set_iam_policy(request=request)
-        if debug_label:
-            print(f"[DEBUG] Successfully completed {debug_label} setIamPolicy ..")
-        return result
-    except NotFound as e:
-        if not_found_message and "404" in str(e) and "does not exist" in str(e):
-            print(not_found_message)
-        return 404
-    except Forbidden as e:
-        if f"does not have {permission}" in str(e):
-            print(f"[X] 403: The user does not have {permission} permissions")
-    except Exception as e:
-        print(f"The {permission} operation failed for unexpected reasons. See below:")
-        print(str(e))
-
-    return None
-
-
-class HashableServiceAccount(HashableResourceProxy):
-    def __init__(self, sa_account, validated = True):
-        super().__init__(
-            sa_account,
-            key_fields=("unique_id",),
-            validated=validated,
-            repr_fields=("unique_id", "email"),
-        )
 ########## SAVE ROLES
 
 def iam_disable_service_account_key(iam_client, sa_name, debug=False):

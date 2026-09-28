@@ -9,8 +9,8 @@ from typing import Any, Iterable
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.iam_permissions import call_discovery_test_iam_permissions
-from gcpwn.core.utils.service_runtime import build_discovery_service
+from gcpwn.core.utils.iam_permissions import call_discovery_test_iam_permissions, permissions_with_prefixes
+from gcpwn.core.utils.service_runtime import CLOUD_PLATFORM_SCOPE as _SHARED_CLOUD_PLATFORM_SCOPE, cached_discovery_service
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     extract_path_tail,
@@ -18,7 +18,7 @@ from gcpwn.core.utils.module_helpers import (
     region_resolver_for,
 )
 from gcpwn.core.utils.persistence import save_to_table
-from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
+from gcpwn.core.utils.serialization import resource_name_from_row, resource_to_dict
 from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_error
 
 
@@ -144,7 +144,7 @@ class _ApiGatewayBaseResource:
     """
 
     SERVICE_LABEL = "API Gateway"
-    CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+    CLOUD_PLATFORM_SCOPE = _SHARED_CLOUD_PLATFORM_SCOPE
     ACTION_RESOURCE_TYPE = ""
     test_iam_permissions_starting_list: tuple[str, ...] = ()
     test_iam_permissions_api_name = ""
@@ -166,18 +166,12 @@ class _ApiGatewayBaseResource:
         self._discovery_service = None
 
     def resource_name(self, row: Any) -> str:
-        payload = resource_to_dict(row)
-        return field_from_row(row, payload, "name")
+        return resource_name_from_row(row)
 
     def _get_discovery_service(self):
-        if self._discovery_service is None:
-            self._discovery_service = build_discovery_service(
-                getattr(self.session, "credentials", None),
-                "apigateway",
-                "v1",
-                scopes=(self.CLOUD_PLATFORM_SCOPE,),
-            )
-        return self._discovery_service
+        return cached_discovery_service(self, "apigateway", "v1",
+            scopes=(_SHARED_CLOUD_PLATFORM_SCOPE,),
+        )
 
     def _call_test_iam_permissions(self, *, name: str, request_builder) -> list[str]:
         """Run a testIamPermissions discovery call and return the granted permissions.
@@ -218,16 +212,11 @@ class ApiGatewayGatewaysResource(_ApiGatewayBaseResource):
     LIST_API_NAME = "apigateway.gateways.list"
     GET_API_NAME = "apigateway.gateways.get"
     test_iam_permissions_api_name = "apigateway.gateways.testIamPermissions"
-    test_iam_permissions_starting_list = (
-        "apigateway.gateways.createTagBinding",
-        "apigateway.gateways.delete",
-        "apigateway.gateways.deleteTagBinding",
-        "apigateway.gateways.get",
-        "apigateway.gateways.getIamPolicy",
-        "apigateway.gateways.listEffectiveTags",
-        "apigateway.gateways.listTagBindings",
-        "apigateway.gateways.setIamPolicy",
-        "apigateway.gateways.update",
+    # Derived from mappings (all apigateway.gateways.* minus the two that are not
+    # testable on an existing resource), so the permission map stays the one source.
+    test_iam_permissions_starting_list = permissions_with_prefixes(
+        "apigateway.gateways.",
+        exclude_permissions=("apigateway.gateways.create", "apigateway.gateways.list"),
     )
     COLUMNS = [
         "name",
@@ -356,16 +345,11 @@ class ApiGatewayApisResource(_ApiGatewayBaseResource):
     LIST_API_NAME = "apigateway.apis.list"
     GET_API_NAME = "apigateway.apis.get"
     test_iam_permissions_api_name = "apigateway.apis.testIamPermissions"
-    test_iam_permissions_starting_list = (
-        "apigateway.apis.createTagBinding",
-        "apigateway.apis.delete",
-        "apigateway.apis.deleteTagBinding",
-        "apigateway.apis.get",
-        "apigateway.apis.getIamPolicy",
-        "apigateway.apis.listEffectiveTags",
-        "apigateway.apis.listTagBindings",
-        "apigateway.apis.setIamPolicy",
-        "apigateway.apis.update",
+    # Derived from mappings (all apigateway.apis.* minus the two that are not
+    # testable on an existing resource), so the permission map stays the one source.
+    test_iam_permissions_starting_list = permissions_with_prefixes(
+        "apigateway.apis.",
+        exclude_permissions=("apigateway.apis.create", "apigateway.apis.list"),
     )
     COLUMNS = [
         "name",
@@ -468,12 +452,11 @@ class ApiGatewayConfigsResource(_ApiGatewayBaseResource):
     LIST_API_NAME = "apigateway.apiconfigs.list"
     GET_API_NAME = "apigateway.apiconfigs.get"
     test_iam_permissions_api_name = "apigateway.apiconfigs.testIamPermissions"
-    test_iam_permissions_starting_list = (
-        "apigateway.apiconfigs.delete",
-        "apigateway.apiconfigs.get",
-        "apigateway.apiconfigs.getIamPolicy",
-        "apigateway.apiconfigs.setIamPolicy",
-        "apigateway.apiconfigs.update",
+    # Derived from mappings (all apigateway.apiconfigs.* minus the two that are not
+    # testable on an existing resource), so the permission map stays the one source.
+    test_iam_permissions_starting_list = permissions_with_prefixes(
+        "apigateway.apiconfigs.",
+        exclude_permissions=("apigateway.apiconfigs.create", "apigateway.apiconfigs.list"),
     )
     COLUMNS = [
         "name",

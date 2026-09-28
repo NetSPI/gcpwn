@@ -6,7 +6,7 @@ from typing import Any, Iterable
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail
 from gcpwn.core.utils.persistence import save_to_table
-from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
+from gcpwn.core.utils.serialization import resource_name_from_row, resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
 from gcpwn.modules.gcp.appengine.utilities.exploit_payloads import build_gae_source_files  # noqa: F401
 
@@ -73,8 +73,40 @@ class _AppEngineBaseResource:
         return text
 
     def resource_name(self, row: Any) -> str:
-        payload = resource_to_dict(row)
-        return field_from_row(row, payload, "name")
+        return resource_name_from_row(row)
+
+    # Per-collection SDK wiring for the shared get() below. Set on subclasses.
+    GET_REQUEST_CLASS: str = ""   # e.g. "GetServiceRequest"
+    GET_CLIENT_METHOD: str = ""   # e.g. "get_service"
+
+    def get(self, *, name: str = "", resource_id: str = "", action_dict=None):
+        """Fetch one App Engine resource by full ``apps/...`` name.
+
+        Identical across services/versions/instances apart from the request class
+        and client method, so those are config. Accepts ``name=`` or
+        ``resource_id=`` because run_components passes the latter.
+        """
+        name = name or resource_id
+        try:
+            request = getattr(self._appengine_admin_v1, self.GET_REQUEST_CLASS)(name=name)
+            row = resource_to_dict(getattr(self.client, self.GET_CLIENT_METHOD)(request=request))
+            if row:
+                record_permissions(
+                    action_dict,
+                    permissions=self.GET_API_NAME,
+                    project_id=self.project_id_from_name(name),
+                    resource_type=self.ACTION_RESOURCE_TYPE,
+                    resource_label=self.resource_name(row) or name,
+                )
+            return row
+        except Exception as exc:
+            return handle_service_error(
+                exc,
+                api_name=self.GET_API_NAME,
+                resource_name=name,
+                service_label=self.SERVICE_LABEL,
+                project_id=getattr(self.session, "project_id", None),
+            )
 
 
 class AppEngineAppsResource(_AppEngineBaseResource):
@@ -145,6 +177,8 @@ class AppEngineServicesResource(_AppEngineBaseResource):
     ACTION_RESOURCE_TYPE = "services"
     LIST_API_NAME = "appengine.services.list"
     GET_API_NAME = "appengine.services.get"
+    GET_REQUEST_CLASS = "GetServiceRequest"
+    GET_CLIENT_METHOD = "get_service"
     COLUMNS = ["service_id", "name", "split"]
 
     def __init__(self, session) -> None:
@@ -172,29 +206,6 @@ class AppEngineServicesResource(_AppEngineBaseResource):
                 project_id=getattr(self.session, "project_id", None),
             )
 
-    def get(self, *, name: str = "", resource_id: str = "", action_dict=None):
-        name = name or resource_id
-        try:
-            request = self._appengine_admin_v1.GetServiceRequest(name=name)
-            row = resource_to_dict(self.client.get_service(request=request))
-            if row:
-                record_permissions(
-                    action_dict,
-                    permissions=self.GET_API_NAME,
-                    project_id=self.project_id_from_name(name),
-                    resource_type=self.ACTION_RESOURCE_TYPE,
-                    resource_label=self.resource_name(row) or name,
-                )
-            return row
-        except Exception as exc:
-            return handle_service_error(
-                exc,
-                api_name=self.GET_API_NAME,
-                resource_name=name,
-                service_label=self.SERVICE_LABEL,
-                project_id=getattr(self.session, "project_id", None),
-            )
-
     def save(self, services: Iterable[dict[str, Any]], *, project_id: str, location: str | None = None, **_) -> None:
         for svc in services or []:
             save_to_table(
@@ -213,6 +224,8 @@ class AppEngineVersionsResource(_AppEngineBaseResource):
     ACTION_RESOURCE_TYPE = "versions"
     LIST_API_NAME = "appengine.versions.list"
     GET_API_NAME = "appengine.versions.get"
+    GET_REQUEST_CLASS = "GetVersionRequest"
+    GET_CLIENT_METHOD = "get_version"
     COLUMNS = ["version_id", "name", "runtime", "env"]
 
     def __init__(self, session) -> None:
@@ -237,29 +250,6 @@ class AppEngineVersionsResource(_AppEngineBaseResource):
                 exc,
                 api_name=self.LIST_API_NAME,
                 resource_name=parent,
-                service_label=self.SERVICE_LABEL,
-                project_id=getattr(self.session, "project_id", None),
-            )
-
-    def get(self, *, name: str = "", resource_id: str = "", action_dict=None):
-        name = name or resource_id
-        try:
-            request = self._appengine_admin_v1.GetVersionRequest(name=name)
-            row = resource_to_dict(self.client.get_version(request=request))
-            if row:
-                record_permissions(
-                    action_dict,
-                    permissions=self.GET_API_NAME,
-                    project_id=self.project_id_from_name(name),
-                    resource_type=self.ACTION_RESOURCE_TYPE,
-                    resource_label=self.resource_name(row) or name,
-                )
-            return row
-        except Exception as exc:
-            return handle_service_error(
-                exc,
-                api_name=self.GET_API_NAME,
-                resource_name=name,
                 service_label=self.SERVICE_LABEL,
                 project_id=getattr(self.session, "project_id", None),
             )
@@ -339,6 +329,8 @@ class AppEngineInstancesResource(_AppEngineBaseResource):
     ACTION_RESOURCE_TYPE = "instances"
     LIST_API_NAME = "appengine.instances.list"
     GET_API_NAME = "appengine.instances.get"
+    GET_REQUEST_CLASS = "GetInstanceRequest"
+    GET_CLIENT_METHOD = "get_instance"
     COLUMNS = ["instance_id", "name", "vm_id"]
 
     def __init__(self, session) -> None:
@@ -363,29 +355,6 @@ class AppEngineInstancesResource(_AppEngineBaseResource):
                 exc,
                 api_name=self.LIST_API_NAME,
                 resource_name=parent,
-                service_label=self.SERVICE_LABEL,
-                project_id=getattr(self.session, "project_id", None),
-            )
-
-    def get(self, *, name: str = "", resource_id: str = "", action_dict=None):
-        name = name or resource_id
-        try:
-            request = self._appengine_admin_v1.GetInstanceRequest(name=name)
-            row = resource_to_dict(self.client.get_instance(request=request))
-            if row:
-                record_permissions(
-                    action_dict,
-                    permissions=self.GET_API_NAME,
-                    project_id=self.project_id_from_name(name),
-                    resource_type=self.ACTION_RESOURCE_TYPE,
-                    resource_label=self.resource_name(row) or name,
-                )
-            return row
-        except Exception as exc:
-            return handle_service_error(
-                exc,
-                api_name=self.GET_API_NAME,
-                resource_name=name,
                 service_label=self.SERVICE_LABEL,
                 project_id=getattr(self.session, "project_id", None),
             )

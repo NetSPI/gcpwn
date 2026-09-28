@@ -39,12 +39,13 @@ class SessionUtility:
       - All service-table reads/writes are workspace-scoped. get_data/insert_data
         inject self.workspace_id automatically; never query service tables
         without it.
-      - SQLite is single-threaded. self.data_master (DataController) is opened in
-        the constructing (main) thread with check_same_thread=True. Modules may
-        fan out with parallel_map/ThreadPoolExecutor, but workers must only do
-        network/CPU work and RETURN results; calling get_data/insert_data/
-        insert_actions from a worker thread raises sqlite3.ProgrammingError.
-        Collect worker results on the main thread, then call insert_*.
+      - DB access is serialized, not single-threaded. DataController opens its
+        connection with check_same_thread=False and wraps every public method in
+        @_synchronized against a process-wide RLock, so get_data/insert_data/
+        insert_actions ARE safe from a parallel_map/ThreadPoolExecutor worker
+        (enum_all's parallel orchestrator relies on exactly that). Still PREFER
+        having workers return results and inserting on the main thread: writes
+        serialize on the lock regardless, so it is clearer and no slower.
       - Permissions are recorded as evidence with provenance (direct_api vs
         test_iam_permissions), not booleans. See insert_actions / action_schema.
     """
@@ -415,24 +416,9 @@ class SessionUtility:
                 return -1
 
             # Apply implicit delegation chain when configured for this credential.
-            delegates_raw = cred.get("delegates")
-            if delegates_raw and self.credentials is not None:
-                try:
-                    from google.auth import impersonated_credentials as _imp_creds
-                    delegates_list = json.loads(delegates_raw)
-                    if delegates_list:
-                        target = delegates_list[-1]
-                        intermediaries = delegates_list[:-1]
-                        self.credentials = _imp_creds.Credentials(
-                            source_credentials=self.credentials,
-                            target_principal=target,
-                            target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                            delegates=intermediaries,
-                        )
-                        chain_str = " → ".join([self.email or credname] + delegates_list)
-                        print(f"{UtilityTools.GREEN}[*] Implicit delegation active: {chain_str}{UtilityTools.RESET}")
-                except Exception as _exc:
-                    print(f"[X] Failed to apply implicit delegation chain: {_exc}")
+            self.credentials = self.apply_delegation_chain(
+                self.credentials, cred.get("delegates"), identity_label=self.email or credname
+            )
 
             print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
             return 1
@@ -440,6 +426,39 @@ class SessionUtility:
         except Exception:
             print(f"[X] Credentials {credname} could not be assumed.")
             print(traceback.format_exc())
+
+    @staticmethod
+    def apply_delegation_chain(credentials, delegates_raw, *, identity_label: str):
+        """Wrap ``credentials`` in the configured implicit delegation chain.
+
+        The stored ``delegates`` list is ordered: the LAST entry is the identity you
+        end up acting as, earlier ones are intermediaries, each needing
+        ``roles/iam.serviceAccountTokenCreator`` on the next.
+
+        Used by BOTH load_stored_creds and build_stored_credentials so a delegated
+        credential acts as the target either way. Returns the credential unchanged
+        when no chain is configured or the wrap fails.
+        """
+        if not delegates_raw or credentials is None:
+            return credentials
+        try:
+            from google.auth import impersonated_credentials as _imp_creds
+
+            delegates_list = json.loads(delegates_raw)
+            if not delegates_list:
+                return credentials
+            wrapped = _imp_creds.Credentials(
+                source_credentials=credentials,
+                target_principal=delegates_list[-1],
+                target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                delegates=delegates_list[:-1],
+            )
+            chain = " → ".join([identity_label or "(base)"] + [str(d) for d in delegates_list])
+            print(f"{UtilityTools.GREEN}[*] Implicit delegation active: {chain}{UtilityTools.RESET}")
+            return wrapped
+        except Exception as exc:
+            print(f"[X] Failed to apply implicit delegation chain: {exc}")
+            return credentials
 
     def build_stored_credentials(self, credname):
         """Build a google credential object from a stored cred WITHOUT activating it.
@@ -457,20 +476,28 @@ class SessionUtility:
             return None, ""
         credtype = str(cred.get("credtype") or "")
         email = str(cred.get("email") or "")
+        built = None
         try:
             blob = cred.get("session_creds")
             if credtype in ("adc", "adc-file", "oauth2"):
                 auth_json = json.loads(blob)
                 if credtype in ("adc", "adc-file") or auth_json.get("refresh_token"):
                     # Full authorized-user credential -> auto-refreshes on use.
-                    return Credentials.from_authorized_user_info(auth_json), email
-                return Credentials(token=auth_json["token"]), email
-            if credtype == "service":
-                return service_account.Credentials.from_service_account_info(json.loads(blob)), email
+                    built = Credentials.from_authorized_user_info(auth_json)
+                else:
+                    built = Credentials(token=auth_json["token"])
+            elif credtype == "service":
+                built = service_account.Credentials.from_service_account_info(json.loads(blob))
         except Exception:
             print(f"{UtilityTools.RED}[X] Could not build credential '{credname}'.{UtilityTools.RESET}")
             return None, ""
-        return None, ""
+        if built is None:
+            return None, ""
+        # Honour the delegation chain here too -- see apply_delegation_chain.
+        built = self.apply_delegation_chain(
+            built, cred.get("delegates"), identity_label=email or credname
+        )
+        return built, email
 
     def add_oauth2_account(self, credname, token=None, authorized_info=None, project_id=None,adc_filepath = None, tokeninfo = False, scopes = None, email = None, assume = False, refresh_attempt = False):
         """Register a new OAuth2/ADC credential under credname and store it in the DB.
@@ -751,10 +778,9 @@ class SessionUtility:
           - update_only: targeted UPDATE keyed by save_data["primary_keys_to_match"]
             (workspace_id is added to the key set); save_data is the update payload.
 
-        INVARIANT: main-thread only. DataController is single-threaded; calling
-        this from a parallel_map/ThreadPoolExecutor worker raises
-        sqlite3.ProgrammingError. Workers must return results; insert here on the
-        main thread.
+        THREADING: safe from a worker thread -- DataController serializes every
+        call through a process-wide RLock. Prefer returning results from workers and
+        inserting on the main thread anyway; writes queue on that lock either way.
         """
         if only_if_new_columns:
             save_kwargs = {"only_if_missing": only_if_new_columns}
@@ -796,8 +822,8 @@ class SessionUtility:
         but intentionally unused (the action tree is credential-, not project-,
         keyed). column_name optionally scopes the merge to a specific action column.
 
-        INVARIANT: main-thread only (DataController is single-threaded); calling
-        from a worker thread raises sqlite3.ProgrammingError.
+        THREADING: safe from a worker thread (DataController serializes access
+        through a process-wide RLock).
         """
         _ = project_id
         target_crednames = credname_override or self.credname
@@ -837,7 +863,7 @@ class SessionUtility:
         Returns:
             list[dict] of rows (possibly empty); callers commonly `or []` it.
 
-        INVARIANT: main-thread only; do not call from a worker thread.
+        THREADING: safe from a worker thread (serialized by DataController's lock).
         """
         return self._workspace_select_rows(
             table_name,

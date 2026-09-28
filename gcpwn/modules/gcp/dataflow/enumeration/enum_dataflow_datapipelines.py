@@ -12,10 +12,8 @@ Exploit follow-on    : exploit_dataflow_datapipeline_as_sa
 
 from __future__ import annotations
 
-import argparse
 
-from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
-from gcpwn.core.utils.service_runtime import parse_component_args
+from gcpwn.core.utils.enum_framework import Component, REGION, parse_enum_args, run_components
 from gcpwn.modules.gcp.dataflow.utilities.helpers import (
     DataPipelinesResource,
     resolve_dp_locations,
@@ -35,21 +33,11 @@ COMPONENTS = [
 
 
 def _parse_args(user_args):
-    def _add_extra_args(parser: argparse.ArgumentParser) -> None:
-        regions_group = parser.add_mutually_exclusive_group()
-        regions_group.add_argument("--all-regions", action="store_true", required=False,
-                                   help="Try all known Data Pipelines regions")
-        regions_group.add_argument("--regions-list", required=False,
-                                   help="Regions in comma-separated format")
-        regions_group.add_argument("--regions-file", required=False,
-                                   help="File containing regions per line")
-
-    return parse_component_args(
+    return parse_enum_args(
         user_args,
+        COMPONENTS,
         description="Enumerate Cloud Data Pipelines across regions",
-        components=component_args(COMPONENTS),
-        add_extra_args=build_extra_args(COMPONENTS, extra=_add_extra_args),
-        standard_args=("iam", "get"),
+        region_label="Data Pipelines regions",
     )
 
 

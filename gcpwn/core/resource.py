@@ -33,6 +33,8 @@ from gcpwn.core.utils.service_runtime import (
     build_discovery_service,
     handle_discovery_error,
     handle_service_error,
+    paged_list,
+    rest_list,
 )
 
 
@@ -267,12 +269,82 @@ class GcpListResource:
                 )
 
 
+class RestListResource(GcpListResource):
+    """``GcpListResource`` for services this codebase drives over raw HTTP.
+
+    The third client family, after GAPIC (``GcpListResource``) and discovery
+    (``DiscoveryListResource``). A subclass declares the endpoint and response key,
+    and overrides a normalize hook if the payload needs reshaping::
+
+        class MyThings(RestListResource):
+            API_BASE = "https://myservice.googleapis.com/v1"
+            API_PATH = COLLECTION_KEY = "things"
+            LIST_PERMISSION = "myservice.things.list"
+
+    PREFER ``DiscoveryListResource`` for a new service -- these APIs all publish
+    discovery docs. This exists only because its users are raw-REST end to end
+    (create/delete/publish/execute, testIamPermissions, cross-service calls), so
+    converting just ``list`` would leave them straddling two client mechanisms.
+
+    Paging and failure classification come from ``rest_list``, so the list
+    permission is not recorded as evidence unless the call actually succeeded.
+    """
+
+    #: Root of the REST API, e.g. ``https://aiplatform.googleapis.com/v1``.
+    API_BASE: str = ""
+    #: Collection path appended after the parent, e.g. ``customJobs``.
+    API_PATH: str = ""
+    #: Key in the JSON response holding the items, e.g. ``customJobs``.
+    COLLECTION_KEY: str = ""
+    PAGE_SIZE: int = 200
+
+    def _build_client(self, session):
+        return None  # REST-only: there is no client object.
+
+    def _rest_parent(self, project_id: str | None, location: str | None) -> str:
+        """The parent path this service lists under. Override for non-regional APIs."""
+        return f"projects/{project_id}/locations/{location}"
+
+    def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
+        scope = parent or self._rest_parent(project_id, location)
+        rows = rest_list(
+            self.session,
+            f"{self.API_BASE}/{scope}/{self.API_PATH}",
+            self.COLLECTION_KEY,
+            api_name=self.LIST_PERMISSION or self.LIST_API_NAME,
+            service_label=self.SERVICE_LABEL,
+            project_id=project_id,
+            resource_name=scope,
+            page_size=self.PAGE_SIZE,
+        )
+        if rows is None or rows == "Not Enabled":
+            return rows
+        if self.LIST_PERMISSION:
+            record_permissions(
+                action_dict,
+                permissions=self.LIST_PERMISSION,
+                scope_key="project_permissions",
+                scope_label=project_id,
+            )
+        return [self._normalize_rest_row(row, location=location) for row in rows]
+
+    def _normalize_rest_row(self, raw: dict[str, Any], *, location: str | None = None) -> dict[str, Any]:
+        """Reshape one raw REST item.
+
+        Separate from ``_normalize_row`` because these APIs are listed per-location
+        and several services need that location in the row (the payload itself often
+        omits it). Defaults to the location-free hook so subclasses that do not care
+        override the usual one.
+        """
+        return self._normalize_row(raw)
+
+
 class DiscoveryListResource:
     """Config-driven base for services backed by a *discovery* client.
 
     The discovery-client counterpart of ``GcpListResource``: for services whose
     client comes from ``build_discovery_service`` and whose list/get go through
-    ``.execute()`` (returning ``{"items": [...]}`` for list, a dict for get). The
+    ``.execute()`` (returning ``{<LIST_ITEMS_KEY>: [...]}`` for list, a dict for get). The
     shared list/get/save bodies -- error handling via ``handle_discovery_error``,
     permission recording, item filtering, upsert -- live here once. A subclass
     declares the discovery API/version + config and implements the two SDK-call
@@ -296,6 +368,12 @@ class DiscoveryListResource:
     # Strings shown in error messages (default to the permission strings):
     LIST_API_NAME: str = ""
     GET_API_NAME: str = ""
+    # Response key holding the listed collection. "items" is the Compute-style
+    # default, but plenty of discovery APIs name it after the resource --
+    # deploymentmanager returns {"deployments": [...]}. Getting this wrong makes a
+    # successful list look like an empty one AND still records the list permission,
+    # so a whole service silently reads as "nothing here".
+    LIST_ITEMS_KEY: str = "items"
     # Discovery client identity + optional short-id column:
     DISCOVERY_API: str = ""
     DISCOVERY_VERSION: str = ""
@@ -341,21 +419,20 @@ class DiscoveryListResource:
         project_id = project_id or self._fallback_project()
         resource_label = str(kwargs.get("instance") or parent or "")
         try:
-            # Drain nextPageToken -- a single .execute() only returns the first page, so a
-            # project whose list spans multiple pages (e.g. sqladmin instances.list) would
-            # silently drop everything past page 1. Subclasses whose API has no pageToken
-            # accept+ignore page_token, so their response carries no nextPageToken and the
-            # loop exits after one page.
-            rows: list[dict[str, Any]] = []
-            page_token = None
-            while True:
-                response = self._list_request(project_id=project_id, parent=parent, page_token=page_token, **kwargs).execute()
-                if not isinstance(response, dict):
-                    break
-                rows.extend(self._normalize_row(item) for item in response.get("items", []) if isinstance(item, dict))
-                page_token = response.get("nextPageToken")
-                if not page_token:
-                    break
+            # Drain nextPageToken via the shared pager -- a single .execute() only returns
+            # the first page, so a project whose list spans multiple pages (e.g. sqladmin
+            # instances.list) would silently drop everything past page 1. Subclasses whose
+            # API has no pageToken accept+ignore page_token, so their response carries no
+            # nextPageToken and the drain stops after one page.
+            rows = [
+                self._normalize_row(item)
+                for item in paged_list(
+                    lambda token: self._list_request(
+                        project_id=project_id, parent=parent, page_token=token, **kwargs
+                    ),
+                    items_key=self.LIST_ITEMS_KEY,
+                )
+            ]
             if self.LIST_PERMISSION:
                 if self.LIST_PROJECT_SCOPE:
                     record_permissions(action_dict, permissions=self.LIST_PERMISSION,

@@ -27,12 +27,6 @@ def _global_resource_label(project_id: str, collection: str, resource_id: str) -
 
 def _regional_resource_label(project_id: str, region: str, collection: str, resource_id: str) -> str:
     return f"projects/{project_id}/regions/{region}/{collection}/{resource_id}"
-
-
-def _router_nat_label(project_id: str, region: str, router_name: str, nat_name: str) -> str:
-    return f"projects/{project_id}/regions/{region}/routers/{router_name}/nats/{nat_name}"
-
-
 def _record_list_permission(action_dict, *, permission: str, project_id: str) -> None:
     record_permissions(
         action_dict,

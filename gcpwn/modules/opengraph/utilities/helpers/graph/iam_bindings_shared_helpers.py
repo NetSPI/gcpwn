@@ -2585,7 +2585,7 @@ def _emit_iam_binding_edges_from_entries(
                     emitted_combo_bindings.add(combo_binding_id)
 
                 combo_hops = _normalized_combo_hops(combo_hop if isinstance(combo_hop, dict) else {})
-                combo_target_edge_type = str(combo_hop.get("edge_to_target") or edge_type).strip() or edge_type
+                combo_target_edge_type = str(combo_hop.get("edge_to_target") or "RunsAs").strip() or "RunsAs"
                 target_group_ids = normalized_token_list(combo_hop.get("target_from_groups") or [])
                 group_target_contributors = _contributors_for_group_ids(target_group_ids)
                 target_source_contributors = (
@@ -2915,7 +2915,7 @@ def _emit_iam_binding_edges_from_entries(
                     source_scope_ids = normalized_token_list([str(contributor.source_scope_name or "").strip()])
                     source_scope_types = normalized_token_list([str(contributor.source_scope_type or "").strip()])
 
-                    combo_target_edge_type = str(combo_hop.get("edge_to_target") or edge_type).strip() or edge_type
+                    combo_target_edge_type = str(combo_hop.get("edge_to_target") or "RunsAs").strip() or "RunsAs"
                     contribution_map_for_binding = {
                         contributor.binding_composite_id: list(contributor_permission_map.get(contributor.binding_composite_id) or [])
                     }

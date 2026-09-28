@@ -46,6 +46,25 @@ def to_snake_key(name: str) -> str:
     return token.lower()
 
 
+def snake_case_payload(value: Any) -> Any:
+    """Recursively snake_case every dict key in an API payload, at any depth.
+
+    Empty keys are dropped, lists recursed, scalars passed through. Distinct from
+    ``_normalize_keys`` below, which stops at depth 2 for the save pipeline.
+    """
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, child in value.items():
+            out_key = to_snake_key(str(key))
+            if not out_key:
+                continue
+            normalized[out_key] = snake_case_payload(child)
+        return normalized
+    if isinstance(value, list):
+        return [snake_case_payload(item) for item in value]
+    return value
+
+
 def _normalize_keys(value: Any, _depth: int = 0) -> Any:
     """Snake_case dict keys up to depth 2 (the pipeline never reads deeper).
 

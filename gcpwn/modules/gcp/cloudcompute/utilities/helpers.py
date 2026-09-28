@@ -38,13 +38,14 @@ from gcpwn.core.contracts import HashableResourceProxy
 from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.service_runtime import (
+    CLOUD_PLATFORM_SCOPE as _SHARED_CLOUD_PLATFORM_SCOPE,
     DownloadBudget,
     build_discovery_service,
     handle_discovery_error,
     paged_list,
 )
 from gcpwn.core.utils.iam_permissions import call_test_iam_permissions, permissions_with_prefixes
-from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail
+from gcpwn.core.utils.module_helpers import dedupe_strs, extract_path_segment, extract_path_tail
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
 from gcpwn.core.utils.service_runtime import handle_service_error
@@ -279,21 +280,6 @@ def _compute_test_iam_permissions(
         request_builder=lambda _resource_name, granted_permissions: list(granted_permissions),
         caller=_call,
     )
-
-
-def _merge_permissions(*collections: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for collection in collections:
-        for permission in collection or ():
-            token = str(permission or "").strip()
-            if not token or token in seen:
-                continue
-            seen.add(token)
-            merged.append(token)
-    return tuple(merged)
-
-
 def _manual_compute_iam_permissions(prefix: str) -> tuple[str, ...]:
     token = str(prefix or "").strip()
     if not token:
@@ -312,7 +298,9 @@ def _compute_permissions_with_fallback(
     extra_permissions: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     discovered = permissions_with_prefixes(*prefixes, exclude_permissions=exclude_permissions)
-    return _merge_permissions(discovered, extra_permissions)
+    # Filter falsy BEFORE dedupe_strs: it stringifies whatever it is given, so a
+    # None element would become the literal "None" rather than being dropped.
+    return tuple(dedupe_strs([p for p in (*(discovered or ()), *(extra_permissions or ())) if p]))
 
 
 def _resource_self_link(raw: dict[str, Any]) -> str:
@@ -456,7 +444,7 @@ class CloudComputeDiscoveryResource:
     """
 
     SERVICE_LABEL = "Compute"
-    CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+    CLOUD_PLATFORM_SCOPE = _SHARED_CLOUD_PLATFORM_SCOPE
     SUPPORTS_IAM = True
 
     def __init__(self, session, spec: CloudComputeDiscoveryResourceSpec):

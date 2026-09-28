@@ -29,6 +29,7 @@ from gcpwn.core.utils.service_runtime import (
     make_action_accumulators,
     map_regions_with_disabled_short_circuit,
     parallel_map,
+    parse_component_args,
     parse_csv_file_args,
     print_missing_dependency,
     process_with_progress,
@@ -118,6 +119,64 @@ def build_extra_args(components: Sequence[Component], *, extra: Callable | None 
             extra(parser)
 
     return _add
+
+
+def region_flags(
+    label: str,
+    *,
+    unit: str | None = None,
+    all_help: str | None = None,
+    extra: Callable | None = None,
+) -> Callable:
+    """The standard region-scope flag trio, as an add_extra_args(parser) callable.
+
+    Internal to :func:`parse_enum_args`; module authors should call that instead.
+    Wording derives from ``label`` ("Dataproc regions", "TPU zones") since services
+    disagree on the noun. ``unit`` overrides that noun; ``all_help`` replaces the
+    ``--all-regions`` help for flags that mean something else (a wildcard location).
+    """
+    noun = (unit or label.rsplit(" ", 1)[-1] or "regions").lower()
+
+    def _add(parser):
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--all-regions", action="store_true", required=False,
+                           help=all_help or f"Try all known {label}")
+        group.add_argument("--regions-list", required=False,
+                           help=f"{noun.capitalize()} in comma-separated format")
+        group.add_argument("--regions-file", required=False,
+                           help=f"File containing {noun}, one per line")
+        if callable(extra):
+            extra(parser)
+
+    return _add
+
+
+def parse_enum_args(
+    user_args,
+    components: Sequence[Component],
+    *,
+    description: str,
+    region_label: str | None = None,
+    region_unit: str | None = None,
+    region_all_help: str | None = None,
+    standard_args: Sequence[str] = ("iam", "get"),
+    extra: Callable | None = None,
+):
+    """Parse a component enum module's CLI in one call.
+
+    Wraps components in ``component_args``, registers their manual-id flags, adds
+    the region trio when ``region_label`` is given (omit it for global services),
+    then delegates to ``parse_component_args``. ``extra`` adds module-specific flags.
+    """
+    add_extra = region_flags(region_label, unit=region_unit, all_help=region_all_help, extra=extra) \
+        if region_label else extra
+    return parse_component_args(
+        user_args,
+        description=description,
+        components=component_args(components),
+        add_extra_args=build_extra_args(components, extra=add_extra),
+        standard_args=standard_args,
+    )
 
 
 def _location_of(row: dict) -> str:

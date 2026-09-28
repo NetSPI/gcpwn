@@ -1,5 +1,9 @@
 """Unit tests for collect_sqlite_export_bundle table_name filter.
 
+Targets export_helpers, the implementation the three production exporters call.
+This previously imported an identically-named duplicate in module_helpers that no
+production code used -- so the filter was only ever verified on dead code.
+
 Tests: filtering by table name, missing table, and no filter (all tables).
 Uses an in-memory SQLite DB so these run without a real workspace.
 """
@@ -23,7 +27,7 @@ def _create_db_with_tables(path: str) -> None:
 
 
 def test_table_name_filter_returns_only_matching_table():
-    from gcpwn.core.utils.module_helpers import collect_sqlite_export_bundle
+    from gcpwn.core.utils.export_helpers import collect_sqlite_export_bundle
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
@@ -39,7 +43,7 @@ def test_table_name_filter_returns_only_matching_table():
 
 
 def test_table_name_filter_no_match_returns_empty():
-    from gcpwn.core.utils.module_helpers import collect_sqlite_export_bundle
+    from gcpwn.core.utils.export_helpers import collect_sqlite_export_bundle
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
@@ -54,7 +58,7 @@ def test_table_name_filter_no_match_returns_empty():
 
 
 def test_no_table_name_filter_returns_all_tables():
-    from gcpwn.core.utils.module_helpers import collect_sqlite_export_bundle
+    from gcpwn.core.utils.export_helpers import collect_sqlite_export_bundle
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
@@ -68,7 +72,7 @@ def test_no_table_name_filter_returns_all_tables():
 
 
 def test_empty_db_paths_returns_empty_bundle():
-    from gcpwn.core.utils.module_helpers import collect_sqlite_export_bundle
+    from gcpwn.core.utils.export_helpers import collect_sqlite_export_bundle
 
     result = collect_sqlite_export_bundle(db_paths=[], table_name=None)
     assert result["summary"]["tables"] == 0
@@ -77,7 +81,7 @@ def test_empty_db_paths_returns_empty_bundle():
 
 def test_nonexistent_db_file_skipped_without_crash():
     """iter_sqlite_tables_from_paths should warn and skip non-SQLite/missing files."""
-    from gcpwn.core.utils.module_helpers import collect_sqlite_export_bundle
+    from gcpwn.core.utils.export_helpers import collect_sqlite_export_bundle
 
     result = collect_sqlite_export_bundle(db_paths=["/tmp/totally_does_not_exist_gcpwn_test.db"], table_name=None)
     # Must not raise; returns empty

@@ -3730,6 +3730,20 @@
         "project_id",
         "name"
       ]
+    },
+    {
+      "table_name": "oidc_tokens",
+      "columns": [
+        "name",
+        "email",
+        "audience",
+        "expiry",
+        "source",
+        "raw_jwt"
+      ],
+      "primary_keys": [
+        "name"
+      ]
     }
   ]
 }

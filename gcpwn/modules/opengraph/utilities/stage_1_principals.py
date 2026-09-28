@@ -15,6 +15,7 @@ import sys
 from typing import Any, Iterable
 
 from gcpwn.core.utils.module_helpers import normalize_str_set
+from gcpwn.core.console import UtilityTools
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphBuilder,
     is_convenience_member,
@@ -34,17 +35,10 @@ def _normalized_principal_tokens(values: Iterable[str] | None) -> list[str]:
     )
 
 
-def _progress_interval(total: int) -> int:
-    if total <= 0:
-        return 1
-    return max(1, total // 100)
-
-
-def _should_log_progress(processed: int, total: int, *, interval: int | None = None) -> bool:
-    if total <= 0 or processed <= 0:
-        return False
-    step = interval if interval is not None else _progress_interval(total)
-    return processed == total or processed == 1 or processed % step == 0
+# Shared progress helpers (see UtilityTools); aliased so the call sites below
+# keep their existing names.
+_progress_interval = UtilityTools.progress_interval
+_should_log_progress = UtilityTools.should_emit_progress
 
 
 def _print_progress_inline(label: str, processed: int, total: int) -> None:

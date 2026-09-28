@@ -116,20 +116,6 @@ def _extract_repository_name(value: Any) -> str:
     head, _, tail = name.partition("/repositories/")
     repository_id = tail.split("/", 1)[0]
     return f"{head}/repositories/{repository_id}" if repository_id else name
-
-
-def _repository_name_from_row(row: dict[str, Any]) -> str:
-    if not isinstance(row, dict):
-        return ""
-    repository = resource_name_from_value(row, "repository")
-    if repository:
-        return _extract_repository_name(repository)
-    package = resource_name_from_value(row, "package")
-    if package:
-        return _extract_repository_name(package)
-    return _extract_repository_name(resource_name_from_value(row, "name"))
-
-
 class _RepositoryTypeIndex:
     """Repository name -> normalized format ('docker', 'maven', ...), shared across
     components so package/version/typed summaries can show repository_type. Falls back

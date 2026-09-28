@@ -67,6 +67,7 @@ MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "process_gcp_iam_bindings": (True, True, True),
     "process_og_gcpwn_data": (True, False, False),
     "process_og_node_color_images": (True, False, False),
+    "process_og_attack_paths": (True, False, False),
     # Google Workspace modules are tenant/user-scoped, not per-GCP-project -> run once,
     # no project-selection flags. All share (run_once=True, use_context_project=True,
     # accepts_project_flags=False) so --project-id / --all-projects don't apply.
@@ -86,6 +87,7 @@ UNAUTH_ALLOWED_MODULE_KEYS: set[str] = {
     # OpenGraph local-processing / utility modules do not require live GCP API auth.
     "process_og_gcpwn_data",
     "process_og_node_color_images",
+    "process_og_attack_paths",
 }
 
 def _is_unknown_project_token(value: Any) -> bool:

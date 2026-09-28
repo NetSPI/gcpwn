@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.service_runtime import drain_list_next
 from gcpwn.modules.workspace.common import (
     _handle_cloudidentity_error,
     _http_error_details,
@@ -47,8 +48,6 @@ We store Workspace data in `workspace_*` tables (e.g., `workspace_groups`, `work
 
 
 class CloudIdentityGroupsResource:
-    TABLE_NAME = "workspace_groups"
-    COLUMNS = ["email", "display_name", "name", "description", "create_time", "update_time"]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session
@@ -112,8 +111,6 @@ class CloudIdentityGroupsResource:
 
 
 class CloudIdentityGroupMembershipsResource:
-    TABLE_NAME = "workspace_group_memberships"
-    COLUMNS = ["group_email", "group_member", "member_email", "member", "member_type", "roles", "transitive", "source"]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session
@@ -166,8 +163,6 @@ class CloudIdentityGroupMembershipsResource:
 
 
 class WorkspaceUsersResource:
-    TABLE_NAME = "workspace_users"
-    COLUMNS = ["email", "display_name", "user_id"]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session
@@ -246,24 +241,8 @@ class WorkspaceGroup:
 
 
 def _paged_execute(collection, request, collection_key: str, *, rebuild=None):
-    """Page through a Cloud Identity request and collect ``collection_key`` items.
-
-    Standard list methods paginate via ``collection.list_next(...)`` (the method
-    lives on the COLLECTION, e.g. ``service.groups()``, not on the HttpRequest).
-    The custom ``groups.search`` / ``searchTransitiveMemberships`` methods have no
-    ``list_next``, so the caller passes ``rebuild(page_token) -> request`` and we
-    page on ``nextPageToken``.
-    """
-    items: list[dict[str, Any]] = []
-    while request is not None:
-        response = request.execute() or {}
-        items.extend(dict(row) for row in response.get(collection_key, []) if isinstance(row, dict))
-        if rebuild is not None:
-            token = response.get("nextPageToken")
-            request = rebuild(token) if token else None
-        else:
-            request = collection.list_next(previous_request=request, previous_response=response)
-    return items
+    """Page through a Cloud Identity request (see service_runtime.drain_list_next)."""
+    return drain_list_next(collection, request, collection_key, rebuild=rebuild)
 
 
 def list_groups(
@@ -412,17 +391,9 @@ def list_directory_users(service, *, customer: str = "my_customer", max_results:
 
     Returns raw user dicts as returned by the API.
     """
-    users: list[dict[str, Any]] = []
-    request = service.users().list(customer=customer, maxResults=int(max_results), orderBy=order_by)
-    while request is not None:
-        response = request.execute()
-        batch = response.get("users", []) if isinstance(response, dict) else []
-        if isinstance(batch, list):
-            for user in batch:
-                if isinstance(user, dict):
-                    users.append(user)
-        request = service.users().list_next(previous_request=request, previous_response=response)
-    return users
+    collection = service.users()
+    request = collection.list(customer=customer, maxResults=int(max_results), orderBy=order_by)
+    return drain_list_next(collection, request, "users")
 
 
 def workspace_user_to_row(*, customer_id: str, email: str, user_id: str | None = None, display_name: str | None = None, raw: Any | None = None) -> dict[str, Any]:

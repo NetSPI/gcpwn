@@ -8,6 +8,15 @@ import json
 from urllib.parse import quote, urlparse, urlunparse
 
 
+def _is_loopback(raw_url: str) -> bool:
+    """True for a localhost endpoint, where TLS interception is not a threat."""
+    try:
+        host = (urlparse(raw_url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1", ""}
+
+
 def _candidate_custom_node_collection_urls(raw_url: str) -> list[str]:
     parsed = urlparse(raw_url)
     candidate_urls: list[str] = []
@@ -128,11 +137,18 @@ def push_custom_node_attributes(
     auth_mode: str = "bearer",
     custom_nodes_token_id: str = "",
     custom_nodes_token_key: str = "",
+    verify_tls: bool = True,
 ):
     """
     Push OpenGraph custom node-type metadata to a BloodHound-compatible endpoint.
 
     Returns a small status dictionary describing success/failure and endpoint details.
+
+    ``verify_tls`` defaults to True because these requests carry a BloodHound API
+    token (bearer JWT or HMAC-signed): skipping verification lets anyone on the
+    path harvest it. Self-hosted BloodHound with a self-signed cert is the common
+    case, so the caller can opt out via --insecure-skip-tls-verify; a loopback
+    endpoint opts out automatically, where there is no network to intercept.
     """
     token = (custom_nodes_token or "").strip()
     token_id = (custom_nodes_token_id or "").strip()
@@ -145,6 +161,13 @@ def push_custom_node_attributes(
     url = (custom_nodes_url or "").strip()
     if not url:
         url = "http://127.0.0.1:8080"
+
+    # A loopback BloodHound has no network path to intercept, so verifying a
+    # self-signed localhost cert only breaks the common setup for no gain.
+    verify_effective = bool(verify_tls) and not _is_loopback(url)
+    if not verify_tls:
+        print("[!] TLS verification disabled (--insecure-skip-tls-verify): "
+              "the BloodHound API token is exposed to anyone on the network path.")
     if mode == "bearer" and not token:
         print("[*] Skipping custom-nodes push: bearer token not provided.")
         return {"ok": False, "reason": "missing_token"}
@@ -180,7 +203,7 @@ def push_custom_node_attributes(
                 "GET",
                 collection_url,
                 headers=get_headers,
-                verify=False,
+                verify=verify_effective,
                 timeout=10,
             )
             get_status = int(get_resp.status_code)
@@ -235,7 +258,7 @@ def push_custom_node_attributes(
                         collection_url,
                         headers=create_headers,
                         data=create_body,
-                        verify=False,
+                        verify=verify_effective,
                         timeout=10,
                     )
                     create_status = int(create_resp.status_code)
@@ -289,7 +312,7 @@ def push_custom_node_attributes(
                     kind_url,
                     headers=update_headers,
                     data=update_body,
-                    verify=False,
+                    verify=verify_effective,
                     timeout=10,
                 )
                 update_status = int(update_resp.status_code)

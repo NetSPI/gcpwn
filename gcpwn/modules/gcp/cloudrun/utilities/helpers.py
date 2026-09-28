@@ -13,7 +13,7 @@ from gcpwn.core.utils.module_helpers import (
     extract_path_tail,
     region_resolver_for,
 )
-from gcpwn.core.utils.service_runtime import DownloadBudget
+from gcpwn.core.utils.service_runtime import DownloadBudget, lazy_download_budget
 
 
 resolve_regions = region_resolver_for("cloudrun")
@@ -202,11 +202,7 @@ class CloudRunRevisionsResource(_CloudRunResource):
     PARENT_FROM_PROJECT_LOCATION = False  # listed under a parent service
 
     def _revision_env_download_budget(self) -> DownloadBudget:
-        budget = getattr(self, "_download_budget", None)
-        if budget is None:
-            budget = DownloadBudget(self.session, label="cloud run revision env")
-            self._download_budget = budget
-        return budget
+        return lazy_download_budget(self, "cloud run revision env")
 
     def download_env_yaml(self, *, revision_row: dict[str, Any], project_id: str) -> Path | None:
         if self._revision_env_download_budget().exceeded():

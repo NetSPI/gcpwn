@@ -1545,6 +1545,19 @@ class DataController:
             "deleted_tables": deleted_tables,
         }
 
+    @staticmethod
+    def _workspace_scoped_keys(keys: list[str] | None, save_data: dict[str, Any] | None) -> list[str] | None:
+        """Widen key columns with ``workspace_id`` when the row has one.
+
+        Service tables are workspace-scoped, so a key-based check or delete must be
+        too, or it reaches across workspaces (see save_service_row).
+        """
+        if not keys or not save_data or "workspace_id" not in save_data:
+            return keys
+        if "workspace_id" in keys:
+            return keys
+        return [*keys, "workspace_id"]
+
     @_synchronized
     def save_service_row(
         self,
@@ -1564,11 +1577,21 @@ class DataController:
         -> delete matching rows then insert (overwrite); otherwise upsert on the
         table's PK, preserving ``dont_change`` columns. Returns 1 / None.
 
+        Workspace scoping (invariant #3): ``only_if_missing``/``replace_on`` are
+        always widened with ``workspace_id`` when the row carries one. Callers pass
+        only the natural key (``name``, ``node_id``, ...), and those keys collide
+        ACROSS workspaces -- GCS bucket names are globally unique, and two
+        workspaces scanning the same org produce identical node ids. Without the
+        widening, ``replace_on`` DELETEs another workspace's row and
+        ``only_if_missing`` sees another workspace's row and skips the insert.
+
         Threading: like all DataController methods this must be called on the main
         thread; enumeration workers return rows and the caller saves them here.
         """
         try:
             self._ensure_service_database()
+            only_if_missing = self._workspace_scoped_keys(only_if_missing, save_data)
+            replace_on = self._workspace_scoped_keys(replace_on, save_data)
             if update_data is not None:
                 self._update_table(
                     self.conn,

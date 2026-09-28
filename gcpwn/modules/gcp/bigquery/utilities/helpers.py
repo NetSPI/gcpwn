@@ -18,7 +18,7 @@ from google.cloud import bigquery
 
 from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.service_runtime import build_discovery_service, handle_service_error
+from gcpwn.core.utils.service_runtime import bearer_headers, cached_discovery_service, handle_service_error
 from gcpwn.core.utils.iam_permissions import call_discovery_test_iam_permissions, permissions_with_prefixes
 from gcpwn.core.utils.module_helpers import (
     bigquery_routine_iam_resource_name,
@@ -28,22 +28,11 @@ from gcpwn.core.utils.module_helpers import (
     split_bigquery_routine_id,
     split_bigquery_table_id,
 )
-from gcpwn.core.utils.persistence import save_to_table, to_snake_key
+from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.persistence import snake_case_payload as _normalize_payload_keys
 from gcpwn.core.utils.serialization import resource_to_dict
 
 
-def _normalize_payload_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        normalized: dict[str, Any] = {}
-        for key, child in value.items():
-            out_key = to_snake_key(str(key))
-            if not out_key:
-                continue
-            normalized[out_key] = _normalize_payload_keys(child)
-        return normalized
-    if isinstance(value, list):
-        return [_normalize_payload_keys(item) for item in value]
-    return value
 
 
 def _payload_from_resource(value: Any) -> dict[str, Any]:
@@ -132,9 +121,7 @@ class _BigQueryBaseResource:
         return permissions
 
     def _get_discovery_service(self):
-        if self._discovery_service is None:
-            self._discovery_service = build_discovery_service(self.session.credentials, "bigquery", "v2")
-        return self._discovery_service
+        return cached_discovery_service(self, "bigquery", "v2")
 
     def _call_test_iam_permissions(self, *, resource_name: str, request_builder, api_name: str) -> list[str]:
         """Run a testIamPermissions call via the v2 discovery service; return granted perms.
@@ -733,7 +720,7 @@ class BigQueryConnectionResource:
         body = _json.dumps({"friendlyName": connection_name, "spark": {}}).encode()
         req = _ur.Request(
             url, data=body, method="POST",
-            headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+            headers=bearer_headers(creds.token),
         )
         with _ur.urlopen(req) as resp:
             result = _json.loads(resp.read())
@@ -788,7 +775,7 @@ class BigQueryConnectionResource:
             creds = creds.with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
         creds.refresh(Request())
         url = f"https://bigqueryconnection.googleapis.com/v1/{conn_resource}"
-        req = _ur.Request(url, method="DELETE", headers={"Authorization": f"Bearer {creds.token}"})
+        req = _ur.Request(url, method="DELETE", headers=bearer_headers(creds.token, json_content=False))
         try:
             with _ur.urlopen(req):
                 pass

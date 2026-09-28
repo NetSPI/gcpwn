@@ -4,11 +4,10 @@ import json as _json
 import time
 
 import requests
-import requests as _rlib
 
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.service_runtime import get_bearer_token
+from gcpwn.core.utils.service_runtime import bearer_headers, get_bearer_token, rest_list
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     extract_path_tail,
@@ -25,35 +24,21 @@ resolve_locations = region_resolver_for("vmmigration", ("vmmigration", "v1"))
 # ---------------------------------------------------------------------------
 
 
-def _vma_list(session, url: str, key: str):
+def _vma_list(session, url: str, key: str, *, api_name: str = "", project_id: str | None = None):
     """Paginating REST GET for vmmigration resources.
 
-    Returns a list of raw dicts on success, ``"Not Enabled"`` when the API is
-    disabled, or ``None`` on any other error (4xx/5xx).
+    Thin wrapper over service_runtime.rest_list, which owns the pagination and the
+    Not-Enabled/denied classification for every REST-only service.
     """
-    tok = get_bearer_token(session)
-    headers = {"Authorization": f"Bearer {tok}"}
-    results: list[dict] = []
-    page_token: str | None = None
-    while True:
-        params: dict = {"pageSize": 200}
-        if page_token:
-            params["pageToken"] = page_token
-        resp = _rlib.get(url, headers=headers, params=params, timeout=20)
-        if resp.status_code != 200:
-            try:
-                msg = (resp.json().get("error", {}).get("message") or "").lower()
-                if any(k in msg for k in ("api not enabled", "disabled", "has not been used")):
-                    return "Not Enabled"
-            except Exception:
-                pass
-            return None
-        data = resp.json()
-        results.extend(data.get(key, []))
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-    return results
+    return rest_list(
+        session,
+        url,
+        key,
+        api_name=api_name or f"vmmigration.{key}.list",
+        service_label="VM Migration",
+        project_id=project_id,
+        resource_name=url,
+    )
 
 
 def _source_provider(item: dict) -> str:
@@ -87,7 +72,7 @@ class VmMigrationSourcesResource(GcpListResource):
 
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         url = f"{_VM_BASE}/projects/{project_id}/locations/{location}/sources"
-        items = _vma_list(self.session, url, "sources")
+        items = _vma_list(self.session, url, "sources", api_name=self.LIST_PERMISSION, project_id=project_id)
         if items is None or items == "Not Enabled":
             return items
         rows = [
@@ -136,7 +121,7 @@ class VmMigrationMigratingVmsResource(GcpListResource):
 
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         url = f"{_VM_BASE}/{parent}/migratingVms"
-        items = _vma_list(self.session, url, "migratingVms")
+        items = _vma_list(self.session, url, "migratingVms", api_name=self.LIST_PERMISSION, project_id=project_id)
         if items is None or items == "Not Enabled":
             return items
         rows = []
@@ -190,7 +175,7 @@ class VmMigrationGroupsResource(GcpListResource):
 
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         url = f"{_VM_BASE}/projects/{project_id}/locations/{location}/groups"
-        items = _vma_list(self.session, url, "groups")
+        items = _vma_list(self.session, url, "groups", api_name=self.LIST_PERMISSION, project_id=project_id)
         if items is None or items == "Not Enabled":
             return items
         rows = [
@@ -236,7 +221,7 @@ class VmMigrationTargetProjectsResource(GcpListResource):
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         # targetProjects are always global regardless of the location passed
         url = f"{_VM_BASE}/projects/{project_id}/locations/global/targetProjects"
-        items = _vma_list(self.session, url, "targetProjects")
+        items = _vma_list(self.session, url, "targetProjects", api_name=self.LIST_PERMISSION, project_id=project_id)
         if items is None or items == "Not Enabled":
             return items
         rows = [
@@ -275,7 +260,7 @@ class VmMigrationImageImportResource:
 
     def _req(self, method: str, url: str, body=None, params=None) -> tuple[int, dict]:
         tok = get_bearer_token(self.session)
-        hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+        hdrs = bearer_headers(tok)
         r = requests.request(method, url, headers=hdrs, json=body, params=params, timeout=30)
         try:
             return r.status_code, r.json()
@@ -352,7 +337,7 @@ class VmMigrationSourceResource:
 
     def _req(self, method: str, url: str, body=None, params=None) -> tuple[int, dict]:
         tok = get_bearer_token(self.session)
-        hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+        hdrs = bearer_headers(tok)
         r = requests.request(method, url, headers=hdrs, json=body, params=params, timeout=30)
         try:
             return r.status_code, r.json()

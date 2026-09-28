@@ -8,15 +8,13 @@ import requests as _rlib
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.resource import GcpListResource
+from gcpwn.core.utils.service_runtime import bearer_headers, rest_call
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     region_resolver_for,
 )
 
 _EVENTARC = "https://eventarc.googleapis.com/v1"
-_PUBSUB = "https://pubsub.googleapis.com/v1"
-
-_CAPTURE_IMAGE = "python:3.11-alpine"
 _CAPTURE_APP = """\
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -148,21 +146,16 @@ class EventarcPipelinesResource:
 
     @staticmethod
     def req(tok: str, method: str, url: str, body=None, params=None):
-        hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
-        fn = {"GET": _rlib.get, "POST": _rlib.post, "PUT": _rlib.put,
-              "PATCH": _rlib.patch, "DELETE": _rlib.delete}[method]
-        r = fn(url, headers=hdrs, json=body, params=params, timeout=30)
-        try:
-            return r.status_code, r.json()
-        except Exception:
-            return r.status_code, {"_raw": r.text[:600]}
+        """Authenticated REST call to the Eventarc API (see service_runtime.rest_call)."""
+        return rest_call(method, url, token=tok, body=body, params=params)
+
 
     @staticmethod
     def lro_wait(tok: str, lro: str, timeout: int = 120) -> dict | None:
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(8)
-            hdrs = {"Authorization": f"Bearer {tok}"}
+            hdrs = bearer_headers(tok, json_content=False)
             r = _rlib.get(f"{_EVENTARC}/{lro}", headers=hdrs, timeout=30)
             try:
                 data = r.json()

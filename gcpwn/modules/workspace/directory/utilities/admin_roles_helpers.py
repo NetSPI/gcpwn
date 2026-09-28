@@ -54,17 +54,6 @@ def _build_service(session, subject: str | None):
 class WorkspaceAdminRolesResource:
     """Admin SDK Directory API: `roles().list(customer=...)`."""
 
-    TABLE_NAME = "workspace_admin_roles"
-    COLUMNS = [
-        "customer_id",
-        "role_id",
-        "role_name",
-        "role_description",
-        "is_super_admin_role",
-        "is_system_role",
-        "role_privileges",
-        "raw_json",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session
@@ -136,16 +125,6 @@ class WorkspaceAdminRolesResource:
 class WorkspaceRoleAssignmentsResource:
     """Admin SDK Directory API: `roleAssignments().list(customer=...[, userKey=...])`."""
 
-    TABLE_NAME = "workspace_role_assignments"
-    COLUMNS = [
-        "customer_id",
-        "role_assignment_id",
-        "role_id",
-        "assigned_to",
-        "scope_type",
-        "org_unit_id",
-        "raw_json",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

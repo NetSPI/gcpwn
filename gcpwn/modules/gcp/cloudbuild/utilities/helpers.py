@@ -20,7 +20,7 @@ from gcpwn.core.utils.module_helpers import (
 )
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import resource_to_dict
-from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_error
+from gcpwn.core.utils.service_runtime import DownloadBudget, bearer_headers, handle_service_error, lazy_download_budget
 
 
 resolve_regions = region_resolver_for("cloudbuild")
@@ -36,7 +36,7 @@ def _create_source_repo(session, project_id: str, repo_name: str) -> tuple[str |
     url = f"{_CSR_BASE}/projects/{project_id}/repos"
     resp = _requests.post(
         url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=bearer_headers(token),
         json={"name": f"projects/{project_id}/repos/{repo_name}"},
         timeout=30,
     )
@@ -276,7 +276,7 @@ class CloudBuildConnectionsResource(GcpListResource):
         token = get_bearer_token(self.session)
         resp = _requests.delete(
             f"{_CSR_BASE}/projects/{project_id}/repos/{repo_name}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=bearer_headers(token, json_content=False),
             timeout=30,
         )
         if resp.status_code in (200, 204, 404):
@@ -509,15 +509,7 @@ class CloudBuildBuildsResource(GcpListResource):
             )
 
     def _logs_download_budget(self) -> DownloadBudget:
-        # Lazily created once per resource instance (the caller constructs one
-        # CloudBuildBuildsResource per project run and calls the two download_build_*
-        # methods per build in a loop), so this caps total wall-clock time across both
-        # methods for the "cloud build logs" download type without a caller-threaded budget.
-        budget = getattr(self, "_download_budget", None)
-        if budget is None:
-            budget = DownloadBudget(self.session, label="cloud build logs")
-            self._download_budget = budget
-        return budget
+        return lazy_download_budget(self, "cloud build logs")
 
     def download_build_env_summary(self, *, row: dict[str, Any], project_id: str) -> Path | None:
         if self._logs_download_budget().exceeded():

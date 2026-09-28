@@ -11,9 +11,10 @@ Error-handling contract (relied on by the enum framework and GcpListResource):
 ``"Not Enabled"`` for a disabled API (so a region scan can stop early) and
 ``None`` for denied/404/500.
 
-Threading contract: ``parallel_map``/``ThreadPoolExecutor`` workers must do only
-network/CPU work and RETURN results; DB writes (session.insert_*/get_data) are
-main-thread only.
+Threading contract: DB access is serialized by DataController's process-wide RLock,
+so worker writes are SAFE -- but ``parallel_map``/``ThreadPoolExecutor`` workers
+should still do network/CPU work and RETURN results, with the caller saving, because
+writes queue on that lock regardless and the collect-on-main shape is clearer.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ from gcpwn.core.action_schema import ACTION_EVIDENCE_TEST_IAM_PERMISSIONS
 from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 
-API_DISABLED_SENTINEL = "Not Enabled"
 
 _API_DISABLED_SUBSTRINGS = (
     "Enable it by visiting",
@@ -176,12 +176,181 @@ def handle_service_error(
     return None
 
 
+def bearer_headers(token: str, *, json_content: bool = True) -> dict[str, str]:
+    """Authorization headers for a raw REST call to a Google API."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if json_content:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def rest_call(
+    method: str,
+    url: str,
+    *,
+    token: str,
+    body: Any = None,
+    params: dict | None = None,
+    timeout: int = 30,
+) -> tuple[int, dict]:
+    """One authenticated REST call -> ``(status_code, parsed_body)``.
+
+    Never raises on a non-2xx or an unparseable body (that comes back as
+    ``{"_raw": <text>}``), so callers branch on the status code alone. Use
+    :func:`rest_list` to page a collection; this is for single calls.
+    """
+    import requests
+
+    response = requests.request(
+        str(method or "GET").upper(),
+        url,
+        headers=bearer_headers(token),
+        json=body,
+        params=params,
+        timeout=timeout,
+    )
+    try:
+        return response.status_code, response.json()
+    except Exception:
+        return response.status_code, {"_raw": response.text[:600]}
+
+
+def rest_list(
+    session,
+    url: str,
+    items_key: str,
+    *,
+    api_name: str,
+    service_label: str,
+    project_id: str | None = None,
+    resource_name: str = "",
+    page_size: int = 200,
+    timeout: int = 20,
+) -> list[dict] | str | None:
+    """Paginate an authenticated REST list endpoint, classifying failures.
+
+    The REST counterpart of :func:`handle_service_error`'s contract: returns the
+    rows, ``"Not Enabled"`` for a disabled API (so region fan-out short-circuits),
+    or ``None`` for a denial/error. Every failure PRINTS -- a silent ``None`` here
+    would reach the operator as "no resources found" over a 403.
+    """
+    import requests
+
+    headers = {"Authorization": f"Bearer {get_bearer_token(session)}"}
+    label = resource_name or url
+    results: list[dict] = []
+    page_token: str | None = None
+
+    while True:
+        params: dict[str, Any] = {"pageSize": page_size}
+        if page_token:
+            params["pageToken"] = page_token
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=timeout)
+        except Exception as exc:
+            print(
+                f"{UtilityTools.RED}[X] {service_label} list failed for {label}: "
+                f"{type(exc).__name__}: {exc}{UtilityTools.RESET}"
+            )
+            return None
+
+        if response.status_code != 200:
+            return _classify_rest_failure(
+                response,
+                api_name=api_name,
+                service_label=service_label,
+                project_id=project_id,
+                resource_name=label,
+            )
+
+        try:
+            data = response.json()
+        except Exception:
+            print(f"{UtilityTools.RED}[X] {service_label} returned a non-JSON body for {label}.{UtilityTools.RESET}")
+            return None
+
+        page = data.get(items_key)
+        if page:
+            results.extend(page)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            return results
+
+
+def _classify_rest_failure(
+    response,
+    *,
+    api_name: str,
+    service_label: str,
+    project_id: str | None,
+    resource_name: str,
+) -> str | None:
+    """Mirror handle_service_error's classification for a raw REST response."""
+    try:
+        message = str(((response.json() or {}).get("error") or {}).get("message") or "")
+    except Exception:
+        message = ""
+
+    lowered = message.lower()
+    if any(token in lowered for token in ("api not enabled", "disabled", "has not been used")):
+        UtilityTools.print_403_api_disabled(service_label, project_id)
+        return "Not Enabled"
+
+    if response.status_code in (401, 403):
+        UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
+        # Match handle_service_error: --stop-on-denied short-circuits the remaining
+        # region/zone fan-out rather than re-probing every location.
+        if stop_on_denied():
+            print(f"[*] --stop-on-denied: skipping remaining regions/zones for {api_name} after a 403 denial.")
+            return "Not Enabled"
+        return None
+
+    if response.status_code == 404:
+        UtilityTools.print_404_resource(resource_name)
+        return None
+
+    detail = message or f"HTTP {response.status_code}"
+    print(
+        f"{UtilityTools.RED}[X] {service_label} list failed for {resource_name} "
+        f"({api_name}): {detail}{UtilityTools.RESET}"
+    )
+    return None
+
+
+#: The scope every discovery client in this codebase asks for. Was redeclared as a
+#: class constant in four service helpers.
+CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+
 def build_discovery_service(credentials, service_name: str, version: str, *, scopes: Iterable[str] | None = None):
     from googleapiclient.discovery import build  # type: ignore
     import google.auth.credentials
 
     scoped = google.auth.credentials.with_scopes_if_required(credentials, scopes or ())
     return build(str(service_name), str(version), credentials=scoped, cache_discovery=False)
+
+
+def cached_discovery_service(
+    owner: Any,
+    service_name: str,
+    version: str,
+    *,
+    scopes: Iterable[str] | None = None,
+    attr: str = "_discovery_service",
+):
+    """Build a discovery client once per ``owner``, cached on that attribute.
+
+    Per-INSTANCE caching. Compute keeps its own thread-local variant instead: its
+    specs are shared across a region pool and discovery clients are not
+    thread-safe -- do not fold that one onto this.
+    """
+    service = getattr(owner, attr, None)
+    if service is None:
+        service = build_discovery_service(
+            getattr(owner.session, "credentials", None), service_name, version, scopes=scopes
+        )
+        setattr(owner, attr, service)
+    return service
 
 
 def extract_discovery_http_error(exc: Exception) -> tuple[int | None, str]:
@@ -275,6 +444,36 @@ def paged_list(
         if not page_token:
             break
     return output
+
+
+def drain_list_next(
+    collection: Any,
+    request: Any,
+    items_key: str,
+    *,
+    rebuild: Callable[[str | None], Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Drain a discovery list via ``collection.list_next(...)``.
+
+    NOT interchangeable with :func:`paged_list`: ``list_next`` lives on the
+    collection and carries opaque state from the previous request AND response,
+    which a token-only builder cannot express. Methods without ``list_next``
+    (``groups.search``) pass ``rebuild(page_token) -> request`` instead.
+    """
+    items: list[dict[str, Any]] = []
+    while request is not None:
+        response = request.execute() or {}
+        if not isinstance(response, dict):
+            break
+        batch = response.get(items_key) or []
+        if isinstance(batch, list):
+            items.extend(row for row in batch if isinstance(row, dict))
+        if rebuild is not None:
+            token = response.get("nextPageToken")
+            request = rebuild(token) if token else None
+        else:
+            request = collection.list_next(previous_request=request, previous_response=response)
+    return items
 
 
 def add_standard_arguments(
@@ -392,6 +591,19 @@ class DownloadBudget:
         return True
 
 
+def lazy_download_budget(resource: Any, label: str) -> DownloadBudget:
+    """The DownloadBudget cached on a resource instance, created on first use.
+
+    One budget per resource instance: the caller builds one resource per project
+    run, then iterates.
+    """
+    budget = getattr(resource, "_download_budget", None)
+    if budget is None:
+        budget = DownloadBudget(resource.session, label=label)
+        resource._download_budget = budget
+    return budget
+
+
 def parse_csv_file_args(csv_value: str | None = None, file_path: str | None = None) -> list[str]:
     """Merge tokens from an inline CSV string and a file (one/CSV per line, '#'
     comments) into a de-duplicated, order-preserving list. Backs the manual
@@ -481,8 +693,8 @@ def parallel_map(
     32, len(items)); a size of 1 runs serially.
 
     THREADING INVARIANT: workers must do only network/CPU work and RETURN their
-    result. DB writes are main-thread only -- calling session.get_data/insert_*
-    from inside ``worker`` raises sqlite3.ProgrammingError. Collect the returned
+    result. DB access from inside ``worker`` is safe (DataController serializes on a
+    process-wide RLock), but prefer collecting the returned
     results, then write on the main thread."""
     entries = list(items or [])
     if not entries:
@@ -723,7 +935,8 @@ def flush_actions(session, project_id, column_name, accumulators, *, credname_ov
     Permissions are recorded as evidence with provenance, not booleans: the scope
     and api accumulators flush as direct_api evidence, while iam_actions flushes
     tagged ACTION_EVIDENCE_TEST_IAM_PERMISSIONS. Empty accumulators are skipped.
-    DB write -- MAIN THREAD ONLY (must run after all parallel_map workers return)."""
+    DB write -- run after all parallel_map workers return, so the accumulated
+    permissions are complete before the single flush."""
     scope_actions, api_actions, iam_actions = accumulators
     with session.batched_writes():
         if has_recorded_actions(scope_actions):

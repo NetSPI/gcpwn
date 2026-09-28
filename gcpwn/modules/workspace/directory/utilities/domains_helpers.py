@@ -36,13 +36,6 @@ DOMAINS_SCOPES = ("https://www.googleapis.com/auth/admin.directory.domain.readon
 
 
 class WorkspaceDomainsResource:
-    TABLE_NAME = "workspace_domains"
-    COLUMNS = [
-        "domain_name",
-        "is_primary",
-        "verified",
-        "creation_time",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

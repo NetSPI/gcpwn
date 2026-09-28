@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 from datetime import datetime
 from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -664,3 +665,46 @@ class UtilityTools:
         log_file = resolve_named_save_path(workspace_name, filename="history_log.txt", key="System Log")
         with open(log_file, "a", encoding="utf-8") as file_handle:
             file_handle.write(f"[{timestamp}] {action}\n")
+
+    # ── Long-run progress ────────────────────────────────────────────────────────
+    # The OpenGraph stages each had their own byte-identical copy of these three
+    # (5 + 8 + 2 definitions across 5 files). They live here because CLAUDE.md makes
+    # UtilityTools the single home for output, and because print_inline_progress
+    # needs the gating logic the other two provide.
+    #
+    # NOT a substitute for service_runtime.process_with_progress, which wraps an
+    # iteration and emits a different message; these are for a loop that reports its
+    # own position.
+
+    @staticmethod
+    def progress_interval(total: int) -> int:
+        """Emit roughly every 1% of ``total`` (never less than every item)."""
+        if total <= 0:
+            return 1
+        return max(1, total // 100)
+
+    @staticmethod
+    def should_emit_progress(processed: int, total: int) -> bool:
+        """True on the first item, the last item, and each 1% step in between."""
+        if total <= 0 or processed <= 0:
+            return False
+        step = UtilityTools.progress_interval(total)
+        return processed == 1 or processed == total or processed % step == 0
+
+    @staticmethod
+    def print_inline_progress(label: str, processed: int, total: int, *, force: bool = False) -> None:
+        """Render a single rewriting progress line on a TTY, plain lines otherwise."""
+        if total <= 0:
+            return
+        if not force and not UtilityTools.should_emit_progress(processed, total):
+            return
+        message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
+        if sys.stdout.isatty():
+            print(f"\r{message}", end="", flush=True)
+            if force:
+                print("")
+            return
+        # Non-TTY: force=True after a loop that already emitted at processed==total
+        # would print the same line twice. Skip when the regular emit covers it.
+        if not (force and UtilityTools.should_emit_progress(processed, total)):
+            print(message)

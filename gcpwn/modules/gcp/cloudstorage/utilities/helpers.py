@@ -31,10 +31,10 @@ from google.cloud.storage.hmac_key import HMACKeyMetadata
 from gcpwn.modules.gcp.iam.utilities.helpers import bucket_get_iam_policy,bucket_set_iam_policy
 
 import json
-import os
 import requests
 import re
 from gcpwn.core.console import UtilityTools
+from gcpwn.core.output_paths import resolve_within
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.service_runtime import DownloadBudget, get_cached_rows, handle_service_error, parse_csv_file_args
 from gcpwn.core.utils.persistence import save_to_table
@@ -998,15 +998,13 @@ class CloudStorageBlobsResource(_CloudStorageBaseResource):
         ):
             if debug:
                 print(f"[DEBUG] Downloading blob {blob_name}...")
-            directory_to_store = f"{output_folder}/REST/{bucket_name}/"
-            os.makedirs(directory_to_store, exist_ok=True)
-            if "/" in blob_name:
-                parent_prefix = blob_name.rpartition("/")[0]
-                final_folder = f"{directory_to_store}{parent_prefix}" if parent_prefix else directory_to_store
-                if not os.path.exists(final_folder):
-                    os.makedirs(final_folder, exist_ok=True)
-            destination_filename = directory_to_store + blob_name
-            if destination_filename[-1] != "/":
+            # blob_name comes straight off the listing, so anyone who can create an
+            # object in this bucket chooses it; resolve_within keeps the real name
+            # but guarantees it lands under the download directory.
+            destination = resolve_within(f"{output_folder}/REST/{bucket_name}", blob_name)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination_filename = str(destination)
+            if not blob_name.endswith("/"):
                 try:
                     blob.download_to_filename(destination_filename)
                 except Exception as e:
@@ -1033,15 +1031,11 @@ class CloudStorageBlobsResource(_CloudStorageBaseResource):
         if client is None:
             return None
         try:
-            directory_to_store = f"{output_folder}/XML/{bucket_name}/"
-            os.makedirs(directory_to_store, exist_ok=True)
-            if "/" in blob_name:
-                parent_prefix = blob_name.rpartition("/")[0]
-                final_folder = f"{directory_to_store}{parent_prefix}" if parent_prefix else directory_to_store
-                if not os.path.exists(final_folder):
-                    os.makedirs(final_folder, exist_ok=True)
-            destination_filename = directory_to_store + blob_name
-            if destination_filename[-1] != "/":
+            # Attacker-chosen object name (see download_with_client).
+            destination = resolve_within(f"{output_folder}/XML/{bucket_name}", blob_name)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination_filename = str(destination)
+            if not blob_name.endswith("/"):
                 response = client.get_object(Bucket=bucket_name, Key=blob_name)
                 with open(destination_filename, "wb") as output_file:
                     output_file.write(response["Body"].read())

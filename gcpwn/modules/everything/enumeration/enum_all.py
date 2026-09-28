@@ -1210,13 +1210,19 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             _ledger_mark(session, project_id, service_key, "running", run_id)
             failed = False
             try:
-                run_module([*global_tokens, "--phase", "services", "--modules", service_flag.removeprefix("--")], scoped)
+                rc = run_module([*global_tokens, "--phase", "services", "--modules", service_flag.removeprefix("--")], scoped)
                 if cancel_requested():
                     # A Ctrl+C cut this service's region/zone fan-out short, so its data
                     # may be partial -- mark it NOT done so --resume re-enumerates it fully.
                     failed = True
                     _ledger_mark(session, project_id, service_key, "failed", run_id,
                                  error="interrupted: partial enumeration; will re-run on resume")
+                elif rc == -1:
+                    # The module itself reported failure. Marking it 'done' here would
+                    # make --resume skip a unit that never actually enumerated.
+                    failed = True
+                    _ledger_mark(session, project_id, service_key, "failed", run_id,
+                                 error="module reported failure (rc=-1); will re-run on resume")
                 else:
                     _ledger_mark(session, project_id, service_key, "done", run_id)
             except Exception:
@@ -1350,10 +1356,20 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
             run_workspace_all(ws_args, session)
         except Exception:
             traceback.print_exc()
-    if not _ledger_incomplete(session, run_id):
+    # Report what actually happened. Printing a green "complete" and returning
+    # success while units sit 'failed'/'pending' hides a run where the credential
+    # was denied everywhere, and hides that a resume token is still outstanding.
+    incomplete = _ledger_incomplete(session, run_id)
+    if not incomplete:
         _ledger_clear(session, run_id)  # every unit done -> nothing to resume; drop this run's token
-    print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Parallel enum_all complete.{UtilityTools.RESET}")
-    return 1
+        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Parallel enum_all complete.{UtilityTools.RESET}")
+        return 1
+
+    print(
+        f"{UtilityTools.YELLOW}{UtilityTools.BOLD}[!] Parallel enum_all finished with incomplete units. "
+        f"Resume token kept -- re-run with --resume {run_id} to retry them.{UtilityTools.RESET}"
+    )
+    return -1
 
 
 def run_module(user_args, session):

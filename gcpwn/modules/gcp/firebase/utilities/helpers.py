@@ -4,10 +4,11 @@ import time
 
 import requests as _rlib
 
-from gcpwn.core.resource import GcpListResource
+from gcpwn.core.resource import RestListResource
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
-from gcpwn.core.utils.service_runtime import get_bearer_token
+from gcpwn.core.utils.iam_permissions import call_rest_test_iam_permissions
+from gcpwn.core.utils.service_runtime import bearer_headers, get_bearer_token
 from gcpwn.core.utils.module_helpers import (
     extract_project_id_from_resource,
     static_locations,
@@ -36,7 +37,7 @@ def _normalize_backend(b: dict) -> dict:
     }
 
 
-class FirebaseAppHostingBackendResource(GcpListResource):
+class FirebaseAppHostingBackendResource(RestListResource):
     """List Firebase App Hosting backends via REST.
 
     Backends with a ``serviceAccount`` field are PE candidates: an attacker
@@ -54,68 +55,33 @@ class FirebaseAppHostingBackendResource(GcpListResource):
     ID_FIELD = "backend_id"
     PARENT_FROM_PROJECT_LOCATION = True
 
-    def _build_client(self, session):
-        return None  # REST-only
+    API_BASE = _FAH_BASE
+    API_PATH = "backends"
+    COLLECTION_KEY = "backends"
+    PAGE_SIZE = 100
 
-    def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
-        tok = get_bearer_token(self.session)
-        url = f"{_FAH_BASE}/projects/{project_id}/locations/{location}/backends"
-        results = []
-        page_token = None
-        while True:
-            params: dict = {"pageSize": 100}
-            if page_token:
-                params["pageToken"] = page_token
-            resp = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, params=params, timeout=20)
-            if resp.status_code != 200:
-                try:
-                    msg = (resp.json().get("error", {}).get("message") or "").lower()
-                    if any(k in msg for k in ("api not enabled", "disabled", "has not been used")):
-                        return "Not Enabled"
-                except Exception:
-                    pass
-                return None
-            data = resp.json()
-            results.extend(data.get("backends", []))
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
-        rows = [_normalize_backend(b) for b in results]
-        record_permissions(
-            action_dict,
-            permissions=self.LIST_PERMISSION,
-            scope_key="project_permissions",
-            scope_label=project_id,
-        )
-        return rows
+    def _normalize_row(self, raw):
+        return _normalize_backend(raw)
 
     def test_iam_permissions(self, *, resource_id: str, action_dict=None) -> list[str]:
         if not self.TEST_IAM_PERMISSIONS:
             return []
-        tok = get_bearer_token(self.session)
-        try:
-            resp = _rlib.post(
-                f"{_FAH_BASE}/{resource_id}:testIamPermissions",
-                headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
-                json={"permissions": list(self.TEST_IAM_PERMISSIONS)},
-                timeout=15,
+        granted = call_rest_test_iam_permissions(
+            token=get_bearer_token(self.session),
+            url=f"{_FAH_BASE}/{resource_id}:testIamPermissions",
+            permissions=self.TEST_IAM_PERMISSIONS,
+        )
+        if granted:
+            record_permissions(
+                action_dict,
+                permissions=granted,
+                project_id=extract_project_id_from_resource(
+                    resource_id, fallback_project=self._fallback_project()
+                ),
+                resource_type=self.ACTION_RESOURCE_TYPE,
+                resource_label=resource_id,
             )
-            if resp.status_code == 200:
-                granted = resp.json().get("permissions", [])
-                if granted:
-                    record_permissions(
-                        action_dict,
-                        permissions=granted,
-                        project_id=extract_project_id_from_resource(
-                            resource_id, fallback_project=self._fallback_project()
-                        ),
-                        resource_type=self.ACTION_RESOURCE_TYPE,
-                        resource_label=resource_id,
-                    )
-                return granted
-        except Exception:
-            pass
-        return []
+        return granted
 
     def create(self, project_id: str, location: str, body: dict) -> dict:
         """Create a Firebase App Hosting backend. Returns the response dict.
@@ -129,7 +95,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
         r = _rlib.post(
             f"{_FAH_BASE}/projects/{project_id}/locations/{location}/backends",
             params=params,
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            headers=bearer_headers(tok),
             json=payload,
             timeout=30,
         )
@@ -150,7 +116,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
         r = _rlib.post(
             f"{_FAH_BASE}/{backend_name}/builds",
             params=params,
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            headers=bearer_headers(tok),
             json=payload,
             timeout=30,
         )
@@ -168,7 +134,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
             tok = get_bearer_token(self.session)
             br = _rlib.get(
                 f"{_FAH_BASE}/{backend_name}/builds/{build_id}",
-                headers={"Authorization": f"Bearer {tok}"},
+                headers=bearer_headers(tok, json_content=False),
                 timeout=15,
             )
             state = br.json().get("state", "?")
@@ -193,7 +159,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
         r = _rlib.post(
             f"{_FAH_BASE}/{backend_name}/rollouts",
             params=params,
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            headers=bearer_headers(tok),
             json=payload,
             timeout=30,
         )
@@ -211,7 +177,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
             tok = get_bearer_token(self.session)
             rr = _rlib.get(
                 f"{_FAH_BASE}/{backend_name}/rollouts/{rollout_id}",
-                headers={"Authorization": f"Bearer {tok}"},
+                headers=bearer_headers(tok, json_content=False),
                 timeout=15,
             )
             state = rr.json().get("state", "?")
@@ -231,7 +197,7 @@ class FirebaseAppHostingBackendResource(GcpListResource):
         r = _rlib.delete(
             f"{_FAH_BASE}/{backend_name}",
             params={"force": "true"},
-            headers={"Authorization": f"Bearer {tok}"},
+            headers=bearer_headers(tok, json_content=False),
             timeout=15,
         )
         if r.status_code in (200, 202, 204):

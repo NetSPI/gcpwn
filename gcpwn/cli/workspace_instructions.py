@@ -424,6 +424,11 @@ def help_banner():
                                                         default scope: ALL service tables for current workspace_id
                                                         (tables without workspace_id are skipped)
                                                         add --all-workspaces to wipe all workspace rows
+            delete-workspace [--workspace-id ID] [--yes]
+                                                        Delete a gcpwn workspace and ALL of its data
+                                                        (creds, action evidence, every service/opengraph row)
+                                                        NOTE: unrelated to the `workspace` command, which
+                                                        manages Google Workspace tenants
                                                         --dry-run: show what would be deleted without deleting
 
         help                                Display this page of information
@@ -468,7 +473,7 @@ class CommandProcessor:
     WORKSPACE_SUBCOMMANDS = ["list", "add", "swap", "remove"]
     TREE_SUBCOMMANDS = ["list"]
     MODULES_SUBCOMMANDS = ["list", "search", "info", "run"]
-    DATA_SUBCOMMANDS = ["export", "sql", "wipe-service"]
+    DATA_SUBCOMMANDS = ["export", "sql", "wipe-service", "delete-workspace"]
     CONFIGS_SUBCOMMANDS = ["list", "set", "unset", "regions"]
     TREE_FOCUS_TYPES = {
         "projects": {"project"},
@@ -591,6 +596,8 @@ class CommandProcessor:
             return []
         if command_name == "data" and subcmd == "sql" and len(args) == 1 and trailing_space:
             return self.DATA_SQL_HINTS
+        if command_name == "data" and subcmd == "delete-workspace":
+            return ["--workspace-id", "--yes"]
         if command_name == "data" and subcmd == "wipe-service":
             if len(args) == 1 and trailing_space:
                 return DATA_WIPE_FLAGS
@@ -745,10 +752,6 @@ class CommandProcessor:
     # -----------------------------
 
     @staticmethod
-    def _list_available_creds(workspace_id: int):
-        with DataController() as dc:
-            return dc.list_creds(workspace_id)
-
     @staticmethod
     def _dispatch_subcommand(
         subcommand: str | None,
@@ -933,6 +936,14 @@ class CommandProcessor:
                 (("--all-workspaces",), {"action": "store_true", "help": "Wipe all workspace rows from service tables"}),
                 (("--yes",), {"action": "store_true", "help": "Skip interactive confirmation"}),
                 (("--dry-run",), {"action": "store_true", "help": "Show what would be deleted without deleting anything"}),
+            ],
+        )
+        delete_ws = sub.add_parser("delete-workspace")
+        apply_argument_specs(
+            delete_ws,
+            [
+                (("--workspace-id",), {"help": "Workspace id to delete (default: the active workspace)"}),
+                (("--yes",), {"action": "store_true", "help": "Skip interactive confirmation"}),
             ],
         )
 
@@ -2035,6 +2046,7 @@ class CommandProcessor:
                 "export": lambda: self.handle_export_command(args),
                 "sql": lambda: self.handle_sql_command(args),
                 "wipe-service": lambda: self.handle_wipe_service_command(args),
+                "delete-workspace": lambda: self.handle_delete_workspace_command(args),
             },
             unknown_message="[X] Unknown data subcommand.",
         )
@@ -2076,6 +2088,50 @@ class CommandProcessor:
         except Exception as exc:
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] SQL execution failed:{UtilityTools.RESET} {type(exc).__name__}: {exc}")
             return -1
+
+    def handle_delete_workspace_command(self, args):
+        """Delete a gcpwn workspace and everything under it.
+
+        The FK cascade on workspaces(id) removes creds, action evidence and every
+        service/opengraph row in one DELETE, so this is the only correct way to drop
+        a workspace -- wiping service tables alone leaves the workspace and its
+        credentials behind.
+        """
+        requested = str(getattr(args, "workspace_id", "") or "").strip()
+        target = requested or str(self.session.workspace_id)
+        if not target.isdigit():
+            print(f"{UtilityTools.RED}[X] --workspace-id must be numeric.{UtilityTools.RESET}")
+            return
+        target_id = int(target)
+
+        rows = self.session.data_master.get_workspaces() or []
+        match = next((r for r in rows if int(r["id"]) == target_id), None)
+        if match is None:
+            print(f"{UtilityTools.RED}[X] No workspace with id {target_id}.{UtilityTools.RESET}")
+            return
+        name = str(match["name"])
+        is_active = target_id == int(self.session.workspace_id)
+
+        print(f"[*] Workspace: {name} (id={target_id}){'  [ACTIVE]' if is_active else ''}")
+        print("[!] This deletes the workspace AND all of its data: stored credentials,")
+        print("    recorded permissions, and every enumerated service/OpenGraph row.")
+        if is_active:
+            print(f"{UtilityTools.YELLOW}[!] This is the workspace you are currently in; "
+                  f"restart gcpwn afterwards to pick another.{UtilityTools.RESET}")
+
+        if not getattr(args, "yes", False):
+            confirm = input(f"[!] Type DELETE to permanently remove workspace '{name}': ").strip()
+            if confirm != "DELETE":
+                print("[*] Deletion cancelled.")
+                return
+
+        deleted = self.session.data_master.delete_workspace(target_id)
+        if deleted:
+            print(f"{UtilityTools.GREEN}[*] Deleted workspace '{name}' (id={target_id}) and all of its data.{UtilityTools.RESET}")
+            if is_active:
+                print("[*] The active workspace is gone -- exit and relaunch gcpwn.")
+        else:
+            print(f"{UtilityTools.RED}[X] Nothing deleted for workspace id {target_id}.{UtilityTools.RESET}")
 
     def handle_wipe_service_command(self, args):
         all_workspaces = bool(getattr(args, "all_workspaces", False))

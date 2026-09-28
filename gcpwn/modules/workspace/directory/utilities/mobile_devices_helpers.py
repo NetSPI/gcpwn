@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.service_runtime import drain_list_next
 from gcpwn.modules.workspace.common import (
     build_scoped_directory_service,
     handle_directory_error,
@@ -60,14 +61,7 @@ def list_mobile_devices(
         )
     except TypeError:
         request = service.mobiledevices().list(customerId=customer, maxResults=int(max_results))
-    while request is not None:
-        response = request.execute() or {}
-        batch = response.get("mobiledevices", []) if isinstance(response, dict) else []
-        if isinstance(batch, list):
-            for device in batch:
-                if isinstance(device, dict):
-                    devices.append(device)
-        request = service.mobiledevices().list_next(previous_request=request, previous_response=response)
+    devices.extend(drain_list_next(service.mobiledevices(), request, "mobiledevices"))
     return devices
 
 
@@ -101,8 +95,6 @@ def _first_email(device: dict[str, Any]) -> str:
 
 
 class WorkspaceMobileDevicesResource:
-    TABLE_NAME = "workspace_mobile_devices"
-    COLUMNS = ["resource_id", "device_id", "email", "model", "os", "type", "status"]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session

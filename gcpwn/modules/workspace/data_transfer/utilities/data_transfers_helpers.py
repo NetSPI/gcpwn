@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.service_runtime import drain_list_next
 from gcpwn.modules.workspace.common import build_workspace_service, handle_directory_error
 
 
@@ -20,15 +21,6 @@ DATA_TRANSFER_SCOPES = ("https://www.googleapis.com/auth/admin.datatransfer.read
 
 
 class WorkspaceDataTransfersResource:
-    TABLE_NAME = "workspace_data_transfers"
-    COLUMNS = [
-        "transfer_id",
-        "old_owner_user_id",
-        "new_owner_user_id",
-        "overall_status",
-        "request_time",
-        "applications",
-    ]
 
     def __init__(self, session, subject: str | None = None) -> None:
         self.session = session
@@ -53,11 +45,7 @@ class WorkspaceDataTransfersResource:
             if customer:
                 kwargs["customerId"] = customer
             request = collection.list(**kwargs)
-            items: list[dict[str, Any]] = []
-            while request is not None:
-                response = request.execute() or {}
-                items.extend([row for row in (response.get("dataTransfers") or []) if isinstance(row, dict)])
-                request = collection.list_next(previous_request=request, previous_response=response)
+            items = drain_list_next(collection, request, "dataTransfers")
             self.last_call_ok = True
             return items
         except Exception as exc:

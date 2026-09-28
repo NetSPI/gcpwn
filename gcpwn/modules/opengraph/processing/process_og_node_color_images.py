@@ -58,6 +58,15 @@ def _parse_args(user_args):
         action="store_true",
         help="Prompt for API token ID/key if not supplied for signature auth mode.",
     )
+    parser.add_argument(
+        "--insecure-skip-tls-verify",
+        action="store_true",
+        help=(
+            "Skip TLS certificate verification when talking to BloodHound. "
+            "Needed for a self-signed cert on a REMOTE host; exposes the API token "
+            "to anyone on the network path. Loopback endpoints already skip it."
+        ),
+    )
     return parser.parse_args(user_args)
 
 
@@ -357,6 +366,7 @@ def run_module(user_args, session):
         auth_mode=mode,
         custom_nodes_token_id=str(custom_nodes_token_id or "").strip(),
         custom_nodes_token_key=str(custom_nodes_token_key or "").strip(),
+        verify_tls=not bool(args.insecure_skip_tls_verify),
     )
 
     if bool(result.get("ok")) and auth_mode == "signature" and custom_nodes_token_id and custom_nodes_token_key:

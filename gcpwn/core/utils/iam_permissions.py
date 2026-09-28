@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterable
 
 from google.iam.v1 import iam_policy_pb2
 
-from gcpwn.core.utils.service_runtime import handle_discovery_error, handle_service_error
+from gcpwn.core.utils.service_runtime import handle_discovery_error, handle_service_error, rest_call
 
 
 @lru_cache(maxsize=1)
@@ -98,6 +98,35 @@ def call_test_iam_permissions(
             quiet_not_found=quiet_not_found,
         )
         return [] if result in (None, "Not Enabled") else list(result or [])
+
+
+def call_rest_test_iam_permissions(
+    *,
+    token: str,
+    url: str,
+    permissions: Iterable[str],
+    timeout: int = 15,
+) -> list[str]:
+    """testIamPermissions over a raw REST endpoint; return granted permissions.
+
+    REST sibling of the GAPIC and discovery variants above; ``url`` is the full
+    ``...:testIamPermissions`` endpoint. Like both, does NOT record evidence -- the
+    caller does, keeping scope labelling with the service. A non-200 yields ``[]``.
+    """
+    status, data = rest_call(
+        "POST",
+        url,
+        token=token,
+        body={"permissions": [str(p) for p in permissions]},
+        timeout=timeout,
+    )
+    if status != 200:
+        return []
+    return [
+        str(permission).strip()
+        for permission in ((data or {}).get("permissions") or [])
+        if str(permission).strip()
+    ]
 
 
 def call_discovery_test_iam_permissions(

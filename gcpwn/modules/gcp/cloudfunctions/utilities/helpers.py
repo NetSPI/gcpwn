@@ -36,7 +36,7 @@ from gcpwn.core.utils.module_helpers import (
 )
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.serialization import resource_to_dict
-from gcpwn.core.utils.service_runtime import handle_service_error, parse_csv_arg
+from gcpwn.core.utils.service_runtime import bearer_headers, handle_service_error, parse_csv_arg
 from gcpwn.modules.gcp.cloudfunctions.utilities.exploit_payloads import build_payload_zip
 
 # Utility for regex checking
@@ -838,7 +838,7 @@ class CloudFunctionsResource:
         try:
             resp = requests.post(
                 invoke_url,
-                headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+                headers=bearer_headers(id_token),
                 json={"data": "test"},
                 timeout=70,
             )

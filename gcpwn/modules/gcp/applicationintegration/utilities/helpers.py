@@ -4,11 +4,11 @@ import json as _json
 
 import requests as _rlib
 
-from gcpwn.core.resource import GcpListResource
-from gcpwn.core.utils.action_recording import record_permissions
+from gcpwn.core.resource import RestListResource
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
-from gcpwn.core.utils.service_runtime import get_bearer_token
+from gcpwn.core.utils.service_runtime import bearer_headers, get_bearer_token, rest_call
 from gcpwn.core.utils.module_helpers import (
+    extract_path_tail,
     static_locations,
 )
 
@@ -22,7 +22,7 @@ _INT_PERMISSIONS = tuple(permissions_with_prefixes("integrations.integrations.")
 
 def _normalize_integration(i: dict, location: str) -> dict:
     name = i.get("name", "")
-    integration_id = name.rsplit("/", 1)[-1] if "/" in name else name
+    integration_id = extract_path_tail(name)
     return {
         "name": name,
         "integration_id": integration_id,
@@ -33,7 +33,7 @@ def _normalize_integration(i: dict, location: str) -> dict:
     }
 
 
-class IntegrationsResource(GcpListResource):
+class IntegrationsResource(RestListResource):
     """List Application Integration integrations via REST.
 
     Flags any integration carrying a non-default runAsServiceAccount — these
@@ -49,9 +49,10 @@ class IntegrationsResource(GcpListResource):
     TEST_IAM_PERMISSIONS = ()   # no per-resource testIamPermissions on integrations
     ID_FIELD = "integration_id"
     PARENT_FROM_PROJECT_LOCATION = True
-
-    def _build_client(self, session):
-        return None  # REST-only
+    API_BASE = _INT_BASE
+    API_PATH = "integrations"
+    COLLECTION_KEY = "integrations"
+    PAGE_SIZE = 200
 
     def create_version(self, project_id: str, region: str, integration_name: str, body: dict) -> tuple[int, dict]:
         return create_integration_version(get_bearer_token(self.session), project_id, region, integration_name, body)
@@ -65,53 +66,17 @@ class IntegrationsResource(GcpListResource):
     def delete(self, project_id: str, region: str, integration_name: str) -> tuple[int, dict]:
         return delete_integration(get_bearer_token(self.session), project_id, region, integration_name)
 
-    def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
-        tok = get_bearer_token(self.session)
-        url = f"{_INT_BASE}/projects/{project_id}/locations/{location}/integrations"
-        results = []
-        page_token = None
-        while True:
-            params: dict = {"pageSize": 200}
-            if page_token:
-                params["pageToken"] = page_token
-            resp = _rlib.get(url, headers={"Authorization": f"Bearer {tok}"}, params=params, timeout=20)
-            if resp.status_code != 200:
-                try:
-                    msg = (resp.json().get("error", {}).get("message") or "").lower()
-                    if any(k in msg for k in ("api not enabled", "disabled", "has not been used")):
-                        return "Not Enabled"
-                except Exception:
-                    pass
-                return None
-            data = resp.json()
-            results.extend(data.get("integrations", []))
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
-        rows = [_normalize_integration(i, location) for i in results]
-        record_permissions(
-            action_dict,
-            permissions=self.LIST_PERMISSION,
-            scope_key="project_permissions",
-            scope_label=project_id,
-        )
-        return rows
-
+    def _normalize_rest_row(self, raw, *, location=None):
+        return _normalize_integration(raw, location)
 
 def _req(token: str, url: str, body=None, method: str | None = None) -> tuple[int, dict]:
-    """Execute an authorized REST call; return (status_code, parsed_json)."""
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    if method == "DELETE":
-        resp = _rlib.delete(url, headers=headers, timeout=20)
-    elif method == "POST" or body is not None:
-        resp = _rlib.post(url, headers=headers, json=body or {}, timeout=20)
-    else:
-        resp = _rlib.get(url, headers=headers, timeout=20)
-    try:
-        return resp.status_code, resp.json()
-    except Exception:
-        return resp.status_code, {"_raw": resp.text[:800]}
+    """Execute an authorized REST call; return (status_code, parsed_json).
 
+    Keeps this service's argument order and its method-from-body inference; the
+    transport itself is service_runtime.rest_call.
+    """
+    verb = method or ("POST" if body is not None else "GET")
+    return rest_call(verb, url, token=token, body=(body or {}) if verb == "POST" else body, timeout=20)
 
 
 def list_integration_versions(token: str, project_id: str, region: str, integration_name: str) -> list[dict]:
@@ -120,7 +85,7 @@ def list_integration_versions(token: str, project_id: str, region: str, integrat
         f"{_INT_BASE}/projects/{project_id}/locations/{region}"
         f"/integrations/{integration_name}/versions"
     )
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = bearer_headers(token, json_content=False)
     resp = _rlib.get(url, headers=headers, params={"pageSize": 50}, timeout=20)
     if resp.status_code == 200:
         return resp.json().get("integrationVersions", [])

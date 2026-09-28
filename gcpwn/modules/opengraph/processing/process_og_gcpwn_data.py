@@ -20,7 +20,6 @@ Stage map:
 import argparse
 import json
 import re
-import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
@@ -126,34 +125,11 @@ _PRINCIPAL_NODE_KINDS: set[str] = {
 }
 
 
-def _progress_interval(total: int) -> int:
-    if total <= 0:
-        return 1
-    return max(1, total // 100)
-
-
-def _should_emit_progress(processed: int, total: int) -> bool:
-    if total <= 0 or processed <= 0:
-        return False
-    step = _progress_interval(total)
-    return processed == 1 or processed == total or processed % step == 0
-
-
-def _print_inline_progress(label: str, processed: int, total: int, *, force: bool = False) -> None:
-    if total <= 0:
-        return
-    if not force and not _should_emit_progress(processed, total):
-        return
-    message = f"[*] {label}: {processed}/{total} (remaining {max(0, total - processed)})"
-    if sys.stdout.isatty():
-        print(f"\r{message}", end="", flush=True)
-        if force:
-            print("")
-        return
-    # Non-TTY: force=True after a loop that already emitted at processed==total would
-    # print the same line twice. Skip when the regular emit would already cover it.
-    if not (force and _should_emit_progress(processed, total)):
-        print(message)
+# Shared progress helpers (see UtilityTools); aliased so the call sites below
+# keep their existing names.
+_print_inline_progress = UtilityTools.print_inline_progress
+_progress_interval = UtilityTools.progress_interval
+_should_emit_progress = UtilityTools.should_emit_progress
 
 
 def _parse_split_sections(raw_value: str | None) -> list[str]:

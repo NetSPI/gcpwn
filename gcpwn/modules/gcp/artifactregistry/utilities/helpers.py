@@ -14,8 +14,8 @@ from gcpwn.core.utils.module_helpers import (
     extract_project_id_from_resource,
     region_resolver_for,
 )
-from gcpwn.core.utils.serialization import field_from_row, resource_to_dict
-from gcpwn.core.utils.service_runtime import DownloadBudget, handle_service_error
+from gcpwn.core.utils.serialization import resource_name_from_row
+from gcpwn.core.utils.service_runtime import CLOUD_PLATFORM_SCOPE as _SHARED_CLOUD_PLATFORM_SCOPE, DownloadBudget, bearer_headers, handle_service_error, lazy_download_budget
 
 
 resolve_regions = region_resolver_for("artifactregistry", ("artifactregistry", "v1"))
@@ -39,7 +39,7 @@ class _ArtifactRegistryResource(GcpListResource):
     """
 
     SERVICE_LABEL = "Artifact Registry"
-    CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+    CLOUD_PLATFORM_SCOPE = _SHARED_CLOUD_PLATFORM_SCOPE
     LIST_REQUEST = ""
     GET_REQUEST = ""
 
@@ -63,8 +63,7 @@ class _ArtifactRegistryResource(GcpListResource):
         return getattr(self.client, self.GET_METHOD)(request=request)
 
     def resource_name(self, row: Any) -> str:
-        payload = resource_to_dict(row)
-        return field_from_row(row, payload, "name")
+        return resource_name_from_row(row)
 
     def _ensure_scoped_credentials(self, credentials):
         """Return credentials widened to the cloud-platform scope for raw-HTTP artifact downloads.
@@ -231,15 +230,7 @@ class ArtifactRegistryFilesResource(_ArtifactRegistryResource):
         return self.list(parent=parent, filter_text=filter_text, limit=limit, action_dict=action_dict)
 
     def _files_download_budget(self) -> DownloadBudget:
-        # Lazily created once per resource instance (the caller constructs one
-        # ArtifactRegistryFilesResource per project run and calls download() in a loop
-        # over matched files), so this caps total wall-clock time for the file-download
-        # loop without needing a budget object threaded in from the caller.
-        budget = getattr(self, "_download_budget", None)
-        if budget is None:
-            budget = DownloadBudget(self.session, label="artifact registry files")
-            self._download_budget = budget
-        return budget
+        return lazy_download_budget(self, "artifact registry files")
 
     def download(
         self,
@@ -301,7 +292,7 @@ class ArtifactRegistryFilesResource(_ArtifactRegistryResource):
         def _submit(access_token: str):
             return request_session.get(
                 f"https://artifactregistry.googleapis.com/download/v1/{repository_name}/files/{encoded_file_id}:download?alt=media",
-                headers={"Authorization": f"Bearer {access_token}"},
+                headers=bearer_headers(access_token, json_content=False),
                 timeout=120,
                 stream=True,
             )

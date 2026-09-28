@@ -15,7 +15,8 @@ from gcpwn.core.utils.service_runtime import (
     paged_list,
 )
 from gcpwn.core.utils.module_helpers import extract_path_tail
-from gcpwn.core.utils.persistence import save_to_table, to_snake_key
+from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.persistence import snake_case_payload as _normalize_keys
 from gcpwn.core.utils.serialization import resource_to_dict
 from gcpwn.core.utils.service_runtime import get_cached_rows
 from gcpwn.core.utils.service_runtime import handle_service_error
@@ -91,19 +92,6 @@ class FirestoreDatabasesResource(GcpListResource):
         return targets
 
 
-def _normalize_keys(value: Any) -> Any:
-    """Recursively snake_case all dict keys in a (camelCase) discovery payload."""
-    if isinstance(value, dict):
-        normalized: dict[str, Any] = {}
-        for key, child in value.items():
-            out_key = to_snake_key(str(key))
-            if not out_key:
-                continue
-            normalized[out_key] = _normalize_keys(child)
-        return normalized
-    if isinstance(value, list):
-        return [_normalize_keys(item) for item in value]
-    return value
 
 
 class FirestoreRulesResource:

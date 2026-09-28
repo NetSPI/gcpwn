@@ -12,26 +12,10 @@ from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.action_recording import record_permissions
 from gcpwn.core.utils.service_runtime import build_discovery_service, handle_discovery_error, handle_service_error
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
-from gcpwn.core.utils.persistence import save_to_table, to_snake_key
+from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.persistence import snake_case_payload as _normalize_keys
 
 
-def _normalize_keys(value: Any) -> Any:
-    """Recursively convert dict keys (camelCase API repr) to snake_case.
-
-    The google-cloud-dns client returns camelCase ``to_api_repr()`` payloads;
-    this normalizes them so downstream code uses consistent snake_case keys.
-    """
-    if isinstance(value, dict):
-        normalized: dict[str, Any] = {}
-        for key, child in value.items():
-            out_key = to_snake_key(str(key))
-            if not out_key:
-                continue
-            normalized[out_key] = _normalize_keys(child)
-        return normalized
-    if isinstance(value, list):
-        return [_normalize_keys(item) for item in value]
-    return value
 
 
 def _zone_resource_name(project_id: str, zone_name: str) -> str:
