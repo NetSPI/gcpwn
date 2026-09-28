@@ -57,6 +57,15 @@ def _build_parser() -> argparse.ArgumentParser:
     targets.add_argument("--to-kind", action="append", help="Target every node of this kind, e.g. GCPBucket (repeatable)")
     targets.add_argument("--to-node", action="append", help="Target an exact node id (repeatable)")
     targets.add_argument(
+        "--to-any",
+        action="store_true",
+        help=(
+            "Target every privilege endpoint in the graph (all role bindings + all service accounts). "
+            "In default (shortest-path) mode each principal shows one path to the nearest endpoint; "
+            "add --all-paths to enumerate every reachable privilege."
+        ),
+    )
+    targets.add_argument(
         "--at-scope",
         help="Restrict targets to a scope subtree, e.g. projects/my-proj, folders/123, organizations/456",
     )
@@ -95,7 +104,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     output = parser.add_argument_group("Output")
-    output.add_argument("--compact", action="store_true", help="One line per path instead of an indented hop list")
+    output.add_argument(
+        "--compact",
+        action="store_true",
+        help="Collapsed view: fold binding/CAP nodes into logical hops (default shows every raw node and edge)",
+    )
     output.add_argument(
         "--summary",
         action="store_true",
@@ -147,7 +160,8 @@ def run_module(user_args, session):
     service_accounts = _split_csv(args.to_sa)
     kinds = _split_csv(args.to_kind)
     node_ids = _split_csv(args.to_node)
-    if not (roles or service_accounts or kinds or node_ids):
+    to_any = getattr(args, "to_any", False)
+    if not (roles or service_accounts or kinds or node_ids or to_any):
         roles = list(DEFAULT_ROLES)
         # Not printed in --json mode: stdout must be parseable as a single JSON
         # document, and query.description in the payload already records the default.
@@ -161,6 +175,7 @@ def run_module(user_args, session):
         kinds=kinds,
         node_ids=node_ids,
         scope=args.at_scope,
+        to_any=to_any,
     )
 
     if args.list_targets:
@@ -190,6 +205,12 @@ def run_module(user_args, session):
         if not sources:
             print(f"{UtilityTools.YELLOW}[!] --from matched no principals in this graph.{UtilityTools.RESET}")
             return -1
+        if to_any:
+            # Prevent trivial self-paths: the BFS skips any source that is also
+            # a target (dist==0). With --to-any, SA sources appear in both sets,
+            # so remove the sources from the target set.  Paths FROM them TO
+            # other SA/binding nodes are still found normally.
+            target_set.node_ids -= set(sources)
 
     truncated = False
     if args.all_paths:
@@ -247,7 +268,7 @@ def run_module(user_args, session):
             paths,
             config=config,
             query=query,
-            compact=args.compact,
+            expand=not args.compact,
             truncated=truncated,
             detail_limit=args.max_paths,
             summary_only=args.summary,

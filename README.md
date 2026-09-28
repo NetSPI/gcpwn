@@ -656,24 +656,38 @@ If BloodHound is unavailable or the graph is too large to navigate visually, `pr
 Find all principals that can reach `roles/owner`:
 
 ```bash
-# compact one-liner per path
-modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --compact
-
-# full detail (shows roles that granted each hop)
+# expanded (default) — every raw node and edge shown
 modules run process_og_attack_paths --graph-json output.json --to-role roles/owner
+
+# --compact — collapses binding/CAP nodes, roles shown inline
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --compact
 ```
 
-Example output:
+By default the output shows every raw graph node and edge, including IAM binding nodes and synthetic capability (CAP:) nodes, so you can see exactly what role or permission combination each hop requires.
+
+Example expanded output (default):
 
 ```text
- [direct] serviceAccount:test-gcpwn@my-project → holds roles/owner on organizations/123456789
+ [direct] serviceAccount:test-gcpwn@my-project
+        └─[HAS_IAM_BINDING]─> roles/owner@org:123456789  (holds roles/owner on organizations/123456789)
 
  [1 hop ] serviceAccount:gcpwn-poc-target@my-project
-        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> serviceAccount:test-gcpwn@my-project  (via roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
-        └─ holds roles/owner on organizations/123456789
+        └─[HAS_COMBO_BINDING]─> combo_iambinding:CREATE_VERTEX_CUSTOM_JOB_AS_SA@...  (needs: roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
+        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> CREATE_VERTEX_CUSTOM_JOB_AS_SA@...
+        └─[RunsAs]─> serviceAccount:test-gcpwn@my-project
+        └─[HAS_IAM_BINDING]─> roles/owner@org:123456789  (holds roles/owner on organizations/123456789)
 
- [1 hop ] serviceAccount:service-799134222906@dataflow-service-producer-prod
-        └─[CAN_CREATE_SA_ACCESS_TOKEN]─> serviceAccount:test-gcpwn@my-project  (via roles/dataflow.serviceAgent on projects/799134222906)
+ [1 hop ] serviceAccount:dataflow-sa@my-project
+        └─[HAS_IAM_BINDING]─> roles/dataflow.serviceAgent@project:my-project  (role roles/dataflow.serviceAgent on projects/my-project)
+        └─[CAN_CREATE_SA_ACCESS_TOKEN]─> serviceAccount:test-gcpwn@my-project
+        └─[HAS_IAM_BINDING]─> roles/owner@org:123456789  (holds roles/owner on organizations/123456789)
+```
+
+Use `--compact` to collapse binding and CAP nodes into logical hops with roles shown inline via `(via ...)`:
+
+```text
+ [1 hop ] serviceAccount:gcpwn-poc-target@my-project
+        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> serviceAccount:test-gcpwn@my-project  (via roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
         └─ holds roles/owner on organizations/123456789
 ```
 
@@ -685,6 +699,9 @@ modules run process_og_attack_paths --graph-json output.json --to-sa target-sa@m
 
 # filter to paths starting from a specific principal
 modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --from serviceAccount:attacker@my-project.iam.gserviceaccount.com
+
+# show every privilege reachable from a specific principal (all roles + SAs)
+modules run process_og_attack_paths --graph-json output.json --from serviceAccount:attacker@my-project.iam.gserviceaccount.com --to-any --all-paths --summary
 
 # machine-readable JSON output
 modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --json --output paths.json

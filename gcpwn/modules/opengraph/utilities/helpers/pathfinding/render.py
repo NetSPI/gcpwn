@@ -200,22 +200,17 @@ def _terminal_annotation(terminal: Hop | None) -> str:
     return f"  [holds {terminal.role or '?'} on {scope}]"
 
 
-def render_path(graph: AttackGraph, path: RawPath, *, compact: bool = False) -> list[str]:
+def render_path(graph: AttackGraph, path: RawPath) -> list[str]:
+    """Collapsed view: one line per logical hop, binding/CAP nodes folded in.
+
+    This is the ``--compact`` output.  For the default fully-expanded view that
+    shows every raw node and edge, use :func:`render_path_expanded`.
+    """
     hops = collapse_path(graph, path)
     steps, terminal = _attack_hops(hops)
     count = len(steps)
-    # "direct" = the source already holds the role; no lateral movement needed.
     label = "direct" if (count == 0 and terminal) else ("hop " if count == 1 else "hops")
     annotation = _terminal_annotation(terminal)
-
-    if compact:
-        chain = short_id(path.source)
-        for hop in steps:
-            chain += f" -[{hop.edge_kind}]-> {short_id(hop.dst)}"
-        if terminal:
-            chain += f" → holds {terminal.role or '?'} on {_scope_label(terminal.scope, terminal.scope_display)}"
-        count_label = label if count == 0 else f"{count} {label}"
-        return [f" [{count_label}] {chain}"]
 
     count_label = label if count == 0 else f"{count} {label}"
     lines = [f" [{count_label}] {short_id(path.source)}{annotation if count == 0 else ''}"]
@@ -229,6 +224,60 @@ def render_path(graph: AttackGraph, path: RawPath, *, compact: bool = False) -> 
             notes.append("conditional")
         suffix = f"   [{'; '.join(notes)}]" if notes else ""
         lines.append(f"        └─ holds {terminal.role or '?'} on {scope}{suffix}")
+    return lines
+
+
+def render_path_expanded(graph: AttackGraph, path: RawPath) -> list[str]:
+    """Expanded view: every raw node and edge shown, including binding and CAP: nodes.
+
+    This is the default output.  Binding nodes show the role (or component roles
+    for combo bindings) that they carry.  CAP: nodes appear as-is.
+    """
+    hops = collapse_path(graph, path)
+    steps, terminal = _attack_hops(hops)
+    count = len(steps)
+    label = "direct" if (count == 0 and terminal) else ("hop " if count == 1 else "hops")
+    count_label = label if count == 0 else f"{count} {label}"
+    lines = [f" [{count_label}] {short_id(path.nodes[0])}"]
+
+    nodes, edge_indices = path.nodes, path.edge_indices
+    last = len(nodes) - 1
+    for i, edge_idx in enumerate(edge_indices):
+        edge = graph.edges[edge_idx]
+        dst_node = nodes[i + 1]
+        edge_kind = edge["kind"]
+        dst_short = short_id(dst_node)
+
+        extra = ""
+        if graph.is_binding(dst_node):
+            props = graph.props(dst_node)
+            pss = props.get("permission_source_summary")
+            if isinstance(pss, list) and pss:
+                parsed = _parse_permission_sources(pss)
+                if parsed:
+                    extra = f"  (needs: {' + '.join(parsed)})"
+            else:
+                role = graph.role_of_binding(dst_node)
+                scope_val = _scope_label(
+                    graph.scope_of_binding(dst_node), props.get("attached_scope_display")
+                )
+                if role:
+                    verb = "holds" if i + 1 == last else "role"
+                    extra = f"  ({verb} {role} on {scope_val})"
+                    notes = []
+                    if props.get("inherited"):
+                        src = props.get("source_scope_id") or props.get("source_scope_display")
+                        if src:
+                            notes.append(f"inherited from {short_id(str(src), limit=44)}")
+                    if props.get("conditional") or props.get("condition_expr_raw"):
+                        notes.append("conditional")
+                    if notes:
+                        extra += f"  [{'; '.join(notes)}]"
+
+        if edge["properties"].get("conditional") or edge["properties"].get("condition_expr_raw"):
+            extra += "  [conditional]"
+
+        lines.append(f"        └─[{edge_kind}]─> {dst_short}{extra}")
     return lines
 
 
@@ -310,6 +359,7 @@ def render_report(
     config: dict,
     query: dict,
     compact: bool = False,
+    expand: bool = True,
     truncated: bool = False,
     detail_limit: int | None = None,
     summary_only: bool = False,
@@ -386,7 +436,10 @@ def render_report(
         for path in group:
             if detail_limit is not None and shown >= detail_limit:
                 break
-            lines.extend(render_path(graph, path, compact=compact))
+            if expand:
+                lines.extend(render_path_expanded(graph, path))
+            else:
+                lines.extend(render_path(graph, path))
             lines.append("")
             shown += 1
 

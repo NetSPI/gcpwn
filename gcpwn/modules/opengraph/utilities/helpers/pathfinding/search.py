@@ -53,8 +53,22 @@ def resolve_targets(
     node_ids: Iterable[str] | None = None,
     kinds: Iterable[str] | None = None,
     scope: str | None = None,
+    to_any: bool = False,
 ) -> TargetSet:
-    """Turn CLI-style selectors into a concrete set of target node ids."""
+    """Turn CLI-style selectors into a concrete set of target node ids.
+
+    Pass ``to_any=True`` to target every privilege endpoint in the graph (all
+    role-binding nodes and all service-account nodes).  When combined with
+    ``--from``, this shows every privilege the specified principal can reach.
+    """
+    if to_any:
+        resolved = {
+            node_id
+            for node_id in graph.nodes
+            if graph.kind_of(node_id) in ("GCPIamSimpleBinding", "GCPServiceAccount")
+        }
+        return TargetSet(node_ids=resolved, description="(all privilege endpoints)")
+
     resolved: set[str] = set()
     described: list[str] = []
 
