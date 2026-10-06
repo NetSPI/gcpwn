@@ -2109,16 +2109,6 @@
         "example_command": "modules run exploit_gcp_setiampolicy --service kmskey --member user:ATTACKER@example.com --role roles/cloudkms.cryptoKeyDecrypter"
       }
     },
-    "secretmanager": {
-      "CAN_READ_SECRET_DATA": {
-        "permissions": [
-          "secretmanager.versions.access"
-        ],
-        "on": "secrets",
-        "description": "Access Secret Manager secret versions with secretmanager.versions.access. Secrets frequently contain SA JSON keys, API tokens, database passwords, or other credentials that enable further access. Use enum_secretsmanager --values to read all accessible secrets.",
-        "example_command": "modules run enum_secretsmanager --download"
-      }
-    },
     "apigee": {
       "CREATE_APIGEE_PROXY_AS_SA": {
         "edge": "CREATE_APIGEE_PROXY_AS_SA",

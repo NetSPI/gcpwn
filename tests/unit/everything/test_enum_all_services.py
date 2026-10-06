@@ -78,7 +78,7 @@ def _spec_by_module_tail(tail: str) -> ServiceSpec:
 # Table-shape sanity: every spec builds without error, for all gate flags      #
 # --------------------------------------------------------------------------- #
 def test_services_table_is_non_empty_and_specs_are_frozen():
-    assert len(_SERVICES) == 57  # 43 original + 14 newly added services
+    assert len(_SERVICES) == 66
     for spec in _SERVICES:
         assert isinstance(spec, ServiceSpec)
         assert spec.module.startswith("gcpwn.modules.")

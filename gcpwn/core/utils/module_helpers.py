@@ -227,7 +227,7 @@ def resolve_regions_from_module_data(
         # Intersect with service-specific valid locations so cross-service locations
         # (e.g. KMS multi-region "nam7") don't cause 400 errors for other services.
         if discovery is not None or service:
-            known = set(_known())
+            known = set(_static())  # static only — don't hit discovery when preferred already set
             if known:
                 candidates = [r for r in candidates if r in known]
         return candidates or _known() or [default_region]
