@@ -6,7 +6,6 @@ from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.iam_permissions import call_test_iam_permissions, permissions_with_prefixes
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
-    extract_path_tail,
     extract_project_id_from_resource,
     resolve_regions_args,
 )

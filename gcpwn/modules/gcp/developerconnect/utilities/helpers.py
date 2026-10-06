@@ -3,7 +3,7 @@ from __future__ import annotations
 from google.cloud import developerconnect_v1
 
 from gcpwn.core.resource import GcpListResource
-from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, resolve_regions_args
+from gcpwn.core.utils.module_helpers import extract_path_segment, resolve_regions_args
 
 
 resolve_locations = resolve_regions_args

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gcpwn.core.utils.enum_framework import Component, NESTED, REGION, parse_enum_args, run_components
+from gcpwn.core.utils.enum_framework import Component, REGION, parse_enum_args, run_components
 from gcpwn.modules.gcp.bigqueryconnection.utilities.helpers import (
     BigQueryConnectionsResource,
     resolve_locations,

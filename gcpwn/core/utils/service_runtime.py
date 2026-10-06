@@ -479,7 +479,7 @@ def paged_list(
         req = request_builder(page_token)
         try:
             resp = req.execute()
-        except (ssl.SSLError, socket.error) as exc:
+        except (ssl.SSLError, socket.error):
             if page_token is not None:
                 raise  # mid-pagination: don't retry, let the caller handle it
             time.sleep(0.5)

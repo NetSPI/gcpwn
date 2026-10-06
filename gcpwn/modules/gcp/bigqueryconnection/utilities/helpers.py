@@ -4,7 +4,7 @@ from google.cloud import bigquery_connection_v1
 
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
-from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_tail, resolve_regions_args
+from gcpwn.core.utils.module_helpers import extract_path_tail, resolve_regions_args
 
 
 resolve_locations = resolve_regions_args
