@@ -78,6 +78,7 @@ class SessionUtility:
         self.workspace_id = workspace_id
         self.workspace_name = workspace_name
         self.workspace_directory_name = make_workspace_slug(workspace_id, workspace_name)
+        self.quiet = quiet
 
         self.default_project_id = None
         self.project_id = None
@@ -377,8 +378,10 @@ class SessionUtility:
                 # (an authorized-user credential, same shape as ADC) -- reload it the same
                 # full way so it auto-renews. A bare `--token` oauth2 cred has no refresh
                 # material, so it keeps the simple bare-token path.
+                _quiet = getattr(self, "quiet", False)
                 if cred["credtype"] in ["adc", "adc-file"] or auth_json.get("refresh_token"):
-                    print("[*] Loading in ADC/OAuth2 user credentials...")
+                    if not _quiet:
+                        print("[*] Loading in ADC/OAuth2 user credentials...")
                     self.credentials = Credentials.from_authorized_user_info(auth_json)
                     status = self.attempt_cred_refresh(auth_json)
                     if status:
@@ -389,17 +392,22 @@ class SessionUtility:
                                 self.scopes = scopes
                             if email:
                                 self.email = email
-                        print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Proceeding with up-to-date credentials for {credname}...{UtilityTools.RESET}")
+                        if not _quiet:
+                            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Proceeding with up-to-date credentials for {credname}...{UtilityTools.RESET}")
                     else:
-                        print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Proceeding with erroneous credentials for {credname}...{UtilityTools.RESET}")
+                        if not _quiet:
+                            print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Proceeding with erroneous credentials for {credname}...{UtilityTools.RESET}")
                 elif cred["credtype"] == "oauth2":
-                    print("Loading in OAuth2 token. Note it might be expired based on how long its existed...")
+                    if not _quiet:
+                        print("Loading in OAuth2 token. Note it might be expired based on how long its existed...")
                     token = auth_json["token"]
                     self.access_token = token
                     self.credentials = Credentials(token=token)
 
             elif cred["credtype"] == "service":
-                print("Loading in Service Credentials...")
+                _quiet = getattr(self, "quiet", False)
+                if not _quiet:
+                    print("Loading in Service Credentials...")
                 details_json = json.loads(cred["session_creds"])
                 self.credentials = service_account.Credentials.from_service_account_info(details_json)
                 if self.credentials.project_id:
@@ -408,7 +416,7 @@ class SessionUtility:
                     self.email = self.credentials.service_account_email
                 if self.credentials.scopes:
                     self.scopes = self.credentials.scopes
-                
+
                 self.access_token = None
 
             if self.credentials is None:
@@ -420,7 +428,8 @@ class SessionUtility:
                 self.credentials, cred.get("delegates"), identity_label=self.email or credname
             )
 
-            print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
+            if not getattr(self, "quiet", False):
+                print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
             return 1
 
         except Exception:
