@@ -80,6 +80,7 @@ def _parse_args(user_args):
 
         parser.add_argument("--take-screenshot", action="store_true", required=False, help="Take screenshot when possible")
         parser.add_argument("--download-serial", action="store_true", required=False, help="Download serial log when possible")
+        parser.add_argument("--download-user-data", action="store_true", required=False, help="Extract and save startup-script/user-data from instance and template metadata")
         parser.add_argument("--output", type=str, required=False, help="Output path for screenshot or serial artifacts")
 
     return parse_component_args(
@@ -707,6 +708,16 @@ def run_module(user_args, session):
                 print(f"[*] No Compute project metadata files were downloaded for project {project_id}.")
             else:
                 print(f"[*] No Compute projects were available to download metadata from in project {project_id}.")
+        if getattr(args, "download_user_data", False):
+            ud_paths: list[str] = []
+            for project in compute_projects:
+                ud_paths.extend(str(p) for p in projects_resource.download_user_data(row=project, project_id=project_id))
+            for p in ud_paths:
+                print(f"[*] Wrote Compute project user-data to {p}")
+            if ud_paths:
+                print(f"[*] Saved {len(ud_paths)} project user-data file(s) for project {project_id}.")
+            elif compute_projects:
+                print(f"[*] No user-data keys found in Compute project metadata for project {project_id}.")
 
     if selected.get("instances", False):
         print("[*] Enumerating Compute Instances...")
@@ -714,6 +725,7 @@ def run_module(user_args, session):
         downloaded_metadata_paths: list[str] = []
         downloaded_screenshot_paths: list[str] = []
         downloaded_serial_paths: list[str] = []
+        downloaded_user_data_paths: list[str] = []
         if (
             not (args.instance_names or args.instance_names_file)
             and not explicit_zone_scope
@@ -722,6 +734,7 @@ def run_module(user_args, session):
             and not args.iam
             and not args.take_screenshot
             and not args.download_serial
+            and not getattr(args, "download_user_data", False)
             and _only_selected_component(selected, "instances")
         ):
             cached = get_cached_rows(
@@ -845,6 +858,14 @@ def run_module(user_args, session):
                         if (args.instance_names or args.instance_names_file) and not validated:
                             wrapped_instance.validated = True
 
+                if getattr(args, "download_user_data", False):
+                    ud = instances_resource.download_user_data(
+                        row=hydrated_instance,
+                        project_id=target_project_id,
+                        zone=zone,
+                    )
+                    downloaded_user_data_paths.extend(str(p) for p in ud)
+
         for target_project_id, wrapped_instances in all_instances.items():
             final_instances = list(wrapped_instances)
             if args.instance_names or args.instance_names_file:
@@ -879,6 +900,13 @@ def run_module(user_args, session):
                 print(f"[*] No Compute instance artifacts were downloaded for project {project_id}.")
             else:
                 print(f"[*] No Compute instances were available to download artifacts from in project {project_id}.")
+        if getattr(args, "download_user_data", False):
+            for p in downloaded_user_data_paths:
+                print(f"[*] Wrote Compute instance user-data to {p}")
+            if downloaded_user_data_paths:
+                print(f"[*] Saved {len(downloaded_user_data_paths)} instance user-data file(s) for project {project_id}.")
+            elif any(all_instances.values()):
+                print(f"[*] No user-data keys found in Compute instance metadata for project {project_id}.")
 
     _process_existing_resource(
         selected_key="machine_images",
@@ -1220,6 +1248,16 @@ def run_module(user_args, session):
             print(f"[*] No Compute instance template files were downloaded for project {project_id}.")
         elif selected.get("instance_templates", False):
             print(f"[*] No Compute instance templates were available to download in project {project_id}.")
+    if getattr(args, "download_user_data", False) and selected.get("instance_templates", False):
+        ud_paths: list[str] = []
+        for row in template_rows:
+            ud_paths.extend(str(p) for p in templates_resource.download_user_data(row=row, project_id=project_id))
+        for p in ud_paths:
+            print(f"[*] Wrote Compute instance template user-data to {p}")
+        if ud_paths:
+            print(f"[*] Saved {len(ud_paths)} instance template user-data file(s) for project {project_id}.")
+        elif template_rows:
+            print(f"[*] No user-data keys found in Compute instance template metadata for project {project_id}.")
 
     _process_existing_resource(
         selected_key="snapshots",

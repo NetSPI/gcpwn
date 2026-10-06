@@ -223,7 +223,14 @@ def resolve_regions_from_module_data(
 
     preferred = getattr(getattr(session, "workspace_config", None), "preferred_regions", None)
     if preferred:
-        return [str(region).strip() for region in preferred if str(region).strip()]
+        candidates = [str(region).strip() for region in preferred if str(region).strip()]
+        # Intersect with service-specific valid locations so cross-service locations
+        # (e.g. KMS multi-region "nam7") don't cause 400 errors for other services.
+        if discovery is not None or service:
+            known = set(_known())
+            if known:
+                candidates = [r for r in candidates if r in known]
+        return candidates or _known() or [default_region]
 
     return _known() or [default_region]
 

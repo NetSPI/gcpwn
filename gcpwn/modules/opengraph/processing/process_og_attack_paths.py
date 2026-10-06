@@ -15,9 +15,10 @@ import argparse
 from pathlib import Path
 
 from gcpwn.core.console import UtilityTools
-from gcpwn.modules.opengraph.utilities.helpers.pathfinding.model import AttackGraph
+from gcpwn.modules.opengraph.utilities.helpers.pathfinding.model import BASIC_ROLE_RANK, AttackGraph
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.render import (
     describe_target,
+    hop_count,
     paths_to_json,
     render_report,
 )
@@ -85,7 +86,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enumerate every path, not just the shortest one per principal (slower)",
     )
     search.add_argument("--max-depth", type=int, default=0, help="Max hops to follow (default: 12 shortest / 8 all-paths)")
-    search.add_argument("--max-paths", type=int, default=250, help="Cap on paths reported in --all-paths mode (default: 250)")
+    search.add_argument("--max-paths", type=int, default=500, help="Cap on paths reported in --all-paths mode (default: 500)")
     search.add_argument(
         "--max-expansions",
         type=int,
@@ -102,12 +103,26 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip Google-managed service agents as path sources (cuts a lot of expected-by-design noise)",
     )
+    search.add_argument(
+        "--no-direct",
+        action="store_true",
+        help="Exclude paths where the principal directly holds the IAM binding (hop count == 0); show only privilege-escalation paths",
+    )
+    search.add_argument(
+        "--upgrade-only",
+        action="store_true",
+        help=(
+            "When targeting a basic role (roles/owner, roles/editor, roles/viewer), exclude paths "
+            "where the source already holds a basic role of equal or higher privilege. "
+            "Only meaningful with --to-role; other target types are unaffected."
+        ),
+    )
 
     output = parser.add_argument_group("Output")
     output.add_argument(
-        "--compact",
+        "--expanded",
         action="store_true",
-        help="Collapsed view: fold binding/CAP nodes into logical hops (default shows every raw node and edge)",
+        help="Show every raw node and edge including binding/CAP plumbing nodes (default: logical-hop collapsed view)",
     )
     output.add_argument(
         "--summary",
@@ -249,6 +264,49 @@ def run_module(user_args, session):
         )
         mode = "shortest-path per principal"
 
+    if args.no_direct:
+        before = len(paths)
+        paths = [p for p in paths if hop_count(graph, p) > 0]
+        if not args.as_json:
+            removed = before - len(paths)
+            if removed:
+                print(f"[*] --no-direct: removed {removed} direct path(s) (principal holds binding with no priv-esc hops)")
+
+    if args.upgrade_only:
+        before = len(paths)
+
+        def _project_of_scope(scope: str | None) -> str | None:
+            if not scope:
+                return None
+            s = scope.strip().lower()
+            if s.startswith("projects/"):
+                return "projects/" + s[len("projects/"):].split("/")[0]
+            return None
+
+        def _is_upgrade(path) -> bool:
+            target_role = graph.role_of_binding(path.target) if graph.is_binding(path.target) else None
+            if target_role not in BASIC_ROLE_RANK:
+                return True  # not a basic-role target; don't filter
+            target_rank = BASIC_ROLE_RANK[target_role]
+            target_project = _project_of_scope(graph.scope_of_binding(path.target))
+            for held_role, held_scope in graph.basic_roles_held(path.source):
+                held_rank = BASIC_ROLE_RANK.get(held_role, 0)
+                # Only suppress when source has a STRICTLY higher rank in the same project.
+                # Same-rank same-project is kept (different identity gaining that role is interesting).
+                # Cross-project is always kept.
+                if held_rank > target_rank and target_project and _project_of_scope(held_scope) == target_project:
+                    return False
+            return True
+
+        paths = [p for p in paths if _is_upgrade(p)]
+        if not args.as_json:
+            removed = before - len(paths)
+            if removed:
+                print(
+                    f"[*] --upgrade-only: removed {removed} path(s) where the source already holds "
+                    f"a basic role of equal or higher privilege than the target"
+                )
+
     query = {
         "description": target_set.description,
         "target_count": len(target_set.node_ids),
@@ -257,6 +315,8 @@ def run_module(user_args, session):
         "max_paths": args.max_paths if args.all_paths else None,
         "include_containment": bool(args.include_containment),
         "exclude_service_agents": bool(args.exclude_service_agents),
+        "no_direct": bool(args.no_direct),
+        "upgrade_only": bool(args.upgrade_only),
         "truncated": truncated,
     }
 
@@ -268,7 +328,7 @@ def run_module(user_args, session):
             paths,
             config=config,
             query=query,
-            expand=not args.compact,
+            expand=bool(args.expanded),
             truncated=truncated,
             detail_limit=args.max_paths,
             summary_only=args.summary,

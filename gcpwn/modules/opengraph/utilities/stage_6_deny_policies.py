@@ -42,12 +42,35 @@ def _split_semicolon(value: Any) -> list[str]:
     return normalized_token_list(str(value or "").split(";"))
 
 
+def _normalize_permission(perm: str) -> str:
+    """Convert API-host permission format to the short form used in og_defined_edges.json.
+
+    GCP IAM v2 stores permissions as ``<service>.googleapis.com/<resource>.<verb>``
+    (e.g. ``iam.googleapis.com/serviceAccounts.actAs``) while every edge rule and
+    the OG edge property use the short form ``<service>.<resource>.<verb>``
+    (e.g. ``iam.serviceAccounts.actAs``).  Without this normalization the set
+    intersection ``edge_perms & rule.permissions`` is always empty and deny
+    policies can never filter any edge.
+    """
+    p = perm.strip()
+    if ".googleapis.com/" in p:
+        service, remainder = p.split(".googleapis.com/", 1)
+        return f"{service}.{remainder}"
+    return p
+
+
+_DENY_ALL_SENTINEL = "__deny_all__"
+
+
 def _principal_node_id(deny_principal: str) -> str:
     """Map an IAM deny principal identifier to the graph's principal node id (best-effort)."""
     token = str(deny_principal or "").strip()
     if not token:
         return ""
     low = token.lower()
+    # principalSet://goog/public:all means "every authenticated principal"
+    if "public:all" in low or low in ("allAuthenticatedUsers", "allauthenticatedusers"):
+        return _DENY_ALL_SENTINEL
     if "serviceaccounts/" in low or ".iam.gserviceaccount.com" in low:
         email = token.rstrip("/").rsplit("/", 1)[-1]
         return f"serviceAccount:{email}" if "@" in email else ""
@@ -145,7 +168,7 @@ def _load_deny_rules(context, engine: StatementConditionalsEngine) -> list[_Deny
             continue
         denied = {nid for p in _split_semicolon(row.get("denied_principals")) if (nid := _principal_node_id(p))}
         exempt = {nid for p in _split_semicolon(row.get("exception_principals")) if (nid := _principal_node_id(p))}
-        perms = set(_split_semicolon(row.get("denied_permissions")))
+        perms = {_normalize_permission(p) for p in _split_semicolon(row.get("denied_permissions")) if p}
         try:
             raw_rules = json.loads(row.get("rules_json") or "[]")
         except Exception:
@@ -217,7 +240,7 @@ def apply_deny_policies(context) -> dict[str, int]:
         for rule in rules:
             if not (edge_perms & rule.permissions):
                 continue
-            if principal not in rule.denied:
+            if principal not in rule.denied and _DENY_ALL_SENTINEL not in rule.denied:
                 continue
             if not rule.covers(scope_chain, expand_inheritance):
                 continue

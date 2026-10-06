@@ -263,6 +263,8 @@ def build_scope_and_resource_indexes(
     secretsmanager_secrets_rows: Iterable[dict[str, Any]] | None = None,
     cloudrun_services_rows: Iterable[dict[str, Any]] | None = None,
     cloudrun_jobs_rows: Iterable[dict[str, Any]] | None = None,
+    gke_clusters_rows: Iterable[dict[str, Any]] | None = None,
+    gkehub_memberships_rows: Iterable[dict[str, Any]] | None = None,
 ) -> ScopeResourceIndexes:
     """Build reusable scope/resource indexes from hierarchy + flattened IAM member rows.
 
@@ -537,6 +539,49 @@ def build_scope_and_resource_indexes(
                 "resource_type": "cloudrunjob",
                 "display_name": _scope_leaf(job_name),
                 "project_id": project_id,
+            }
+        )
+
+    # Seed enumerated GKE clusters as "k8scluster" targets for CREATE_POD_STEAL_SA_TOKEN,
+    # IMPERSONATE_SYSTEM_MASTERS_GROUP, ESCALATE_GKE_RBAC_AS_SA and similar PE rules.
+    for row in gke_clusters_rows or []:
+        cluster_name = str(row.get("name") or "").strip()
+        if not cluster_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_key_tuple = (cluster_name, "k8scluster", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": cluster_name,
+                "resource_type": "k8scluster",
+                "display_name": str(row.get("cluster_id") or _scope_leaf(cluster_name)),
+                "project_id": project_id,
+                "status": str(row.get("status") or "").strip().upper(),
+            }
+        )
+
+    # Seed enumerated GKEHub memberships as "fleetmembership" targets for
+    # CREATE_RESOURCE_VIA_FLEET_GATEWAY, MODIFY_FLEET_CLUSTER_RESOURCE_PUT, and
+    # MODIFY_FLEET_CLUSTER_RESOURCE_PATCH PE rules.
+    for row in gkehub_memberships_rows or []:
+        membership_name = str(row.get("name") or "").strip()
+        if not membership_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        resource_key_tuple = (membership_name, "fleetmembership", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": membership_name,
+                "resource_type": "fleetmembership",
+                "display_name": str(row.get("membership_id") or _scope_leaf(membership_name)),
+                "project_id": project_id,
+                "status": str(row.get("state") or "").strip().upper(),
             }
         )
 

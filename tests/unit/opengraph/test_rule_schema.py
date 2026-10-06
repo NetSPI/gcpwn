@@ -282,6 +282,17 @@ def _load_json():
     return json.loads(p.read_text())
 
 
+def _flatten_rules(val: dict) -> dict:
+    """Flatten a category dict, handling optional service sub-groups."""
+    out = {}
+    for name, rule in val.items():
+        if isinstance(rule, dict) and ("permissions" in rule or "requires" in rule):
+            out[name] = rule
+        elif isinstance(rule, dict):
+            out.update(_flatten_rules(rule))
+    return out
+
+
 def _all_rules(d: dict) -> dict:
     """Merge rules from all categories (skipping _schema / collapsed_role_edges)."""
     non_cat = {"_schema", "collapsed_role_edges", "rules"}
@@ -290,7 +301,7 @@ def _all_rules(d: dict) -> dict:
     merged = {}
     for key, val in d.items():
         if key not in non_cat and isinstance(val, dict):
-            merged.update(val)
+            merged.update(_flatten_rules(val))
     return merged
 
 
@@ -330,9 +341,11 @@ def test_live_json_all_expected_rules_present():
 
 def test_live_json_categories_correct():
     d = _load_json()
-    # CAN_READ_SECRET_DATA must be in sensitive_resource_access, not priv_escalation
-    assert "CAN_READ_SECRET_DATA" in d["sensitive_resource_access"]
-    assert "CAN_READ_SECRET_DATA" not in d["priv_escalation"]
+    # CAN_READ_SECRET_DATA must be in sensitive_resource_access (possibly nested), not priv_escalation
+    sra_rules = _flatten_rules(d["sensitive_resource_access"])
+    assert "CAN_READ_SECRET_DATA" in sra_rules
+    pe_rules = _flatten_rules(d["priv_escalation"])
+    assert "CAN_READ_SECRET_DATA" not in pe_rules
     # priv_escalation holds the bulk of the rules
     assert len(d["priv_escalation"]) > 10
 
@@ -365,7 +378,8 @@ def test_live_json_no_old_keys():
     ),
     (
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
-        ["run.services.create", "iam.serviceAccounts.actAs"],
+        ["run.services.create", "artifactregistry.repositories.downloadArtifacts",
+         "iam.serviceAccounts.actAs"],
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
     ),
@@ -398,11 +412,12 @@ def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo
     ), f"{rule_name}: combo edge {combo_edge!r} does not reach SA {sa_node!r}"
 
 
-@pytest.mark.parametrize("rule_name,perms,subject_edge,combo_edge", [
+@pytest.mark.parametrize("rule_name,perms,vm_status,subject_edge,combo_edge", [
     (
         "RESET_COMPUTE_STARTUP_SA",
         ["compute.instances.get", "compute.instances.setMetadata",
          "compute.instances.reset", "iam.serviceAccounts.actAs"],
+        "RUNNING",
         "RESET_COMPUTE_STARTUP_SA",
         "RESET_COMPUTE_STARTUP_SA",
     ),
@@ -410,14 +425,21 @@ def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo
         "START_COMPUTE_STARTUP_SA",
         ["compute.instances.get", "compute.instances.setMetadata",
          "compute.instances.start", "iam.serviceAccounts.actAs"],
+        "STOPPED",
         "START_COMPUTE_STARTUP_SA",
         "START_COMPUTE_STARTUP_SA",
     ),
+    (
+        "IAP_TUNNEL_TO_VM_SA",
+        ["iap.tunnelInstances.accessViaIAP", "compute.instances.get"],
+        "RUNNING",
+        "IAP_TUNNEL_TO_VM_SA",
+        "IAP_TUNNEL_TO_VM_SA",
+    ),
 ])
-def test_compute_combo_rules_produce_correct_edges(rule_name, perms, subject_edge, combo_edge):
+def test_compute_combo_rules_produce_correct_edges(rule_name, perms, vm_status, subject_edge, combo_edge):
     """Compute startup-script rules: require a running/stopped VM resource in the DB
     for the subject-group target_selector to match."""
-    vm_status = "RUNNING" if "compute.instances.reset" in perms else "STOPPED"
     tables = {
         "iam_allow_policies": [
             _project_policy("projects/proj-a/roles/combo"),

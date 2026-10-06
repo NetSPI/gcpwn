@@ -85,3 +85,4 @@ scratchpad_live/
 
 # Live privilege-escalation validation results (may contain real token snippets / env details)
 privesc-validation/
+permission-research/

@@ -78,6 +78,9 @@ RESOURCE_TOKEN_TO_NODE_TYPE: dict[str, str] = {
     "vmmigrationmigratingvm": "GCPVMMigrationMigratingVm",
     "bqsparkprocedure": "GCPBQSparkProcedure",
     "apigateway": "GCPApiGateway",
+    # GKE cluster and GKEHub fleet membership (targets for GKE/GKEHub PE edges).
+    "k8scluster": "GCPGKECluster",
+    "fleetmembership": "GCPFleetMembership",
 }
 
 

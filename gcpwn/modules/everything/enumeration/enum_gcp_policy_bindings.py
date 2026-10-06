@@ -5,7 +5,7 @@ import importlib
 import traceback
 
 from gcpwn.core.utils.resume import RunLedger, resolve_run_token
-from gcpwn.modules.everything.utilities.iam_policy_bindings import IAMPolicyBindingsResource
+from gcpwn.modules.everything.utilities.helpers import IAMPolicyBindingsResource
 
 _LEDGER_TABLE = "policy_bindings_ledger"
 

@@ -193,6 +193,11 @@ def _attack_hops(hops: list[Hop]) -> tuple[list[Hop], Hop | None]:
     return hops, None
 
 
+def hop_count(graph: AttackGraph, path: RawPath) -> int:
+    """Number of real attack steps in a path (binding/CAP nodes folded out; terminal acquires-role excluded)."""
+    return len(_attack_hops(collapse_path(graph, path))[0])
+
+
 def _terminal_annotation(terminal: Hop | None) -> str:
     if terminal is None:
         return ""

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from gcpwn.core.resource import GcpListResource
-from gcpwn.core.utils.module_helpers import extract_path_segment, region_resolver_for
+from gcpwn.core.utils.module_helpers import extract_path_segment, resolve_regions_args
 
 
 def _data_fusion():
@@ -16,7 +16,7 @@ def _data_fusion():
     return data_fusion_v1
 
 
-resolve_locations = region_resolver_for("datafusion", ("datafusion", "v1"))
+resolve_locations = resolve_regions_args
 
 
 class DataFusionInstancesResource(GcpListResource):

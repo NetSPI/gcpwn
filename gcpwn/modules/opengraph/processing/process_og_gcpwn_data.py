@@ -1172,7 +1172,9 @@ def run_module(user_args, session):
     exported_path = ""
 
     if should_run_graph_build:
-        run_all_steps = not any([args.groups, args.iam_bindings, args.inferred_permissions, args.resource_expansion])
+        # resource_expansion depends on all prior stages, so it must not suppress run_all_steps;
+        # --resource-expansion alone means "run everything and include resource expansion".
+        run_all_steps = not any([args.groups, args.iam_bindings, args.inferred_permissions])
         if args.cond_eval:
             print("[*] --cond-eval enabled in pass-through mode; condition filters currently return input scopes unchanged.")
 

@@ -99,6 +99,7 @@ def test_key_multi_binding_builder_skips_unsupported_rule_names() -> None:
     # Use CREATE_CLOUDRUN_SERVICE_AS_SA (via=capability) so no resource is needed.
     matching_permissions = {
         "run.services.create",
+        "artifactregistry.repositories.downloadArtifacts",
         "iam.serviceAccounts.actAs",
     }
     entries = [

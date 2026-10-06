@@ -144,6 +144,54 @@ def _metadata_only_payload(payload: dict[str, Any] | None, *, nested_key: str | 
     return source.get("metadata") or {}
 
 
+# Keys in instance metadata that contain executable startup content (not config).
+# Maps key name -> file extension for the saved loot file.
+_USER_DATA_KEYS: dict[str, str] = {
+    "startup-script":               ".sh",
+    "startup-script-url":           ".txt",
+    "user-data":                    ".txt",   # cloud-init
+    "windows-startup-script-cmd":   ".cmd",
+    "windows-startup-script-ps1":   ".ps1",
+    "windows-startup-script-bat":   ".bat",
+    "windows-startup-script-url":   ".txt",
+    "sysprep-specialize-script-ps1": ".ps1",
+    "sysprep-specialize-script-cmd": ".cmd",
+    "sysprep-specialize-script-bat": ".bat",
+}
+
+
+def _download_user_data_from_items(
+    session,
+    *,
+    project_id: str,
+    resource_id: str,
+    items: list[dict],
+    subdirs: list[str],
+) -> list["Path"]:
+    """Extract _USER_DATA_KEYS from a metadata items list and write each to a loot file.
+
+    Returns the list of Paths written (empty when nothing matched or every value was blank).
+    """
+    paths: list[Path] = []
+    for item in items or []:
+        key = str(item.get("key") or "").strip()
+        ext = _USER_DATA_KEYS.get(key)
+        if ext is None:
+            continue
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        dest = _compute_download_path(
+            session,
+            project_id=project_id,
+            filename=f"{resource_id}_{key}{ext}",
+            subdirs=subdirs,
+        )
+        dest.write_text(value, encoding="utf-8")
+        paths.append(dest)
+    return paths
+
+
 # Taken from code snippet at https://cloud.google.com/compute/docs/instances/stop-start-instance
 def wait_for_extended_operation(
     operation: ExtendedOperation, verbose_name: str = "operation", timeout: int = 480
@@ -1275,6 +1323,23 @@ class CloudComputeProjectsResource:
             subdirs=["projects"],
         )
 
+    def download_user_data(self, *, row: Any, project_id: str) -> list[Path]:
+        """Extract startup-script / user-data keys from project common_instance_metadata."""
+        if _download_budget(self, "_user_data_budget", self.session, label="compute project user data").exceeded():
+            return []
+        payload = resource_to_dict(row)
+        if not payload:
+            return []
+        common_meta = payload.get("common_instance_metadata") or {}
+        items = common_meta.get("items") if isinstance(common_meta, dict) else None
+        return _download_user_data_from_items(
+            self.session,
+            project_id=project_id,
+            resource_id=project_id,
+            items=list(items or []),
+            subdirs=["projects", "user_data"],
+        )
+
 
 class CloudComputeInstancesResource:
     """Enumerate VM instances into ``cloudcompute_instances`` plus the instance exploit/loot hooks.
@@ -1714,6 +1779,35 @@ class CloudComputeInstancesResource:
         if debug:
             print("[DEBUG] Successfully completed instances getScreenshot ..")
         return destination if instance_screenshot_b64 else None
+
+    def download_user_data(self, *, row: Any, project_id: str, zone: str | None = None) -> list[Path]:
+        """Extract startup-script / user-data keys from instance metadata and save each as a text file.
+
+        Saves files as ``<instance_name>_<key>.<ext>`` under user_data/<zone>/ in the loot output.
+        Returns the list of paths written (empty when the instance has no user-data keys).
+        """
+        if _download_budget(self, "_user_data_budget", self.session, label="compute instance user data").exceeded():
+            return []
+        payload = resource_to_dict(row)
+        resource_id = field_from_row(row, payload, "name")
+        if not payload or not resource_id:
+            return []
+        normalized_zone = extract_path_tail(
+            str(zone or payload.get("zone") or ""),
+            default=str(zone or payload.get("zone") or "").strip(),
+        )
+        metadata = payload.get("metadata") or {}
+        items = metadata.get("items") if isinstance(metadata, dict) else None
+        subdirs = ["user_data"]
+        if normalized_zone:
+            subdirs.append(normalized_zone)
+        return _download_user_data_from_items(
+            self.session,
+            project_id=project_id,
+            resource_id=resource_id,
+            items=list(items or []),
+            subdirs=subdirs,
+        )
 
     def save(self, rows, *, project_id: str):
         for row in rows or []:
@@ -2324,6 +2418,25 @@ class CloudComputeInstanceTemplatesResource:
             filename=f"{resource_id}.json",
             payload=_metadata_only_payload(payload, nested_key="properties"),
             subdirs=["instance_templates"],
+        )
+
+    def download_user_data(self, *, row: Any, project_id: str) -> list[Path]:
+        """Extract startup-script / user-data keys from instance template metadata."""
+        if _download_budget(self, "_user_data_budget", self.session, label="compute template user data").exceeded():
+            return []
+        payload = resource_to_dict(row)
+        resource_id = field_from_row(row, payload, "name")
+        if not payload or not resource_id:
+            return []
+        properties = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
+        metadata = properties.get("metadata") or {}
+        items = metadata.get("items") if isinstance(metadata, dict) else None
+        return _download_user_data_from_items(
+            self.session,
+            project_id=project_id,
+            resource_id=resource_id,
+            items=list(items or []),
+            subdirs=["instance_templates", "user_data"],
         )
 
     @staticmethod

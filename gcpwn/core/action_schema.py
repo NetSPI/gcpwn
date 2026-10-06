@@ -82,14 +82,18 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "function_actions_allowed": "cloudfunction",
     # ── G-M ───────────────────────────────────────────────────────────────────
     "gke_actions_allowed": "gke",
+    "gkehub_actions_allowed": "gkehub",
     "iap_actions_allowed": "iap",
     "inframanager_actions_allowed": "inframanager",
     "kms_actions_allowed": "kms",
     "loadbalancing_actions_allowed": "loadbalancing",
+    "managedkafka_actions_allowed": "managedkafka",
     "memorystore_actions_allowed": "redis",
     # ── N-R ───────────────────────────────────────────────────────────────────
     "notebooks_actions_allowed": "notebooks",
+    "oracledatabase_actions_allowed": "oracledatabase",
     "orgpolicy_actions_allowed": "orgpolicy",
+    "parametermanager_actions_allowed": "parametermanager",
     "pubsub_actions_allowed": "pubsub",
     # ── S ─────────────────────────────────────────────────────────────────────
     "secret_actions_allowed": "secrets",
@@ -104,6 +108,7 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "tpu_actions_allowed": "tpu",
     "vertex_actions_allowed": "vertex",
     "vmmigration_actions_allowed": "vmmigration",
+    "vmwareengine_actions_allowed": "vmwareengine",
     "vpc_actions_allowed": "vpc",
     "workstations_actions_allowed": "workstations",
 }

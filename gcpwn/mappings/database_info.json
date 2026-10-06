@@ -3744,6 +3744,367 @@
       "primary_keys": [
         "name"
       ]
+    },
+    {
+      "table_name": "gkehub_memberships",
+      "columns": [
+        "project_id",
+        "location",
+        "membership_id",
+        "name",
+        "state",
+        "cluster_link",
+        "create_time",
+        "update_time",
+        "description",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "gkehub_scopes",
+      "columns": [
+        "project_id",
+        "scope_id",
+        "name",
+        "state",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "gkehub_rbac_bindings",
+      "columns": [
+        "project_id",
+        "scope_name",
+        "binding_id",
+        "name",
+        "user",
+        "group_user",
+        "predefined_role",
+        "state",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmwareengine_private_clouds",
+      "columns": [
+        "project_id",
+        "location",
+        "private_cloud_id",
+        "name",
+        "state",
+        "type",
+        "uid",
+        "vcenter_fqdn",
+        "nsx_fqdn"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmwareengine_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "private_cloud",
+        "state",
+        "uid",
+        "management"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "vmwareengine_hcx_activation_keys",
+      "columns": [
+        "project_id",
+        "location",
+        "hcx_key_id",
+        "name",
+        "private_cloud",
+        "state",
+        "uid",
+        "activation_key"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "oracle_autonomous_databases",
+      "columns": [
+        "project_id",
+        "location",
+        "db_id",
+        "name",
+        "display_name",
+        "state",
+        "db_workload",
+        "cpu_core_count",
+        "data_storage_size_gb"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "oracle_exadata_infras",
+      "columns": [
+        "project_id",
+        "location",
+        "exadata_id",
+        "name",
+        "display_name",
+        "state",
+        "shape"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "oracle_vm_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "display_name",
+        "state",
+        "exadata_infrastructure",
+        "cpu_core_count"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "managedkafka_clusters",
+      "columns": [
+        "project_id",
+        "location",
+        "cluster_id",
+        "name",
+        "state",
+        "bootstrap_address"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "managedkafka_topics",
+      "columns": [
+        "project_id",
+        "location",
+        "topic_id",
+        "name",
+        "cluster",
+        "partition_count",
+        "replication_factor"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "managedkafka_consumer_groups",
+      "columns": [
+        "project_id",
+        "location",
+        "group_id",
+        "name",
+        "cluster"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "parametermanager_parameters",
+      "columns": [
+        "project_id",
+        "parameter_id",
+        "name",
+        "format",
+        "create_time",
+        "update_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "parametermanager_parameter_versions",
+      "columns": [
+        "project_id",
+        "parameter_id",
+        "version_id",
+        "name",
+        "parameter",
+        "state",
+        "create_time"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "bigqueryconnection_connections",
+      "columns": [
+        "project_id",
+        "location",
+        "connection_id",
+        "name",
+        "friendly_name",
+        "description",
+        "connection_type",
+        "has_credential",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "securesourcemanager_instances",
+      "columns": [
+        "project_id",
+        "location",
+        "instance_id",
+        "name",
+        "state",
+        "kms_key",
+        "html_uri",
+        "api_uri",
+        "git_http_uri",
+        "git_ssh_uri",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "securesourcemanager_repositories",
+      "columns": [
+        "project_id",
+        "location",
+        "instance_id",
+        "repository_id",
+        "name",
+        "description",
+        "service_account",
+        "html_uri",
+        "clone_http_uri",
+        "clone_ssh_uri",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "developerconnect_connections",
+      "columns": [
+        "project_id",
+        "location",
+        "connection_id",
+        "name",
+        "connection_provider",
+        "installation_state",
+        "disabled",
+        "reconciling",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "developerconnect_repo_links",
+      "columns": [
+        "project_id",
+        "location",
+        "connection_id",
+        "link_id",
+        "name",
+        "clone_uri",
+        "git_proxy_uri",
+        "reconciling",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "privateca_pools",
+      "columns": [
+        "project_id",
+        "location",
+        "pool_id",
+        "name",
+        "tier",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "privateca_certificate_authorities",
+      "columns": [
+        "project_id",
+        "location",
+        "pool_id",
+        "ca_id",
+        "name",
+        "state",
+        "type",
+        "tier",
+        "ca_certificate_description",
+        "key_algorithm",
+        "gcs_bucket",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
     }
   ]
 }
