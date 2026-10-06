@@ -9,7 +9,7 @@ google-api-python-client==2.201.0
 google-auth-httplib2==0.4.4
 
 # Google Cloud Python libraries
-google-cloud-aiplatform==1.163.0
+google-cloud-aiplatform==2.3.0
 google-cloud-alloydb==0.11.3
 google-cloud-api-gateway==1.18.0
 google-cloud-api-keys==0.9.1
