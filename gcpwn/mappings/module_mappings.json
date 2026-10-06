@@ -401,6 +401,11 @@
             "module_name": "exploit_gcp_setiampolicy",
             "info_blurb": "Unified SetIamPolicy helper. Prompts for the service/resource (or accepts flags) and adds a binding for a given member+role (defaults to session email + a service-appropriate admin role). Supports Resource Manager, Storage, Compute, Functions, Secrets, Cloud Run, Artifact Registry, KMS, Pub/Sub, Spanner, Service Directory, and Cloud Tasks.",
             "location": "gcpwn.modules.everything.exploit.exploit_gcp_setiampolicy"
+          },
+          {
+            "module_name": "exploit_gcp_updatepolicybinding",
+            "info_blurb": "Exploit GCP Principal Access Boundary (PAB) policy binding manipulation. Actions: list (enumerate existing PAB bindings), delete (remove a restrictive binding to unleash a high-priv SA), update (swap the binding's PAB policy reference to a permissive one), create (add a new permissive PAB binding that bypasses restrictive ones via union semantics). Requires resourcemanager.{projects|folders|organizations}.{create|update|delete}PolicyBinding. Use --service project|folder|org and --action list|delete|update|create.",
+            "location": "gcpwn.modules.everything.exploit.exploit_gcp_updatepolicybinding"
           }
         ],
         "Processing": [
@@ -432,6 +437,32 @@
             "module_name": "enum_gke",
             "info_blurb": "Enumerate GKE clusters across locations (defaults to locations/-). Use --get to fetch per-cluster metadata.",
             "location": "gcpwn.modules.gcp.gke.enumeration.enum_gke"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_gke_cluster_sa",
+            "info_blurb": "PE via GKE: steal SA token from pod metadata server (container.pods.create) or impersonate system:masters group (container.clusters.impersonate) to gain cluster-admin.",
+            "location": "gcpwn.modules.gcp.gke.exploit.exploit_gke_cluster_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "GKE Hub",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_gkehub",
+            "info_blurb": "Enumerate GKE Hub (Fleet) resources: memberships (enrolled clusters), scopes, and RBAC role bindings.",
+            "location": "gcpwn.modules.gcp.gkehub.enumeration.enum_gkehub"
+          }
+        ],
+        "Exploit": [
+          {
+            "module_name": "exploit_gkehub_gateway_as_sa",
+            "info_blurb": "PE via GKE Hub Connect Gateway: POST/PUT/PATCH K8s resources to a fleet-enrolled cluster via the Connect Gateway; created pods read the metadata server to steal the cluster SA OAuth token.",
+            "location": "gcpwn.modules.gcp.gkehub.exploit.exploit_gkehub_gateway_as_sa"
           }
         ]
       }
@@ -1122,6 +1153,102 @@
             "module_name": "exploit_datafusion_instance_as_sa",
             "info_blurb": "Privilege escalation via Cloud Data Fusion: create a CDAP pipeline that reads IMDS and POSTs the target SA token to a callback URL. REQUIRES datafusion.instances.create + iam.serviceAccounts.actAs on target SA. Note: instance creation takes 45-90 minutes.",
             "location": "gcpwn.modules.gcp.clouddatafusion.exploit.exploit_datafusion_instance_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "VMware Engine",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_vmwareengine",
+            "info_blurb": "Enumerate VMware Engine private clouds and clusters. Exposes NSX/vCenter FQDNs required for READ_VMWARE_NSX_CREDENTIALS and READ_VMWARE_VCENTER_CREDENTIALS SRA edges.",
+            "location": "gcpwn.modules.gcp.vmwareengine.enumeration.enum_vmwareengine"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Oracle Database",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_oracledatabase",
+            "info_blurb": "Enumerate Oracle Autonomous Databases, Exadata Infrastructures, and Cloud VM Clusters. Exposes resources needed for GENERATE_ORACLE_AUTONOMOUS_DB_WALLET SRA edge.",
+            "location": "gcpwn.modules.gcp.oracledatabase.enumeration.enum_oracledatabase"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Managed Kafka",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_managedkafka",
+            "info_blurb": "Enumerate Managed Apache Kafka clusters, topics, and consumer groups.",
+            "location": "gcpwn.modules.gcp.managedkafka.enumeration.enum_managedkafka"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Parameter Manager",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_parametermanager",
+            "info_blurb": "Enumerate Parameter Manager parameters and versions (GCP secrets/config store; parameter versions may contain plaintext secrets readable with parametermanager.parameterVersions.get).",
+            "location": "gcpwn.modules.gcp.parametermanager.enumeration.enum_parametermanager"
+          }
+        ]
+      }
+    },
+    {
+      "service": "BigQuery Connection",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_bigqueryconnection",
+            "info_blurb": "Enumerate BigQuery external data connections (Cloud SQL, Cloud Resource SA, AWS, Azure, Spark, Salesforce). Each connection stores external credentials or is backed by a GCP service account \u2014 list reveals which SAs have cross-service data access.",
+            "location": "gcpwn.modules.gcp.bigqueryconnection.enumeration.enum_bigqueryconnection"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Secure Source Manager",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_securesourcemanager",
+            "info_blurb": "Enumerate Secure Source Manager instances (managed Git hosting environments) and their repositories. Source code = secrets/infra configs. Supports testIamPermissions on both instances and repositories.",
+            "location": "gcpwn.modules.gcp.securesourcemanager.enumeration.enum_securesourcemanager"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Developer Connect",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_developerconnect",
+            "info_blurb": "Enumerate Developer Connect OAuth connections to GitHub, GitLab, Bitbucket, and Secure Source Manager, plus linked Git repository links. Reveals which external SCM repos and OAuth grants are linked to the project.",
+            "location": "gcpwn.modules.gcp.developerconnect.enumeration.enum_developerconnect"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Certificate Authority Service",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_privateca",
+            "info_blurb": "Enumerate Private CA Service CA pools and certificate authorities. CA pool access (privateca.caPools.use) = cert issuance = TLS identity forgery for internal mTLS-protected services. Supports testIamPermissions on CA pools.",
+            "location": "gcpwn.modules.gcp.privateca.enumeration.enum_privateca"
           }
         ]
       }

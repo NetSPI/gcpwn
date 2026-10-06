@@ -22,8 +22,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
+import ssl
 import sys
 import threading
+import time
 from collections import defaultdict
 from time import perf_counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -83,13 +86,27 @@ def stop_on_denied() -> bool:
     return _STOP_ON_DENIED.is_set()
 
 try:  # pragma: no cover
-    from google.api_core.exceptions import Forbidden as _Forbidden, NotFound as _NotFound
+    from google.api_core.exceptions import BadRequest as _BadRequest, Forbidden as _Forbidden, NotFound as _NotFound
 
     _FORBIDDEN_EXCEPTIONS = (_Forbidden,)
     _NOTFOUND_EXCEPTIONS = (_NotFound,)
+    _BAD_REQUEST_EXCEPTIONS = (_BadRequest,)
 except Exception:  # pragma: no cover
     _FORBIDDEN_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _NOTFOUND_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+    _BAD_REQUEST_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+
+_BILLING_DISABLED_SUBSTRINGS = (
+    "Billing is disabled",
+    "billing has not been enabled",
+    "billing account",
+)
+
+_INVALID_LOCATION_SUBSTRINGS = (
+    "invalid location",
+    "malformed name",
+    "location_id refers to a google cloud region",
+)
 
 
 _STANDARD_ARGUMENT_SPECS = {
@@ -172,6 +189,17 @@ def handle_service_error(
         if not quiet_not_found:
             UtilityTools.print_404_resource(not_found_label or resource_name)
         return None
+    # Billing-disabled 400s are project-wide; stop the region fan-out immediately.
+    # Invalid-location 400s (e.g. multi-region names like "nam7" that a sub-API rejects)
+    # are per-location; skip quietly so the remaining regions still run.
+    if _BAD_REQUEST_EXCEPTIONS and isinstance(exc, _BAD_REQUEST_EXCEPTIONS):
+        msg = str(exc).lower()
+        if any(s.lower() in msg for s in _BILLING_DISABLED_SUBSTRINGS):
+            print(f"{UtilityTools.YELLOW}[*] Billing disabled for project {project_id or resource_name}; "
+                  f"skipping remaining locations for {api_name}.{UtilityTools.RESET}")
+            return "Not Enabled" if return_not_enabled else None
+        if any(s.lower() in msg for s in _INVALID_LOCATION_SUBSTRINGS):
+            return None  # silently skip; multi-region location not supported by this resource type
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
 
@@ -419,6 +447,15 @@ def handle_discovery_error(
     if status == 404:
         UtilityTools.print_404_resource(resource_name)
         return None
+    if status == 400:
+        msg = _message.lower()
+        if any(s.lower() in msg for s in _BILLING_DISABLED_SUBSTRINGS):
+            project_id = getattr(session, "project_id", None)
+            print(f"{UtilityTools.YELLOW}[*] Billing disabled for project {project_id or resource_name}; "
+                  f"skipping remaining locations for {api_name}.{UtilityTools.RESET}")
+            return "Not Enabled"
+        if any(s.lower() in msg for s in _INVALID_LOCATION_SUBSTRINGS):
+            return None  # silently skip; multi-region location not supported by this resource type
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
 
@@ -431,12 +468,22 @@ def paged_list(
     """Drain a discovery-API paginated list into one flat list of item dicts.
 
     ``request_builder(page_token)`` must return an executable request for that
-    page; this loops on ``nextPageToken`` and accumulates ``resp[items_key]``."""
+    page; this loops on ``nextPageToken`` and accumulates ``resp[items_key]``.
+
+    SSL/socket errors on the first page are retried once (0.5 s delay) to
+    handle httplib2 connection-pool reuse after the remote has closed the
+    keepalive connection."""
     output: list[dict[str, Any]] = []
     page_token: str | None = None
     while True:
         req = request_builder(page_token)
-        resp = req.execute()
+        try:
+            resp = req.execute()
+        except (ssl.SSLError, socket.error) as exc:
+            if page_token is not None:
+                raise  # mid-pagination: don't retry, let the caller handle it
+            time.sleep(0.5)
+            resp = request_builder(page_token).execute()
         items = resp.get(items_key, []) if isinstance(resp, dict) else []
         if isinstance(items, list):
             output.extend([item for item in items if isinstance(item, dict)])

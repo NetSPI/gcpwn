@@ -16,6 +16,10 @@ from gcpwn.modules.gcp.cloudsql.utilities.helpers import (
 
 # Framework-driven components (real list/get/save). connections/configs are
 # post-process views over cached instances -> handled as tails below.
+def _instance_runnable(row: dict) -> bool:
+    return str(row.get("state") or "").upper() == "RUNNABLE"
+
+
 COMPONENTS = [
     Component("instances", CloudSqlInstancesResource, "Cloud SQL Instances", "Instances",
               help_text="Enumerate Cloud SQL instances", scope=PROJECT, primary_sort_key="name", supports_iam=False,
@@ -23,11 +27,11 @@ COMPONENTS = [
     Component("databases", CloudSqlDatabasesResource, "Cloud SQL Databases", "Databases",
               help_text="Enumerate Cloud SQL databases (per instance)", scope=NESTED, parent_key="instances",
               dependency_label="Instances", save_parent_kwarg="instance", primary_sort_key="instance",
-              supports_get=False, supports_iam=False),
+              supports_get=False, supports_iam=False, parent_filter=_instance_runnable),
     Component("users", CloudSqlUsersResource, "Cloud SQL Users", "Users",
               help_text="Enumerate Cloud SQL users (per instance)", scope=NESTED, parent_key="instances",
               dependency_label="Instances", save_parent_kwarg="instance", primary_sort_key="instance",
-              supports_get=False, supports_iam=False),
+              supports_get=False, supports_iam=False, parent_filter=_instance_runnable),
 ]
 
 ALL_KEYS = ["instances", "connections", "configs", "databases", "users"]

@@ -201,6 +201,11 @@ _PREFERRED_RULE_RESOURCE_TOKENS: frozenset[str] = frozenset(
         "bigquerytable",
         "bigqueryroutine",
         "cloudbuildbuild",
+        # GKE cluster and fleet membership targets for GKE/GKEHub PE edges.
+        # Without these, rules with on="k8scluster"/"fleetmembership" silently
+        # fall back to ALL project resources, generating thousands of false-positive edges.
+        "k8scluster",
+        "fleetmembership",
     }
 )
 

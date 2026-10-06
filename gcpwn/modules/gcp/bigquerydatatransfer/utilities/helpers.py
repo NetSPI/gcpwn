@@ -6,12 +6,13 @@ from google.cloud import bigquery_datatransfer_v1
 
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.module_helpers import (
+    extract_path_segment,
     extract_path_tail,
-    region_resolver_for,
+    resolve_regions_args,
 )
 
 
-resolve_locations = region_resolver_for("bigquerydatatransfer", ("bigquerydatatransfer", "v1"))
+resolve_locations = resolve_regions_args
 
 
 class BigQueryDataTransferConfigsResource(GcpListResource):
@@ -51,8 +52,11 @@ class BigQueryDataTransferConfigsResource(GcpListResource):
         return bigquery_datatransfer_v1.DataTransferServiceClient(credentials=session.credentials)
 
     def _list_items(self, parent, **_):
+        project_id = extract_path_segment(str(parent or ""), "projects") or ""
         return self.client.list_transfer_configs(
-            request=bigquery_datatransfer_v1.ListTransferConfigsRequest(parent=parent)
+            request=bigquery_datatransfer_v1.ListTransferConfigsRequest(
+                parent=f"projects/{project_id}"
+            )
         )
 
     def _get_item(self, resource_id, **_):

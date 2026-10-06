@@ -14,6 +14,16 @@ _NON_CATEGORY_KEYS: frozenset[str] = frozenset({"_schema", "collapsed_role_edges
 
 
 def _as_rule_mapping(value: Any) -> dict[str, dict[str, Any]]:
+    """Flatten a category dict into ``{edge_name: rule}``.
+
+    Supports two layouts transparently:
+    - Flat: ``{"EDGE_NAME": {rule}, ...}``
+    - Service-grouped: ``{"compute": {"EDGE_NAME": {rule}, ...}, ...}``
+
+    A service-group sub-key is detected when its value is a dict that contains
+    no ``"permissions"`` or ``"requires"`` key at the top level — i.e. it is a
+    group of rules rather than a rule itself.
+    """
     if not isinstance(value, dict):
         return {}
     output: dict[str, dict[str, Any]] = {}
@@ -21,7 +31,11 @@ def _as_rule_mapping(value: Any) -> dict[str, dict[str, Any]]:
         name = str(raw_name or "").strip()
         if not name or not isinstance(raw_rule, dict):
             continue
-        output[name] = dict(raw_rule)
+        if "permissions" in raw_rule or "requires" in raw_rule or "requires_groups" in raw_rule:
+            output[name] = dict(raw_rule)
+        else:
+            # Service-group sub-dict — recurse one level and merge.
+            output.update(_as_rule_mapping(raw_rule))
     return output
 
 
@@ -76,8 +90,8 @@ def load_privilege_escalation_rules(
             if isinstance(val, dict):
                 all_raw.update(_as_rule_mapping(val))
 
-    single_rules = {n: r for n, r in all_raw.items() if not r.get("requires")}
-    multi_rules = {n: r for n, r in all_raw.items() if r.get("requires")}
+    single_rules = {n: r for n, r in all_raw.items() if not r.get("requires") and not r.get("requires_groups")}
+    multi_rules = {n: r for n, r in all_raw.items() if r.get("requires") or r.get("requires_groups")}
     return (
         single_rules,
         multi_rules,

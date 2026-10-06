@@ -130,6 +130,10 @@ class OpenGraphBuildContext:
         "workspace_group_settings": "workspace_group_settings",
         # Drive file exposure -> CAN_READ edges for public / anyone-with-link files.
         "workspace_drive_files": "workspace_drive_files",
+        # GKE clusters and GKEHub memberships -> seed k8scluster/fleetmembership
+        # resource types so PE edge rules can find them as targets.
+        "gke_clusters": "gke_clusters",
+        "gkehub_memberships": "gkehub_memberships",
     }
 
     def _fetch_rows_for_key(self, key: str) -> list[dict[str, Any]]:
@@ -252,6 +256,8 @@ class OpenGraphBuildContext:
             secretsmanager_secrets_rows=self.rows("secretsmanager_secrets"),
             cloudrun_services_rows=self.rows("cloudrun_services"),
             cloudrun_jobs_rows=self.rows("cloudrun_jobs"),
+            gke_clusters_rows=self.rows("gke_clusters"),
+            gkehub_memberships_rows=self.rows("gkehub_memberships"),
         )
         return self._scope_resource_indexes_cache
 

@@ -5,11 +5,11 @@ from google.cloud import alloydb_v1
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
-    region_resolver_for,
+    resolve_regions_args,
 )
 
 
-resolve_locations = region_resolver_for("alloydb", ("alloydb", "v1"))
+resolve_locations = resolve_regions_args
 
 
 class AlloyDBClustersResource(GcpListResource):

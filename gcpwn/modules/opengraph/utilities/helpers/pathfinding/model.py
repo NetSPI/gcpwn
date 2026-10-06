@@ -32,6 +32,9 @@ BINDING_KINDS = frozenset({"GCPIamSimpleBinding", "GCPIamMultiBinding"})
 # Edges that attach a principal to a binding node (the "has this role" half).
 GRANT_EDGE_KINDS = frozenset({"HAS_IAM_BINDING", "HAS_COMBO_BINDING", "HasImpliedPermissions"})
 
+# Basic roles, ranked by privilege level (owner > editor > viewer).
+BASIC_ROLE_RANK: dict[str, int] = {"roles/owner": 3, "roles/editor": 2, "roles/viewer": 1}
+
 # Top-down containment (Project -> child resource). Semantically true but it
 # multiplies path counts enormously, so traversal skips it unless asked.
 CONTAINMENT_EDGE_KINDS = frozenset({"ExistsInProject"})
@@ -348,6 +351,19 @@ class AttackGraph:
             elif value and needle in str(value).lower():
                 return True
         return False
+
+    def basic_roles_held(self, node_id: str) -> frozenset[tuple[str, str | None]]:
+        """(role, scope) pairs for basic roles node_id directly holds via IAM binding edges."""
+        held: set[tuple[str, str | None]] = set()
+        for neighbor, edge_index in self.adj.get(node_id, []):
+            if self.edges[edge_index]["kind"] not in GRANT_EDGE_KINDS:
+                continue
+            if not self.is_binding(neighbor):
+                continue
+            role = self.role_of_binding(neighbor)
+            if role and role in BASIC_ROLE_RANK:
+                held.add((role, self.scope_of_binding(neighbor)))
+        return frozenset(held)
 
     def find_role_bindings(self, roles: Iterable[str]) -> list[str]:
         """Binding nodes whose role matches any of ``roles`` (exact or suffix)."""

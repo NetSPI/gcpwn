@@ -14,11 +14,12 @@ from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
     extract_project_id_from_resource,
     region_resolver_for,
+    resolve_regions_args,
 )
 
 # ── Dataflow (GAPIC) ──────────────────────────────────────────────────────────
 
-resolve_locations = region_resolver_for("dataflow", ("dataflow", "v1b3"))
+resolve_locations = resolve_regions_args
 
 
 class DataflowJobsResource(GcpListResource):
@@ -49,15 +50,17 @@ class DataflowJobsResource(GcpListResource):
     def _list_items(self, parent, **_):
         project_id = extract_path_segment(str(parent or ""), "projects") or ""
         location = extract_path_segment(str(parent or ""), "locations") or ""
+        use_aggregated = not location or location == "-"
         for view in (dataflow_v1beta3.JobView.JOB_VIEW_ALL, dataflow_v1beta3.JobView.JOB_VIEW_SUMMARY):
             try:
                 request = dataflow_v1beta3.ListJobsRequest(
                     project_id=project_id,
-                    location=location,
                     filter=dataflow_v1beta3.ListJobsRequest.Filter.ALL,
                     view=view,
+                    **({} if use_aggregated else {"location": location}),
                 )
-                return list(self.client.list_jobs(request=request))
+                list_fn = self.client.aggregated_list_jobs if use_aggregated else self.client.list_jobs
+                return list(list_fn(request=request))
             except Exception:
                 if view == dataflow_v1beta3.JobView.JOB_VIEW_SUMMARY:
                     raise  # a real error (denied/disabled) -> let the base handle it

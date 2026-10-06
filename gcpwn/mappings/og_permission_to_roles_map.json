@@ -285,6 +285,13 @@
     "roles/iam.securityAdmin",
     "roles/owner"
   ],
+  "artifactregistry.repositories.downloadArtifacts": [
+    "roles/artifactregistry.admin",
+    "roles/artifactregistry.editor",
+    "roles/artifactregistry.reader",
+    "roles/artifactregistry.repoAdmin",
+    "roles/owner"
+  ],
   "artifactregistry.repositories.setIamPolicy": [
     "roles/admin",
     "roles/artifactregistry.admin",
@@ -1342,6 +1349,21 @@
     "roles/vpcaccess.serviceAgent",
     "roles/workstations.serviceAgent",
     "roles/writer"
+  ],
+  "compute.instances.osAdminLogin": [
+    "roles/admin",
+    "roles/owner",
+    "roles/compute.admin",
+    "roles/compute.instanceAdmin.v1",
+    "roles/compute.osAdminLogin"
+  ],
+  "compute.instances.osLogin": [
+    "roles/admin",
+    "roles/owner",
+    "roles/compute.admin",
+    "roles/compute.instanceAdmin.v1",
+    "roles/compute.osAdminLogin",
+    "roles/compute.osLogin"
   ],
   "compute.instances.reset": [
     "roles/admin",

@@ -69,6 +69,11 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("cloud_kms", "--cloud-kms"),
     ("artifact_registry", "--artifact-registry"),
     ("gke", "--gke"),
+    ("gkehub", "--gkehub"),
+    ("vmware_engine", "--vmware-engine"),
+    ("oracle_database", "--oracle-database"),
+    ("managed_kafka", "--managed-kafka"),
+    ("parameter_manager", "--parameter-manager"),
     ("cloud_build", "--cloud-build"),
     ("cloud_composer", "--cloud-composer"),
     ("cloud_tasks", "--cloud-tasks"),
@@ -105,6 +110,11 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("cloud_tpu", "--cloud-tpu"),
     ("vertex_ai", "--vertex-ai"),
     ("vm_migration", "--vm-migration"),
+    ("bigquery_connection", "--bigquery-connection"),
+
+    ("secure_source_manager", "--secure-source-manager"),
+    ("developer_connect", "--developer-connect"),
+    ("private_ca", "--private-ca"),
 )
 
 # Umbrella / once-per-run selectors that aren't in _PARALLEL_SERVICES but are still
@@ -142,6 +152,11 @@ _MODULE_TOKEN_ALIASES: dict[str, str] = {
     "kms": "cloud_kms",
     "artifactregistry": "artifact_registry", "ar": "artifact_registry",
     "kubernetes": "gke",
+    "fleet": "gkehub",
+    "vmwareengine": "vmware_engine", "vmware": "vmware_engine",
+    "oracledb": "oracle_database", "oracle": "oracle_database",
+    "kafka": "managed_kafka", "managedkafka": "managed_kafka",
+    "parametermanager": "parameter_manager", "params": "parameter_manager",
     "build": "cloud_build",
     "composer": "cloud_composer",
     "tasks": "cloud_tasks",
@@ -173,6 +188,11 @@ _MODULE_TOKEN_ALIASES: dict[str, str] = {
     "tpu": "cloud_tpu",
     "vertex": "vertex_ai", "vertexai": "vertex_ai",
     "vmmigration": "vm_migration", "migrate": "vm_migration",
+    "bqconnection": "bigquery_connection", "bigqueryconnection": "bigquery_connection",
+
+    "ssm": "secure_source_manager", "securesourcemanager": "secure_source_manager",
+    "developerconnect": "developer_connect", "devconnect": "developer_connect",
+    "privateca": "private_ca", "certificateauthority": "private_ca", "cas": "private_ca",
 }
 
 
@@ -256,6 +276,11 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "cloud_kms": ("cloudkms.googleapis.com",),
     "artifact_registry": ("artifactregistry.googleapis.com",),
     "gke": ("container.googleapis.com",),
+    "gkehub": ("gkehub.googleapis.com", "connectgateway.googleapis.com"),
+    "vmware_engine": ("vmwareengine.googleapis.com",),
+    "oracle_database": ("oracledatabase.googleapis.com",),
+    "managed_kafka": ("managedkafka.googleapis.com",),
+    "parameter_manager": ("parametermanager.googleapis.com",),
     "cloud_build": ("cloudbuild.googleapis.com",),
     "cloud_composer": ("composer.googleapis.com",),
     "cloud_tasks": ("cloudtasks.googleapis.com",),
@@ -288,6 +313,11 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "cloud_tpu": ("tpu.googleapis.com",),
     "vertex_ai": ("aiplatform.googleapis.com",),
     "vm_migration": ("vmmigration.googleapis.com",),
+    "bigquery_connection": ("bigqueryconnection.googleapis.com",),
+
+    "secure_source_manager": ("securesourcemanager.googleapis.com",),
+    "developer_connect": ("developerconnect.googleapis.com",),
+    "private_ca": ("privateca.googleapis.com",),
 }
 
 # Under --filter-enabled-services these run REGARDLESS of the enabled-API probe:
@@ -366,6 +396,7 @@ _SERVICES: tuple[ServiceSpec, ...] = (
                 threads=True, regions=True, zones=True, iam=True, download_output=True,
                 downloads=((("compute_screenshot",), ("--take-screenshot",)),
                            (("compute_serial",), ("--download-serial",)),
+                           (("compute_user_data",), ("--download-user-data",)),
                            (("compute_artifacts",), ("--download",)))),
     ServiceSpec(("cloud_compute", "cloud_compute_network"), "gcpwn.modules.gcp.cloudcompute.enumeration.enum_cloudcompute_network",
                 threads=True, regions=True, iam=True),
@@ -400,6 +431,14 @@ _SERVICES: tuple[ServiceSpec, ...] = (
     ServiceSpec(("artifact_registry",), "gcpwn.modules.gcp.artifactregistry.enumeration.enum_artifactregistry",
                 threads=True, regions=True, downloads=((("artifactregistry_files",), ("--download",)),)),
     ServiceSpec(("gke",), "gcpwn.modules.gcp.gke.enumeration.enum_gke", threads=True, regions=True),
+    ServiceSpec(("gkehub",), "gcpwn.modules.gcp.gkehub.enumeration.enum_gkehub"),
+    ServiceSpec(("vmware_engine",), "gcpwn.modules.gcp.vmwareengine.enumeration.enum_vmwareengine",
+                threads=True, regions=True),
+    ServiceSpec(("oracle_database",), "gcpwn.modules.gcp.oracledatabase.enumeration.enum_oracledatabase",
+                threads=True, regions=True),
+    ServiceSpec(("managed_kafka",), "gcpwn.modules.gcp.managedkafka.enumeration.enum_managedkafka",
+                threads=True, regions=True),
+    ServiceSpec(("parameter_manager",), "gcpwn.modules.gcp.parametermanager.enumeration.enum_parametermanager"),
     ServiceSpec(("cloud_build",), "gcpwn.modules.gcp.cloudbuild.enumeration.enum_cloudbuild",
                 threads=True, regions=True, downloads=((("cloudbuild_builds",), ("--download",)),)),
     ServiceSpec(("cloud_composer",), "gcpwn.modules.gcp.cloudcomposer.enumeration.enum_cloudcomposer",
@@ -465,6 +504,15 @@ _SERVICES: tuple[ServiceSpec, ...] = (
                 regions=True),
     ServiceSpec(("vm_migration",), "gcpwn.modules.gcp.vmmigration.enumeration.enum_vmmigration_resources",
                 regions=True),
+    ServiceSpec(("bigquery_connection",), "gcpwn.modules.gcp.bigqueryconnection.enumeration.enum_bigqueryconnection",
+                threads=True, regions=True, iam=True),
+
+    ServiceSpec(("secure_source_manager",), "gcpwn.modules.gcp.securesourcemanager.enumeration.enum_securesourcemanager",
+                threads=True, regions=True, iam=True),
+    ServiceSpec(("developer_connect",), "gcpwn.modules.gcp.developerconnect.enumeration.enum_developerconnect",
+                threads=True, regions=True),
+    ServiceSpec(("private_ca",), "gcpwn.modules.gcp.privateca.enumeration.enum_privateca",
+                threads=True, regions=True, iam=True),
 )
 
 
@@ -584,6 +632,11 @@ _SERVICE_NAME_OVERRIDES = {
     "enum_tpu": "Cloud TPU",
     "enum_vertex": "Vertex AI",
     "enum_vmmigration_resources": "VM Migration",
+    "enum_bigqueryconnection": "BigQuery Connection",
+
+    "enum_securesourcemanager": "Secure Source Manager",
+    "enum_developerconnect": "Developer Connect",
+    "enum_privateca": "Certificate Authority Service",
 }
 
 DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
@@ -594,6 +647,7 @@ DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
         "cloudtasks_requests",
         "cloudrun_revision_env",
         "clouddns_record_sets",
+
     },
     "content": {
         "buckets",
@@ -603,6 +657,7 @@ DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
         "bigquery_tables",
         "compute_serial",
         "compute_screenshot",
+        "compute_user_data",
         "artifactregistry_files",
         "batch_scripts",
         "apikeys_content",
@@ -831,8 +886,11 @@ def _resolve_effective_allowlist_scope(
     }
 
 
-def _count_non_rm_service_plan(args, *, every_flag_missing: bool, first_run: bool, last_run: bool, more: bool) -> int:
-    count = sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing))
+def _count_non_rm_service_plan(args, *, every_flag_missing: bool, first_run: bool, last_run: bool, more: bool,
+                               enabled_keys: "set[str] | None" = None) -> int:
+    def _api_ok(spec: "ServiceSpec") -> bool:
+        return enabled_keys is None or any(gate in enabled_keys for gate in spec.gate_flags)
+    count = sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing) and _api_ok(spec))
     count += int(first_run and args.workspace_identity)
     count += int(last_run and not more)
     return count
@@ -1060,7 +1118,7 @@ def run_parallel(session, user_args, explicit_project_ids=None, *, include_works
     pipelined binding units (``__bindings__`` per project plus ``__hierarchy__``)
     -- are recorded in enum_all_task_ledger and skipped on re-run.
     """
-    from gcpwn.modules.everything.utilities.iam_policy_bindings import (
+    from gcpwn.modules.everything.utilities.helpers import (
         IAMPolicyBindingsResource,
         materialize_member_permissions,
     )
@@ -1784,6 +1842,23 @@ def run_module(user_args, session):
     # shared _ENUM_PROGRESS counter/banner there (the orchestrator owns progress).
     suppress_progress = bool(getattr(session, "_enum_all_suppress_progress", False))
 
+    # Probe enabled APIs before computing the step count so the banner reflects
+    # the filtered set. Runs while _ENUM_PROGRESS["enabled"] is False so the
+    # probe's own _run_other_module call doesn't increment the counter.
+    enabled_keys: set[str] | None = None
+    if do_services and getattr(args, "filter_enabled_services", False):
+        enabled_keys = _enabled_service_gate_keys(session, str(session.project_id or ""))
+        if enabled_keys is None:
+            print(f"{UtilityTools.YELLOW}[*] --filter-enabled-services: enabled-API probe found nothing for "
+                  f"{session.project_id}; falling back to enumerating all services.{UtilityTools.RESET}")
+        else:
+            enabled_names = sorted({_module_display_name(k) for k in enabled_keys if k not in _ALWAYS_ENABLED_KEYS})
+            print(f"[*] --filter-enabled-services: {len(enabled_names)} enabled service(s) for {session.project_id}: "
+                  f"{', '.join(enabled_names) or '(none beyond foundational)'}")
+
+    def _service_api_enabled(spec: "ServiceSpec") -> bool:
+        return enabled_keys is None or any(gate in enabled_keys for gate in spec.gate_flags)
+
     planned_services = 0
     planned_services += int(
         do_rm
@@ -1794,7 +1869,10 @@ def run_module(user_args, session):
             or allowlist_requested
         )
     )
-    planned_services += sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing))
+    planned_services += sum(
+        1 for spec in _SERVICES
+        if _service_selected(spec, args, every_flag_missing) and _service_api_enabled(spec)
+    )
     planned_services += int(first_run and args.workspace_identity)
     planned_services += int(last_run)
 
@@ -1894,6 +1972,7 @@ def run_module(user_args, session):
             first_run=first_run,
             last_run=last_run,
             more=more,
+            enabled_keys=enabled_keys,
         )
     else:
         remaining_services = int(last_run and not more)
@@ -1907,22 +1986,6 @@ def run_module(user_args, session):
     if do_rm and run_non_rm_for_project and first_run and args.workspace_identity:
         module_args = ["-v"] if args.debug else []
         _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_google_workspace")
-
-    # --filter-enabled-services: probe this project's ENABLED APIs once, then run only the
-    # services whose API is enabled. None -> probe failed/empty, so fall back to run all.
-    enabled_keys: set[str] | None = None
-    if run_services and getattr(args, "filter_enabled_services", False):
-        enabled_keys = _enabled_service_gate_keys(session, str(session.project_id or ""))
-        if enabled_keys is None:
-            print(f"{UtilityTools.YELLOW}[*] --filter-enabled-services: enabled-API probe found nothing for "
-                  f"{session.project_id}; falling back to enumerating all services.{UtilityTools.RESET}")
-        else:
-            enabled_names = sorted({_module_display_name(k) for k in enabled_keys if k not in _ALWAYS_ENABLED_KEYS})
-            print(f"[*] --filter-enabled-services: {len(enabled_names)} enabled service(s) for {session.project_id}: "
-                  f"{', '.join(enabled_names) or '(none beyond foundational)'}")
-
-    def _service_api_enabled(spec: "ServiceSpec") -> bool:
-        return enabled_keys is None or any(gate in enabled_keys for gate in spec.gate_flags)
 
     # Per-project resource enumerators -> one declarative table (see _SERVICES).
     for spec in _SERVICES:

@@ -8,7 +8,7 @@ exercised -- we only assert which tables/filters each scope selects.
 
 from __future__ import annotations
 
-from gcpwn.modules.everything.utilities.iam_policy_bindings import IAMPolicyBindingsResource
+from gcpwn.modules.everything.utilities.helpers import IAMPolicyBindingsResource
 
 
 class _RecordingSession:

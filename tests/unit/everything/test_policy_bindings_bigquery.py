@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gcpwn.modules.everything.utilities.iam_policy_bindings import IAMPolicyBindingsResource
+from gcpwn.modules.everything.utilities.helpers import IAMPolicyBindingsResource
 
 bigquery = pytest.importorskip("google.cloud.bigquery")
 

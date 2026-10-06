@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gcpwn.modules.everything.utilities.iam_policy_bindings import IAMPolicyBindingsResource
+from gcpwn.modules.everything.utilities.helpers import IAMPolicyBindingsResource
 
 
 def test_key_iam_policy_bindings_append_member_existing_role() -> None:

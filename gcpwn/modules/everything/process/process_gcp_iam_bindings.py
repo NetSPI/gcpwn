@@ -3,7 +3,7 @@ import traceback
 
 from gcpwn.core.console import UtilityTools
 from gcpwn.modules.everything.utilities.helpers import generate_summary_of_roles_or_vulns
-from gcpwn.modules.everything.utilities.iam_policy_bindings import (
+from gcpwn.modules.everything.utilities.helpers import (
     IAMPolicyBindingsResource,
     materialize_member_permissions,
 )

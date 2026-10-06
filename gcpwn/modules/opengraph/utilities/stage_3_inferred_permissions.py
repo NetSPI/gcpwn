@@ -1006,6 +1006,10 @@ def build_iam_inferred_permissions_graph(context) -> dict[str, int | bool]:
     before_nodes, before_edges = context.counts()
     cats = getattr(getattr(context, "options", None), "edge_categories", None)
     inferred_single_rules, inferred_multi_rules = load_normalized_dangerous_rules_by_family(categories=cats or None)
+    include_all = bool(getattr(getattr(context, "options", None), "include_all", False))
+    if not include_all:
+        inferred_single_rules = tuple(r for r in inferred_single_rules if not r.get("include_all_only"))
+        inferred_multi_rules = tuple(r for r in inferred_multi_rules if not r.get("include_all_only"))
     entries, entry_metadata = build_inferred_entries(context)
     print(
         "[*] Stage 3 tally: "
