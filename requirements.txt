@@ -4,7 +4,7 @@ pandas==3.0.6
 requests==2.34.2
 
 # Google API / auth libraries
-google-api-core==2.40.0
+google-api-core==2.41.0
 google-api-python-client==2.201.0
 google-auth-httplib2==0.4.4
 
