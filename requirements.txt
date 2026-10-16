@@ -4,12 +4,12 @@ pandas==3.0.6
 requests==2.34.2
 
 # Google API / auth libraries
-google-api-core==2.40.0
+google-api-core==2.42.0
 google-api-python-client==2.201.0
 google-auth-httplib2==0.4.4
 
 # Google Cloud Python libraries
-google-cloud-aiplatform==2.3.0
+google-cloud-aiplatform==2.4.0
 google-cloud-alloydb==0.11.3
 google-cloud-api-gateway==1.18.0
 google-cloud-api-keys==0.9.1
@@ -20,7 +20,7 @@ google-cloud-batch==0.22.4
 google-cloud-bigquery==3.46.1
 google-cloud-bigquery-connection==1.23.0
 google-cloud-bigquery-datatransfer==3.24.0
-google-cloud-bigtable==2.49.0
+google-cloud-bigtable==2.50.0
 google-cloud-billing==1.21.0
 google-cloud-build==3.40.0
 google-cloud-compute==1.55.0
@@ -34,7 +34,7 @@ google-cloud-dataproc==5.31.0
 google-cloud-deploy==2.12.0
 google-cloud-dns==0.37.2
 google-cloud-eventarc==1.22.0
-google-cloud-firestore==2.34.0
+google-cloud-firestore==2.34.1
 google-cloud-functions==1.25.0
 google-cloud-developerconnect==0.6.1
 google-cloud-gke-hub==1.26.0
@@ -53,7 +53,7 @@ google-cloud-orchestration-airflow==1.23.0
 google-cloud-org-policy==1.19.0
 google-cloud-pubsub==2.42.0
 google-cloud-redis==2.23.0
-google-cloud-redis-cluster==0.5.3
+google-cloud-redis-cluster==0.5.4
 google-cloud-resource-manager==1.19.0
 google-cloud-run==0.16.2
 google-cloud-scheduler==2.21.0
@@ -62,7 +62,7 @@ google-cloud-service-directory==1.19.0
 google-cloud-service-usage==1.18.0
 google-cloud-shell==1.17.0
 google-cloud-spanner==3.71.0
-google-cloud-storage==3.16.0
+google-cloud-storage==3.17.0
 google-cloud-storage-transfer==1.22.0
 google-cloud-tasks==2.26.0
 google-cloud-tpu==1.28.0
@@ -70,7 +70,7 @@ google-cloud-workflows==1.24.0
 google-cloud-workstations==0.8.2
 
 # VertexAI
-google-genai==2.28.0
+google-genai==2.30.0
 
 # Notes
 # Google Groups / Docs APIs:
