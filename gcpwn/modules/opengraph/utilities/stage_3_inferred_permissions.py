@@ -482,6 +482,7 @@ def augment_scope_resource_indexes(
         allow_resources_by_project=allow_resources_by_project,
         allow_resources_by_project_type=allow_resources_by_project_type,
         resource_sa_by_name=dict(base_indexes.resource_sa_by_name or {}),
+        project_oslogin_by_project_id=dict(base_indexes.project_oslogin_by_project_id or {}),
     )
 
 def implied_scope_for_event(

@@ -278,6 +278,49 @@ class CloudRunJobsResource(_CloudRunResource):
             pass
 
 
+class CloudRunJobExecutionsResource(_CloudRunResource):
+    """Lists executions for an enumerated Cloud Run Job.
+
+    Unlike other resources, executions are per-job, not per-location.
+    Use list_for_job(job_name=...) rather than the standard list() method.
+    """
+    TABLE_NAME = "cloudrun_job_executions"
+    COLUMNS = ["location", "job_name", "execution_id", "name", "running_count",
+               "succeeded_count", "failed_count", "create_time"]
+    CLIENT_ATTR = "ExecutionsClient"
+    LIST_PERMISSION = "run.executions.list"
+    LIST_API_NAME = "run.projects.locations.jobs.executions.list"
+
+    def list_for_job(self, *, job_name: str) -> list[dict[str, Any]]:
+        from google.cloud import run_v2  # type: ignore
+        client = self.client
+        results = []
+        try:
+            for exec_obj in client.list_executions(
+                request=run_v2.ListExecutionsRequest(parent=job_name)
+            ):
+                raw = type(exec_obj).to_dict(exec_obj)
+                location = extract_location_from_resource_name(
+                    str(raw.get("name") or "")
+                )
+                exec_id = extract_path_tail(str(raw.get("name") or ""), default="")
+                create = raw.get("create_time") or ""
+                results.append({
+                    "location": location,
+                    "job_name": job_name,
+                    "execution_id": exec_id,
+                    "name": str(raw.get("name") or ""),
+                    "running_count": str(raw.get("running_count") or 0),
+                    "succeeded_count": str(raw.get("succeeded_count") or 0),
+                    "failed_count": str(raw.get("failed_count") or 0),
+                    "create_time": str(create),
+                    "raw_json": json.dumps(raw, default=str),
+                })
+        except Exception:
+            pass
+        return results
+
+
 class CloudRunWorkerPoolsResource(_CloudRunResource):
     TABLE_NAME = "cloudrun_worker_pools"
     COLUMNS = ["location", "worker_pool_id", "name", "service_account", "min_instance_count", "create_time"]
@@ -330,3 +373,137 @@ class CloudRunWorkerPoolsResource(_CloudRunResource):
             op.result(timeout=120)
         except Exception:  # best-effort
             pass
+
+
+def _extract_worker_pool_revision_env_snapshot(revision_row: dict[str, Any], *, project_id: str) -> dict[str, Any]:
+    revision_name = str(revision_row.get("name") or "").strip()
+    location = extract_location_from_resource_name(revision_name)
+    pool_id = extract_path_segment(revision_name, "workerPools")
+    revision_id = extract_path_segment(revision_name, "revisions") or extract_path_tail(revision_name, default="revision")
+
+    container_rows = revision_row.get("containers")
+    if not isinstance(container_rows, list):
+        template = revision_row.get("template")
+        if isinstance(template, dict):
+            nested = template.get("containers")
+            container_rows = nested if isinstance(nested, list) else []
+        else:
+            container_rows = []
+
+    containers: list[dict[str, Any]] = []
+    for idx, container in enumerate(container_rows):
+        if not isinstance(container, dict):
+            continue
+        env_rows = container.get("env")
+        if not isinstance(env_rows, list):
+            env_rows = []
+
+        env_entries: list[dict[str, Any]] = []
+        for env in env_rows:
+            if not isinstance(env, dict):
+                continue
+            entry: dict[str, Any] = {}
+            env_name = str(env.get("name") or "").strip()
+            if env_name:
+                entry["name"] = env_name
+            if "value" in env:
+                entry["value"] = env.get("value")
+            value_source = env.get("value_source") or env.get("valueSource")
+            if value_source not in (None, "", {}):
+                entry["value_source"] = value_source
+            if entry:
+                env_entries.append(entry)
+
+        if not env_entries:
+            continue
+        containers.append(
+            {
+                "name": str(container.get("name") or "").strip() or f"container-{idx}",
+                "image": str(container.get("image") or "").strip(),
+                "env": env_entries,
+            }
+        )
+
+    return {
+        "kind": "CloudRunWorkerPoolRevisionEnvSnapshot",
+        "project_id": str(project_id or "").strip(),
+        "location": location,
+        "worker_pool_id": pool_id,
+        "revision_id": revision_id,
+        "revision_name": revision_name,
+        "containers": containers,
+    }
+
+
+class CloudRunWorkerPoolRevisionsResource(_CloudRunResource):
+    """Lists and downloads env from Cloud Run Worker Pool revisions (REST-only; no SDK client)."""
+
+    TABLE_NAME = ""  # not persisted
+    ACTION_RESOURCE_TYPE = "workerPoolRevisions"
+    LIST_PERMISSION = "run.workerPoolRevisions.list"
+    LIST_API_NAME = "run.projects.locations.workerPools.revisions.list"
+    GET_PERMISSION = "run.workerPoolRevisions.get"
+    GET_API_NAME = "run.projects.locations.workerPools.revisions.get"
+    CLIENT_ATTR = ""
+
+    def _revision_env_download_budget(self) -> DownloadBudget:
+        return lazy_download_budget(self, "cloud run worker pool revision env")
+
+    def _authed_get(self, url: str) -> dict[str, Any]:
+        import urllib.request as _ur
+        from google.auth.transport.requests import Request as _Req
+
+        creds = self.session.credentials
+        if hasattr(creds, "with_scopes") and not getattr(creds, "scopes", None):
+            creds = creds.with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(_Req())
+        req = _ur.Request(url, headers={"Authorization": f"Bearer {creds.token}"})
+        with _ur.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    def list_for_worker_pool(self, *, pool_name: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        url = f"https://run.googleapis.com/v2/{pool_name}/revisions"
+        try:
+            while url:
+                data = self._authed_get(url)
+                for item in data.get("revisions") or []:
+                    results.append(item)
+                page_token = data.get("nextPageToken")
+                if page_token:
+                    base = url.split("?")[0]
+                    url = f"{base}?pageToken={page_token}"
+                else:
+                    url = ""
+        except Exception:
+            pass
+        return results
+
+    def get_revision(self, *, revision_name: str) -> dict[str, Any] | None:
+        try:
+            return self._authed_get(f"https://run.googleapis.com/v2/{revision_name}")
+        except Exception:
+            return None
+
+    def download_env_yaml(self, *, revision_row: dict[str, Any], project_id: str) -> Path | None:
+        if self._revision_env_download_budget().exceeded():
+            return None
+        if not isinstance(revision_row, dict) or not revision_row:
+            return None
+        revision_name = str(revision_row.get("name") or "").strip()
+        if not revision_name:
+            return None
+        snapshot = _extract_worker_pool_revision_env_snapshot(revision_row, project_id=project_id)
+        if not list(snapshot.get("containers") or []):
+            return None
+        filename = compact_filename_component(
+            f"{snapshot.get('location')}_{snapshot.get('worker_pool_id')}_{snapshot.get('revision_id')}_env.yaml"
+        )
+        destination = self.session.get_download_save_path(
+            service_name="cloudrun",
+            project_id=project_id,
+            subdirs=["worker_pool_revisions"],
+            filename=filename,
+        )
+        destination.write_text(_to_yaml_text(snapshot), encoding="utf-8")
+        return destination

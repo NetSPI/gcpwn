@@ -236,6 +236,61 @@ def _invert_permission_to_roles(permission_to_roles: dict[str, list[str]] | None
     return output
 
 
+_CF_BUILD_SA_REQUIRED_PERMS: frozenset[str] = frozenset({
+    "artifactregistry.repositories.downloadArtifacts",
+    "artifactregistry.repositories.uploadArtifacts",
+    "storage.objects.create",
+    "storage.objects.get",
+})
+
+# Predefined roles known to include all 4 CF build SA minimum permissions.
+_CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES: frozenset[str] = frozenset({
+    "roles/owner",
+    "roles/editor",
+    "roles/cloudbuild.builds.builder",
+})
+
+
+def _compute_cf_build_capable_emails(
+    raw_allow_bindings: Iterable[dict[str, Any]] | None,
+    custom_role_perms: dict[str, set[str]],
+) -> frozenset[str]:
+    """Return emails of SAs that have all 4 CF gen1 build SA minimum permissions.
+
+    Checks predefined sufficient roles statically and custom roles via their
+    included_permissions. An SA with all 4 perms can be used as buildServiceAccount.
+    """
+    perms_by_email: dict[str, set[str]] = {}
+    for row in raw_allow_bindings or []:
+        policy_raw = row.get("policy_json")
+        policy = parse_json_value(policy_raw, default=None)
+        if not isinstance(policy, dict):
+            continue
+        for binding in (policy.get("bindings") or []):
+            role = str(binding.get("role") or "").strip()
+            if not role:
+                continue
+            role_perms: set[str] | None = None
+            if role in _CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES:
+                role_perms = set(_CF_BUILD_SA_REQUIRED_PERMS)
+            elif role in custom_role_perms:
+                role_perms = custom_role_perms[role]
+            if not role_perms:
+                continue
+            for member in (binding.get("members") or []):
+                member_str = str(member or "").strip()
+                if not member_str.startswith("serviceAccount:"):
+                    continue
+                email = member_str[len("serviceAccount:"):]
+                if email:
+                    perms_by_email.setdefault(email, set()).update(role_perms)
+    return frozenset(
+        email
+        for email, perms in perms_by_email.items()
+        if _CF_BUILD_SA_REQUIRED_PERMS.issubset(perms)
+    )
+
+
 # Parse custom role rows into role->permissions so custom roles merge cleanly
 # with predefined mapping data.
 def _custom_role_permissions(iam_roles_rows: Iterable[dict[str, Any]] | None) -> dict[str, set[str]]:
@@ -258,13 +313,19 @@ def build_scope_and_resource_indexes(
     hierarchy_data: dict[str, Any] | None,
     flattened_member_rows: Iterable[dict[str, Any]] | None = None,
     cloudcompute_instances_rows: Iterable[dict[str, Any]] | None = None,
+    cloudcompute_projects_rows: Iterable[dict[str, Any]] | None = None,
     service_account_rows: Iterable[dict[str, Any]] | None = None,
     cloudfunctions_functions_rows: Iterable[dict[str, Any]] | None = None,
     secretsmanager_secrets_rows: Iterable[dict[str, Any]] | None = None,
     cloudrun_services_rows: Iterable[dict[str, Any]] | None = None,
     cloudrun_jobs_rows: Iterable[dict[str, Any]] | None = None,
     gke_clusters_rows: Iterable[dict[str, Any]] | None = None,
+    gke_node_pools_rows: Iterable[dict[str, Any]] | None = None,
     gkehub_memberships_rows: Iterable[dict[str, Any]] | None = None,
+    raw_allow_bindings_rows: Iterable[dict[str, Any]] | None = None,
+    iam_custom_roles_rows: Iterable[dict[str, Any]] | None = None,
+    cloudrun_worker_pools_rows: Iterable[dict[str, Any]] | None = None,
+    cloudrun_job_executions_rows: Iterable[dict[str, Any]] | None = None,
 ) -> ScopeResourceIndexes:
     """Build reusable scope/resource indexes from hierarchy + flattened IAM member rows.
 
@@ -281,6 +342,11 @@ def build_scope_and_resource_indexes(
     known_project_ids = set(hierarchy["known_project_ids"]) if hierarchy else set()
     project_id_by_scope_name: dict[str, str] = {}
     project_scope_by_project_id: dict[str, str] = {}
+
+    # Precompute which SA emails have the 4 minimum CF build SA permissions so we
+    # can tag their resource entries with is_cf_build_capable for edge filtering.
+    _custom_role_perms = _custom_role_permissions(iam_custom_roles_rows)
+    _cf_build_capable = _compute_cf_build_capable_emails(raw_allow_bindings_rows, _custom_role_perms)
 
     for scope_name, scope_type in scope_type_by_name.items():
         token = str(scope_name or "").strip()
@@ -313,15 +379,16 @@ def build_scope_and_resource_indexes(
         if resource_key_tuple in seen_resources:
             continue
         seen_resources.add(resource_key_tuple)
-        allow_resources.append(
-            {
-                "resource_name": resource_name,
-                "resource_type": resource_type,
-                "display_name": str(row.get("display_name") or "").strip()
-                or str(scope_display_by_name.get(resource_name) or ""),
-                "project_id": resolved_project_id,
-            }
-        )
+        member_entry: dict[str, Any] = {
+            "resource_name": resource_name,
+            "resource_type": resource_type,
+            "display_name": str(row.get("display_name") or "").strip()
+            or str(scope_display_by_name.get(resource_name) or ""),
+            "project_id": resolved_project_id,
+        }
+        if resource_type == "service-account" and resource_name in _cf_build_capable:
+            member_entry["is_cf_build_capable"] = True
+        allow_resources.append(member_entry)
 
     # Index of resource_name -> list[SA email] so via=resource combo rules can find
     # the resource's own attached SA for the terminal ActAsServiceAccount edge.
@@ -411,14 +478,15 @@ def build_scope_and_resource_indexes(
         if resource_key_tuple in seen_resources:
             continue
         seen_resources.add(resource_key_tuple)
-        allow_resources.append(
-            {
-                "resource_name": email,
-                "resource_type": "service-account",
-                "display_name": email,
-                "project_id": project_id,
-            }
-        )
+        entry: dict[str, Any] = {
+            "resource_name": email,
+            "resource_type": "service-account",
+            "display_name": email,
+            "project_id": project_id,
+        }
+        if email in _cf_build_capable:
+            entry["is_cf_build_capable"] = True
+        allow_resources.append(entry)
 
     # Ensure enumerated Cloud Functions appear as selectable targets for
     # CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM even when the function's IAM policy is empty.
@@ -513,6 +581,16 @@ def build_scope_and_resource_indexes(
             }
         )
 
+    # Pre-build a set of job names that have at least one actively running execution.
+    # Used to tag has_active_execution on cloudrunjob nodes, which gates SSH_CLOUDRUN_JOB_AS_SA.
+    jobs_with_active_execution: set[str] = set()
+    for exec_row in cloudrun_job_executions_rows or []:
+        try:
+            if int(exec_row.get("running_count") or 0) > 0:
+                jobs_with_active_execution.add(str(exec_row.get("job_name") or "").strip())
+        except (ValueError, TypeError):
+            pass
+
     for row in cloudrun_jobs_rows or []:
         job_name = str(row.get("name") or "").strip()
         if not job_name:
@@ -539,11 +617,43 @@ def build_scope_and_resource_indexes(
                 "resource_type": "cloudrunjob",
                 "display_name": _scope_leaf(job_name),
                 "project_id": project_id,
+                "has_active_execution": job_name in jobs_with_active_execution,
             }
         )
 
-    # Seed enumerated GKE clusters as "k8scluster" targets for CREATE_POD_STEAL_SA_TOKEN,
-    # IMPERSONATE_SYSTEM_MASTERS_GROUP, ESCALATE_GKE_RBAC_AS_SA and similar PE rules.
+    for row in cloudrun_worker_pools_rows or []:
+        pool_name = str(row.get("name") or "").strip()
+        if not pool_name:
+            continue
+        project_id = str(row.get("project_id") or "").strip()
+        pool_sa = str(row.get("service_account") or "").strip().lower()
+        if "@" in pool_sa:
+            resource_sa_by_name[pool_name] = [pool_sa]
+        resource_key_tuple = (pool_name, "cloudrunworkerpool", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": pool_name,
+                "resource_type": "cloudrunworkerpool",
+                "display_name": _scope_leaf(pool_name),
+                "project_id": project_id,
+            }
+        )
+
+    # Pre-build a set of cluster names that have at least one node pool with an SA attached.
+    # Used to populate has_node_sa on each k8scluster resource entry, which drives
+    # require_node_sa filtering in edge rules like IMPERSONATE_SYSTEM_MASTERS_GROUP.
+    clusters_with_node_sa: set[str] = set()
+    for np_row in gke_node_pools_rows or []:
+        sa = str(np_row.get("config_service_account") or "").strip()
+        cluster = str(np_row.get("cluster_name") or "").strip()
+        if sa and cluster:
+            clusters_with_node_sa.add(cluster)
+
+    # Seed enumerated GKE clusters as "k8scluster" targets for CREATE_GKE_POD_STEAL_NODE_SA,
+    # IMPERSONATE_SYSTEM_MASTERS_GROUP, and similar PE rules.
     for row in gke_clusters_rows or []:
         cluster_name = str(row.get("name") or "").strip()
         if not cluster_name:
@@ -560,6 +670,11 @@ def build_scope_and_resource_indexes(
                 "display_name": str(row.get("cluster_id") or _scope_leaf(cluster_name)),
                 "project_id": project_id,
                 "status": str(row.get("status") or "").strip().upper(),
+                "resourcedata": {
+                    "has_node_sa": cluster_name in clusters_with_node_sa,
+                    "has_workload_pool": bool(str(row.get("workload_pool") or "").strip()),
+                    "is_autopilot": bool(row.get("is_autopilot")),
+                },
             }
         )
 
@@ -596,6 +711,19 @@ def build_scope_and_resource_indexes(
         if resource_type:
             allow_resources_by_project_type[project_key][resource_type].append(resource)
 
+    project_oslogin_by_project_id: dict[str, bool | None] = {}
+    for row in cloudcompute_projects_rows or []:
+        pid = str(row.get("project_id") or "").strip()
+        if not pid:
+            continue
+        flag = row.get("metadata_enable_os_login")
+        if flag is True or flag == 1:
+            project_oslogin_by_project_id[pid] = True
+        elif flag is False or flag == 0:
+            project_oslogin_by_project_id[pid] = False
+        else:
+            project_oslogin_by_project_id.setdefault(pid, None)
+
     return ScopeResourceIndexes(
         project_scope_by_project_id=project_scope_by_project_id,
         project_id_by_scope_name=project_id_by_scope_name,
@@ -607,6 +735,7 @@ def build_scope_and_resource_indexes(
             for project_id, type_map in allow_resources_by_project_type.items()
         },
         resource_sa_by_name=resource_sa_by_name,
+        project_oslogin_by_project_id=project_oslogin_by_project_id,
     )
 
 

@@ -134,9 +134,11 @@ def test_exists_in_project_edge_for_compute_instance(expansion_context):
 
 def test_executes_with_edge_instance_to_attached_service_account(expansion_context):
     edges = _edges(expansion_context)
-    instance_node = f"resource:{_INSTANCE_RESOURCE}"
+    # RunsAs edge lives on the cap:UPDATE clone node, not the actual resource node.
+    # The resource node (resource:<name>) is a dead end used only as a setIamPolicy target.
+    cap_update_node = f"cap:UPDATE:{_INSTANCE_RESOURCE}"
     sa_node = f"serviceAccount:{_SA_EMAIL}"
-    assert (instance_node, "RunsAs", sa_node) in edges
+    assert (cap_update_node, "RunsAs", sa_node) in edges
     assert _node_types(expansion_context).get(sa_node) == "GCPServiceAccount"
 
 

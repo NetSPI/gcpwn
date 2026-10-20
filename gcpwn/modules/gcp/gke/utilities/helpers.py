@@ -36,7 +36,7 @@ class GkeClustersResource(GcpListResource):
 
     SERVICE_LABEL = "GKE"
     TABLE_NAME = "gke_clusters"
-    COLUMNS = ["location", "cluster_id", "name", "status", "endpoint", "master_version", "node_count", "private_cluster"]
+    COLUMNS = ["location", "cluster_id", "name", "status", "endpoint", "master_version", "node_count", "is_autopilot", "private_cluster", "workload_pool"]
     ACTION_RESOURCE_TYPE = "clusters"
     LIST_PERMISSION = "container.projects.locations.clusters.list"
     GET_PERMISSION = "container.projects.locations.clusters.get"
@@ -66,11 +66,17 @@ class GkeClustersResource(GcpListResource):
 
     def _extra_save_fields(self, raw):
         private_cluster_config = raw.get("private_cluster_config")
+        autopilot = raw.get("autopilot")
+        wif_config = raw.get("workload_identity_config")
         return {
             "private_cluster": bool(private_cluster_config.get("enable_private_nodes"))
             if isinstance(private_cluster_config, dict) else False,
+            "is_autopilot": bool(autopilot.get("enabled"))
+            if isinstance(autopilot, dict) else False,
             "node_count": raw.get("current_node_count") or "",
             "master_version": raw.get("current_master_version") or raw.get("master_version") or "",
+            "workload_pool": str(wif_config.get("workload_pool") or "").strip()
+            if isinstance(wif_config, dict) else "",
         }
 
 
@@ -85,7 +91,7 @@ class GkeNodePoolsResource(GcpListResource):
 
     SERVICE_LABEL = "GKE"
     TABLE_NAME = "gke_node_pools"
-    COLUMNS = ["location", "cluster_name", "node_pool_id", "name", "status", "version", "initial_node_count"]
+    COLUMNS = ["location", "cluster_name", "node_pool_id", "name", "status", "version", "initial_node_count", "config_service_account"]
     ACTION_RESOURCE_TYPE = "node_pools"
     LIST_PERMISSION = "container.projects.locations.clusters.nodePools.list"
     GET_PERMISSION = "container.projects.locations.clusters.nodePools.get"
@@ -116,6 +122,13 @@ class GkeNodePoolsResource(GcpListResource):
 
     def _get_item(self, resource_id, **_):
         return self.client.get_node_pool(name=resource_id)
+
+    def _extra_save_fields(self, raw):
+        config = raw.get("config")
+        return {
+            "config_service_account": config.get("service_account") or ""
+            if isinstance(config, dict) else "",
+        }
 
     def save(self, rows, *, project_id, cluster_name):
         location = extract_location_from_resource_name(cluster_name, include_zones=True)

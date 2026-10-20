@@ -119,6 +119,8 @@ def _parse(block: str, arity: int) -> set[tuple[str, ...]]:
 
 
 GOLDEN_NODES = """
+cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm1	GCPComputeInstance
+cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm2	GCPComputeInstance
 external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPExternalIdentitySource
 group:eng@corp.com	GoogleGroup
 iambinding:projects/proj-a/roles/Custom@project:proj-a	GCPIamSimpleBinding
@@ -164,8 +166,8 @@ resource:projects/proj-a	ExistsInProject	resource:projects/123/locations/global/
 resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm1
 resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm2
 resource:projects/proj-a	ExistsInProject	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-resource:projects/proj-a/zones/us-central1-a/instances/vm1	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-resource:projects/proj-a/zones/us-central1-a/instances/vm2	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm1	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm2	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 serviceAccount:svc@proj-a.iam.gserviceaccount.com	HAS_IAM_BINDING	iambinding:projects/proj-a/roles/Custom@project:proj-a
 service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	ServiceAccountKeyFor	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 user:admin@corp.com	CanImpersonate	user:alice@corp.com

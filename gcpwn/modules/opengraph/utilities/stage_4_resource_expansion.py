@@ -8,6 +8,7 @@ from gcpwn.core.utils.module_helpers import extract_path_segment, extract_path_t
 from gcpwn.core.console import UtilityTools
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     canonical_target_node_ref,
+    cap_update_node_id,
     gcp_resource_node_type,
     normalize_resource_type_token,
     principal_member_properties,
@@ -588,9 +589,8 @@ def _add_compute_executes_with_edges(
         instance_resourcedata = _compute_instance_resourcedata_payload(row)
 
         instance_node_id = resource_node_id(instance_name)
-        context.builder.add_node(
-            instance_node_id,
-            gcp_resource_node_type("computeinstance"),
+        instance_cap_update_id = cap_update_node_id(instance_name)
+        _instance_node_props = dict(
             name=instance_label,
             display_name=instance_label,
             resource_name=instance_name,
@@ -598,8 +598,19 @@ def _add_compute_executes_with_edges(
             project_id=project_id,
             resource_type="computeinstance",
             status=instance_status or None,
-            source="cloudcompute_instances",
             resourcedata=instance_resourcedata or None,
+        )
+        context.builder.add_node(
+            instance_node_id,
+            gcp_resource_node_type("computeinstance"),
+            source="cloudcompute_instances",
+            **_instance_node_props,
+        )
+        context.builder.add_node(
+            instance_cap_update_id,
+            gcp_resource_node_type("computeinstance"),
+            source="cloudcompute_instances",
+            **_instance_node_props,
         )
 
         for email in _extract_compute_instance_service_accounts(row):
@@ -614,11 +625,11 @@ def _add_compute_executes_with_edges(
                 source="cloudcompute_instances",
             )
 
-            edge_key = (instance_node_id, "RunsAs", principal_id)
+            edge_key = (instance_cap_update_id, "RunsAs", principal_id)
             if edge_key in context.builder.edge_map:
                 continue
             context.builder.add_edge(
-                instance_node_id,
+                instance_cap_update_id,
                 principal_id,
                 "RunsAs",
                 source="cloudcompute_instances",
@@ -657,24 +668,43 @@ def _add_cloudrun_runs_as_edges(
             if not email:
                 continue
             resource_node = resource_node_id(resource_name)
+            resource_cap_update = cap_update_node_id(resource_name)
             member = f"serviceAccount:{email}"
             principal_id = principal_node_id(member)
             if not principal_id:
                 continue
+            _cr_source = f"cloudrun_{'jobs' if is_job else 'services'}"
             context.builder.add_node(
                 principal_id,
                 principal_type(member),
                 **principal_member_properties(member),
-                source=f"cloudrun_{'jobs' if is_job else 'services'}",
+                source=_cr_source,
             )
-            edge_key = (resource_node, "RunsAs", principal_id)
+            # Seed the actual resource node so setIamPolicy edges have a target.
+            context.builder.add_node(
+                resource_node,
+                gcp_resource_node_type("cloudrunjob" if is_job else "cloudrunservice"),
+                name=resource_name,
+                resource_name=resource_name,
+                project_id=project_id,
+                source=_cr_source,
+            )
+            context.builder.add_node(
+                resource_cap_update,
+                gcp_resource_node_type("cloudrunjob" if is_job else "cloudrunservice"),
+                name=resource_name,
+                resource_name=resource_name,
+                project_id=project_id,
+                source=_cr_source,
+            )
+            edge_key = (resource_cap_update, "RunsAs", principal_id)
             if edge_key in context.builder.edge_map:
                 continue
             context.builder.add_edge(
-                resource_node,
+                resource_cap_update,
                 principal_id,
                 "RunsAs",
-                source=f"cloudrun_{'jobs' if is_job else 'services'}",
+                source=_cr_source,
                 project_id=project_id,
                 instance_resource=resource_name,
                 service_account_email=email,
@@ -716,6 +746,7 @@ def _add_cloudfunction_runs_as_edges(
         if not email:
             continue
         resource_node = resource_node_id(resource_name)
+        resource_cap_update = cap_update_node_id(resource_name)
         member = f"serviceAccount:{email}"
         principal_id = principal_node_id(member)
         if not principal_id:
@@ -726,11 +757,27 @@ def _add_cloudfunction_runs_as_edges(
             **principal_member_properties(member),
             source="cloudfunctions_functions",
         )
-        edge_key = (resource_node, "RunsAs", principal_id)
+        context.builder.add_node(
+            resource_node,
+            gcp_resource_node_type("cloudfunction"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudfunctions_functions",
+        )
+        context.builder.add_node(
+            resource_cap_update,
+            gcp_resource_node_type("cloudfunction"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudfunctions_functions",
+        )
+        edge_key = (resource_cap_update, "RunsAs", principal_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
-            resource_node,
+            resource_cap_update,
             principal_id,
             "RunsAs",
             source="cloudfunctions_functions",
@@ -763,6 +810,7 @@ def _add_cloudscheduler_runs_as_edges(
         if not email:
             continue
         resource_node = resource_node_id(resource_name)
+        resource_cap_update = cap_update_node_id(resource_name)
         member = f"serviceAccount:{email}"
         principal_id = principal_node_id(member)
         if not principal_id:
@@ -773,11 +821,27 @@ def _add_cloudscheduler_runs_as_edges(
             **principal_member_properties(member),
             source="cloudscheduler_jobs",
         )
-        edge_key = (resource_node, "RunsAs", principal_id)
+        context.builder.add_node(
+            resource_node,
+            gcp_resource_node_type("cloudschedulerjob"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudscheduler_jobs",
+        )
+        context.builder.add_node(
+            resource_cap_update,
+            gcp_resource_node_type("cloudschedulerjob"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudscheduler_jobs",
+        )
+        edge_key = (resource_cap_update, "RunsAs", principal_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
-            resource_node,
+            resource_cap_update,
             principal_id,
             "RunsAs",
             source="cloudscheduler_jobs",
@@ -820,6 +884,7 @@ def _add_cloudworkflows_runs_as_edges(
         if not email or "@" not in email:
             continue
         resource_node = resource_node_id(resource_name)
+        resource_cap_update = cap_update_node_id(resource_name)
         member = f"serviceAccount:{email}"
         principal_id = principal_node_id(member)
         if not principal_id:
@@ -830,11 +895,27 @@ def _add_cloudworkflows_runs_as_edges(
             **principal_member_properties(member),
             source="cloudworkflows_workflows",
         )
-        edge_key = (resource_node, "RunsAs", principal_id)
+        context.builder.add_node(
+            resource_node,
+            gcp_resource_node_type("cloudworkflow"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudworkflows_workflows",
+        )
+        context.builder.add_node(
+            resource_cap_update,
+            gcp_resource_node_type("cloudworkflow"),
+            name=resource_name,
+            resource_name=resource_name,
+            project_id=project_id,
+            source="cloudworkflows_workflows",
+        )
+        edge_key = (resource_cap_update, "RunsAs", principal_id)
         if edge_key in context.builder.edge_map:
             continue
         context.builder.add_edge(
-            resource_node,
+            resource_cap_update,
             principal_id,
             "RunsAs",
             source="cloudworkflows_workflows",

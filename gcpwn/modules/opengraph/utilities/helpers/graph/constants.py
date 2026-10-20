@@ -97,3 +97,30 @@ def load_privilege_escalation_rules(
         multi_rules,
         _as_collapsed_role_mapping(payload.get("collapsed_role_edges")),
     )
+
+
+def load_resource_iam_edge_types() -> frozenset[str]:
+    """Return the set of edge types where sa_token_theft_without_actas is False or 'partial'.
+
+    These are setIamPolicy edges that grant resource-level takeover but do NOT
+    allow reaching the attached SA without actAs.  They are hidden by default
+    and shown only with --include-resource-iam.
+
+    NOTE: ROLE_OWNER/ROLE_EDITOR collapsed edges that arise when the contributor
+    has roles/owner or roles/editor are NOT in this set — those are kept regardless
+    because the broad role already implies actAs on everything in the project.
+    """
+    payload = load_mapping_data(_DEFINED_EDGES_FILE, kind="json")
+    if not isinstance(payload, dict):
+        return frozenset()
+    edge_types: set[str] = set()
+    for key, val in payload.items():
+        if key in _NON_CATEGORY_KEYS or not isinstance(val, dict):
+            continue
+        for rule in _as_rule_mapping(val).values():
+            v = rule.get("sa_token_theft_without_actas")
+            if v is False or v == "partial":
+                et = str(rule.get("edge_type") or "").strip()
+                if et:
+                    edge_types.add(et)
+    return frozenset(edge_types)

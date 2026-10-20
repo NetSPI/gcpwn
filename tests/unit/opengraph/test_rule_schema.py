@@ -320,13 +320,13 @@ def test_live_json_all_expected_rules_present():
         "CAN_MODIFY_PROJECT_IAM", "CAN_MODIFY_FOLDER_IAM", "CAN_MODIFY_ORG_IAM",
         "CAN_MODIFY_SA_IAM", "CAN_MODIFY_COMPUTE_INSTANCE_IAM", "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM",
         "CAN_MODIFY_SECRET_MANAGER_SECRET_IAM", "CAN_IMPERSONATE_SA", "CAN_CREATE_SA_ACCESS_TOKEN",
-        "CAN_CREATE_SA_KEY", "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY",
+        "CAN_CREATE_SA_KEY",
         "CAN_READ_SECRET_DATA",
     }
     expected_multi = {
         "RESET_COMPUTE_STARTUP_SA", "START_COMPUTE_STARTUP_SA",
         "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA", "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-        "CREATE_CLOUDSCHEDULER_JOB_AS_SA", "CREATE_CLOUDBUILD_AS_SA", "CREATE_CLOUDRUN_SERVICE_AS_SA",
+        "CREATE_CLOUDSCHEDULER_JOB_AS_SA", "CREATE_CLOUDBUILD_BUILD_AS_SA", "CREATE_CLOUDRUN_SERVICE_AS_SA",
     }
     for name in expected_single:
         assert name in rules, f"missing single rule: {name}"
@@ -371,10 +371,10 @@ def test_live_json_no_old_keys():
         "CREATE_CLOUDSCHEDULER_JOB_AS_SA",
     ),
     (
-        "CREATE_CLOUDBUILD_AS_SA",
+        "CREATE_CLOUDBUILD_BUILD_AS_SA",
         ["cloudbuild.builds.create", "iam.serviceAccounts.actAs"],
-        "CREATE_CLOUDBUILD_AS_SA",
-        "CREATE_CLOUDBUILD_AS_SA",
+        "CREATE_CLOUDBUILD_BUILD_AS_SA",
+        "CREATE_CLOUDBUILD_BUILD_AS_SA",
     ),
     (
         "CREATE_CLOUDRUN_SERVICE_AS_SA",
@@ -477,7 +477,6 @@ def test_compute_combo_rules_produce_correct_edges(rule_name, perms, vm_status, 
 @pytest.mark.parametrize("rule_name,perm,expected_edge", [
     # Project-scoped rules: no "on" → edge points to the project node (always present).
     ("CAN_MODIFY_PROJECT_IAM", "resourcemanager.projects.setIamPolicy", "CAN_MODIFY_PROJECT_IAM"),
-    ("CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY", "cloudbuild.builds.create", "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY"),
     # SA-scoped rules: "on: service-account" → edge points to the SA node (_sa_policy adds it).
     ("CAN_CREATE_SA_ACCESS_TOKEN", "iam.serviceAccounts.getAccessToken", "CAN_CREATE_SA_ACCESS_TOKEN"),
     ("CAN_CREATE_SA_KEY", "iam.serviceAccountKeys.create", "CAN_CREATE_SA_KEY"),

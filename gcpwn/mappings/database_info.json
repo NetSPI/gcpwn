@@ -1218,6 +1218,7 @@
         "endpoint",
         "master_version",
         "node_count",
+        "is_autopilot",
         "private_cluster",
         "network",
         "subnetwork",
@@ -1242,6 +1243,7 @@
         "version",
         "initial_node_count",
         "config_machine_type",
+        "config_service_account",
         "raw_json"
       ],
       "primary_keys": [

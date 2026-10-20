@@ -5,9 +5,11 @@ import argparse
 from gcpwn.core.utils.enum_framework import REGION, Component, build_extra_args, component_args, run_components
 from gcpwn.core.utils.service_runtime import parallel_map, parse_component_args
 from gcpwn.modules.gcp.cloudrun.utilities.helpers import (
+    CloudRunJobExecutionsResource,
     CloudRunJobsResource,
     CloudRunRevisionsResource,
     CloudRunServicesResource,
+    CloudRunWorkerPoolRevisionsResource,
     CloudRunWorkerPoolsResource,
     resolve_regions,
 )
@@ -51,9 +53,46 @@ def _parse_args(user_args):
         standard_args=("download", "iam", "get"),
         standard_arg_overrides={
             "iam": {"help": "Run TestIamPermissions on Cloud Run services and jobs"},
-            "download": {"help": "Download Cloud Run service revision ENV YAML (run.revisions.list + run.revisions.get)."},
+            "download": {"help": "Download Cloud Run service revision ENV YAML (run.revisions.list + run.revisions.get) and worker pool revision ENV YAML (run.workerPoolRevisions.list + run.workerPoolRevisions.get)."},
         },
     )
+
+
+def _enum_job_executions(session, args, job_rows: list) -> None:
+    """List recent executions for each enumerated Cloud Run Job.
+
+    Stores results in cloudrun_job_executions; running_count > 0 means the job
+    has at least one actively running task instance — used by the graph to gate
+    SSH_CLOUDRUN_JOB_AS_SA edges on has_active_execution.
+    """
+    if not job_rows:
+        return
+    exec_resource = CloudRunJobExecutionsResource(session)
+    all_rows: list[dict] = []
+
+    def _fetch(job_row):
+        job_name = str(job_row.get("name") or "").strip()
+        if not job_name:
+            return []
+        return exec_resource.list_for_job(job_name=job_name)
+
+    results = parallel_map(
+        job_rows,
+        _fetch,
+        threads=getattr(args, "threads", 3),
+        progress_label="Cloud Run Job Executions",
+    )
+    for item in results or []:
+        if item:
+            all_rows.extend(item)
+
+    if all_rows:
+        session.insert_data(
+            CloudRunJobExecutionsResource.TABLE_NAME,
+            all_rows,
+            CloudRunJobExecutionsResource.COLUMNS + ["raw_json"],
+        )
+        print(f"[*] Stored {len(all_rows)} Cloud Run job execution(s).")
 
 
 def _download_revision_env(session, args, service_rows):
@@ -100,6 +139,54 @@ def _download_revision_env(session, args, service_rows):
         print("[*] No Cloud Run services were available for revision download. Use --service-ids or run service enumeration first.")
 
 
+def _download_worker_pool_revision_env(session, args, worker_pool_rows):
+    project_id = session.project_id
+    revisions_resource = CloudRunWorkerPoolRevisionsResource(session)
+    pool_names = [
+        str(row.get("name") or "").strip()
+        for row in worker_pool_rows
+        if isinstance(row, dict) and row.get("name")
+    ]
+    paths = []
+
+    def _safe_revisions(pool_name):
+        try:
+            return (pool_name, revisions_resource.list_for_worker_pool(pool_name=pool_name))
+        except Exception:
+            return (pool_name, None)
+
+    listed = parallel_map(
+        pool_names,
+        _safe_revisions,
+        threads=getattr(args, "threads", 3),
+        progress_label="Cloud Run Worker Pool Revisions",
+    ) if pool_names else []
+
+    for item in listed:
+        if item is None:
+            continue
+        _pool_name, revisions = item
+        if not revisions:
+            continue
+        for revision in revisions:
+            if not isinstance(revision, dict):
+                continue
+            revision_name = str(revision.get("name") or "").strip()
+            if not revision_name:
+                continue
+            revision_full = revisions_resource.get_revision(revision_name=revision_name) or revision
+            path = revisions_resource.download_env_yaml(revision_row=revision_full, project_id=project_id)
+            if path is not None:
+                paths.append(path)
+
+    if paths:
+        for path in paths:
+            print(f"[*] Wrote Cloud Run worker pool revision ENV YAML to {path}")
+        print(f"[*] Downloaded {len(paths)} Cloud Run worker pool revision ENV YAML file(s) for project {project_id}.")
+    elif pool_names:
+        print(f"[*] No Cloud Run worker pool revisions with ENV data were available to download for project {project_id}.")
+
+
 def run_module(user_args, session):
     args = _parse_args(user_args)
     if getattr(args, "download", False):
@@ -110,4 +197,12 @@ def run_module(user_args, session):
 
     if getattr(args, "download", False):
         _download_revision_env(session, args, discovered.get("services", []))
+        worker_pool_rows = discovered.get("worker_pools", [])
+        if worker_pool_rows:
+            _download_worker_pool_revision_env(session, args, worker_pool_rows)
+
+    job_rows = discovered.get("jobs", [])
+    if job_rows:
+        _enum_job_executions(session, args, job_rows)
+
     return 1

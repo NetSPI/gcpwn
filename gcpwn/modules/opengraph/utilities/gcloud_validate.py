@@ -41,7 +41,6 @@ REQUIRED_PERMS = {
     "CAN_MODIFY_SA_IAM":                ["iam.serviceAccounts.setIamPolicy"],
     "CAN_MODIFY_COMPUTE_INSTANCE_IAM":  ["compute.instances.setIamPolicy"],
     "UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS": ["iam.roles.update"],
-    "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY": ["cloudbuild.builds.create"],
     "CAN_READ_SECRET_DATA":             ["secretmanager.versions.access"],
     "CREATE_DATAPROC_CLUSTER_AS_SA":    ["dataproc.clusters.create"],
 }
@@ -333,10 +332,10 @@ SKIP_KINDS = {
 def _is_combo_internal(edge):
     """combo_iambinding→CAP or iambinding→CAP are structural wiring edges with no principal_member."""
     dst = edge["end"]["value"]
-    if not dst.startswith("CAP:"):
+    if not dst.startswith("cap:new:"):
         return False
     src = edge["start"]["value"]
-    if src.startswith("combo_iambinding:"):
+    if src.startswith("combo_iambinding@"):
         return True
     # iambinding:→CAP: structural edge (happens for some project-scoped combo rules)
     if src.startswith("iambinding:"):
@@ -387,7 +386,7 @@ def validate_edge(edge: dict):
         ok, note = check_pe_single(edge, perms)
         return ("pass" if ok else "fail"), note
 
-    if src.startswith("CAP:") or src.startswith("combo_iambinding:"):
+    if src.startswith("cap:new:") or src.startswith("combo_iambinding@"):
         ok, note = check_combo_pe_hop(edge)
         return ("pass" if ok else "fail"), note
 
@@ -416,11 +415,11 @@ def main(graph_file: str, label: str = "") -> int:
         "CAN_SIGN_JWT_AS_SA", "CAN_SIGN_BLOB_AS_SA",
         "CAN_MODIFY_PROJECT_IAM", "CAN_MODIFY_FOLDER_IAM", "CAN_MODIFY_ORG_IAM",
         "CAN_MODIFY_SA_IAM", "CAN_MODIFY_COMPUTE_INSTANCE_IAM", "CAN_READ_SECRET_DATA",
-        "UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS", "CAN_CREATE_CLOUDBUILD_DEFAULT_IDENTITY",
+        "UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS",
         "ServiceAccountKeyFor", "ExistsInProject",
         "CREATE_COMPUTE_INSTANCE_AS_SA", "SWAP_VM_SA_VIA_setServiceAccount",
         "RESET_COMPUTE_STARTUP_SA", "START_COMPUTE_STARTUP_SA", "IAP_TUNNEL_TO_VM_SA",
-        "CREATE_CLOUDBUILD_AS_SA", "CREATE_CLOUDRUN_JOB_AS_SA", "CREATE_APPENGINE_VERSION_AS_SA",
+        "CREATE_CLOUDBUILD_BUILD_AS_SA", "CREATE_CLOUDRUN_JOB_AS_SA", "CREATE_APPENGINE_VERSION_AS_SA",
         "CREATE_DATAPROC_CLUSTER_AS_SA", "ROLE_OWNER", "ROLE_EDITOR",
     ]
     all_kinds = priority_first + sorted(k for k in by_kind if k not in priority_first)

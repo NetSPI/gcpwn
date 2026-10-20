@@ -193,7 +193,7 @@ class AttackGraph:
         The pipeline inserts these between a combo binding and the service account
         it yields. They reuse resource kinds, so the ``CAP:`` id prefix is the marker.
         """
-        return node_id.startswith("CAP:")
+        return node_id.startswith("cap:new:")
 
     def is_synthetic(self, node_id: str) -> bool:
         """Graph plumbing rather than a real identity or resource."""

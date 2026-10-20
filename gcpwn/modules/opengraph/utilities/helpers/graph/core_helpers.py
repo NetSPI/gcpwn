@@ -111,17 +111,52 @@ def principal_type(member: str) -> str:
     return "GCPPrincipal"
 
 
+def _resource_short_key(name: str) -> str:
+    """Return ``leaf@project_id`` for a full GCP resource path, or the path as-is if
+    no project segment is found.  The leaf is the last ``/``-separated token.
+    This is used as the compact node-id key; the full path is stored in properties."""
+    full = str(name or "").strip()
+    if not full or "/" not in full:
+        return full
+    leaf = resource_leaf_name(full)
+    if not leaf:
+        return full
+    parts = full.split("/")
+    project_id = ""
+    for i, part in enumerate(parts):
+        if part == "projects" and i + 1 < len(parts):
+            project_id = parts[i + 1]
+            break
+    return f"{leaf}@{project_id}" if project_id else leaf
+
+
 def resource_node_id(name: str) -> str:
     """
-    Build the canonical OpenGraph node id for a GCP resource: `resource:<name>`.
+    Build the canonical OpenGraph node id for a GCP resource.
 
-    Every resource node in the graph is keyed by this exact id, and binding/combo
-    edge emitters compute target ids with this function. The `resource:` prefix is
-    load-bearing: node-section classification and resource-node export hygiene
-    (node_to_opengraph) both test for it, so it MUST stay stable. The full resource
-    path is embedded so resource identity is unambiguous across projects.
+    Format: ``resource:<leaf>@<project_id>`` — the leaf name and project id are
+    enough to identify the resource in display and for BloodHound path traversal.
+    The full resource path is stored in the node's ``resource_name`` property.
+    The ``resource:`` prefix is load-bearing for node-section classification.
     """
-    return f"resource:{name}"
+    return f"resource:{_resource_short_key(name)}"
+
+
+def cap_update_node_id(name: str, rule_name: str = "") -> str:
+    """
+    Build the node id for a resource's UPDATE capability node.
+
+    Without rule_name: ``cap:UPDATE:<name>`` — the generic Stage-4 clone that
+    carries RunsAs edges (unreachable from combo attack paths).
+    With rule_name: ``<name>#<rule>`` — rule-specific intermediate node used by
+    combo paths; placing the resource name first makes the path human-readable
+    in raw JSON, and the ``#rule`` suffix prevents cross-rule false paths in
+    BloodHound.
+    """
+    key = _resource_short_key(name)
+    if rule_name:
+        return f"{key}#{rule_name}"
+    return f"cap:UPDATE:{key}"
 
 
 def resource_leaf_name(resource_name: str) -> str:
@@ -507,8 +542,8 @@ class OpenGraphBuilder:
 
         Returns (nodes_removed, edges_removed).
         """
-        _cap_prefix_re = re.compile(r'^(CAP:[^@]+@[^:]+:[^:]+:hop_\d+)')
-        _combo_prefix_re = re.compile(r'^(combo_iambinding:[^#]+)')
+        _cap_prefix_re = re.compile(r'^(cap:new:[^@]+@[^#]+)')
+        _combo_prefix_re = re.compile(r'^(combo_iambinding@[^#]+)')
 
         def _cap_prefix(nid: str) -> str:
             m = _cap_prefix_re.match(nid)
@@ -518,8 +553,8 @@ class OpenGraphBuilder:
             m = _combo_prefix_re.match(nid)
             return m.group(1) if m else nid
 
-        cap_ids = {nid for nid in self.node_map if nid.startswith("CAP:")}
-        combo_ids = {nid for nid in self.node_map if nid.startswith("combo_iambinding:")}
+        cap_ids = {nid for nid in self.node_map if nid.startswith("cap:new:")}
+        combo_ids = {nid for nid in self.node_map if nid.startswith("combo_iambinding@")}
 
         n1, e1 = self._dedup_nodes_by_fingerprint(cap_ids, _cap_prefix)
         n2, e2 = self._dedup_nodes_by_fingerprint(combo_ids, _combo_prefix)

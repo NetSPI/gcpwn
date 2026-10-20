@@ -1560,6 +1560,35 @@ class CloudComputeInstancesResource:
         return stop_status
 
     @staticmethod
+    def reset_with_client(instance_client, project_id: str, zone: str, instance_name: str, debug=False):
+        if debug:
+            print(f"[DEBUG] Resetting {instance_name} ...")
+
+        reset_status = None
+
+        try:
+            request = compute_v1.ResetInstanceRequest(
+                instance=instance_name,
+                project=project_id,
+                zone=zone,
+            )
+            operation = instance_client.reset(request=request)
+            reset_status = wait_for_extended_operation(operation, f"{instance_name} resetting")
+            if reset_status is None:
+                reset_status = 1
+        except Exception as e:
+            handle_service_error(
+                e,
+                api_name="compute.instances.reset",
+                resource_name=instance_name,
+                service_label="Compute",
+                project_id=project_id,
+                return_not_enabled=False,
+            )
+
+        return reset_status
+
+    @staticmethod
     def start_with_client(instance_client, project_id: str, zone: str, instance_name: str, debug=False):
         if debug:
             print(f"[DEBUG] Starting {instance_name} ...")

@@ -31,6 +31,10 @@ class OpenGraphBuildOptions:
     # Default includes priv_escalation + sensitive_resource_access (secret access edges).
     # Empty frozenset = all categories. Non-empty = only those categories.
     edge_categories: "frozenset[str]" = frozenset({"priv_escalation", "sensitive_resource_access"})
+    # When False (default) setIamPolicy edges that only grant resource takeover
+    # (sa_token_theft_without_actas=false/"partial") are hidden.  Pass True or
+    # use --include-resource-iam to see all setIamPolicy edges.
+    include_resource_iam: bool = False
 
 
 def _build_hierarchy_data(
@@ -105,10 +109,13 @@ class OpenGraphBuildContext:
         "iam_service_accounts": "iam_service_accounts",
         "iam_sa_keys": "iam_sa_keys",
         "cloudcompute_instances": "cloudcompute_instances",
+        "cloudcompute_projects": "cloudcompute_projects",
         "cloudfunctions_functions": "cloudfunctions_functions",
         "secretsmanager_secrets": "secretsmanager_secrets",
         "cloudrun_services": "cloudrun_services",
         "cloudrun_jobs": "cloudrun_jobs",
+        "cloudrun_worker_pools": "cloudrun_worker_pools",
+        "cloudrun_job_executions": "cloudrun_job_executions",
         "cloudscheduler_jobs": "cloudscheduler_jobs",
         "cloudworkflows_workflows": "cloudworkflows_workflows",
         # WIF tables feed stage-4 resource expansion (WIF_PROVIDER_IN_POOL /
@@ -251,13 +258,19 @@ class OpenGraphBuildContext:
             hierarchy_data=self.hierarchy_data(),
             flattened_member_rows=(simplified_base.get("flattened_member_rows") or []),
             cloudcompute_instances_rows=self.rows("cloudcompute_instances"),
+            cloudcompute_projects_rows=self.rows("cloudcompute_projects"),
             service_account_rows=self.rows("iam_service_accounts"),
             cloudfunctions_functions_rows=self.rows("cloudfunctions_functions"),
             secretsmanager_secrets_rows=self.rows("secretsmanager_secrets"),
             cloudrun_services_rows=self.rows("cloudrun_services"),
             cloudrun_jobs_rows=self.rows("cloudrun_jobs"),
             gke_clusters_rows=self.rows("gke_clusters"),
+            gke_node_pools_rows=self.rows("gke_node_pools"),
             gkehub_memberships_rows=self.rows("gkehub_memberships"),
+            raw_allow_bindings_rows=self.rows("raw_allow_bindings"),
+            iam_custom_roles_rows=self.rows("iam_custom_roles"),
+            cloudrun_worker_pools_rows=self.rows("cloudrun_worker_pools"),
+            cloudrun_job_executions_rows=self.rows("cloudrun_job_executions"),
         )
         return self._scope_resource_indexes_cache
 

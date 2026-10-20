@@ -132,7 +132,7 @@ def collapse_path(graph: AttackGraph, path: RawPath) -> list[Hop]:
 def short_id(node_id: str, *, limit: int = 88) -> str:
     """Shorten a node id for display without losing what identifies it."""
     text = node_id
-    for prefix in ("iambinding:", "resource:", "CAP:"):
+    for prefix in ("iambinding:", "resource:", "cap:new:"):
         if text.startswith(prefix):
             text = text[len(prefix) :]
             break

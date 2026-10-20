@@ -195,17 +195,17 @@ class TestCollapse:
         nodes = [
             _node("serviceAccount:attacker@p.iam.gserviceaccount.com", "GCPServiceAccount"),
             _node("serviceAccount:victim@p.iam.gserviceaccount.com", "GCPServiceAccount"),
-            _node("combo_iambinding:CREATE_CLOUDBUILD_AS_SA@mixed#abc", "GCPIamMultiBinding",
-                  {"role_name": "combo:CREATE_CLOUDBUILD_AS_SA", "attached_scope_id": "projects/p"}),
-            _node("CAP:CREATE_CLOUDBUILD_AS_SA@mixed:hop_1#abc", "GCPCloudBuildBuild"),
+            _node("combo_iambinding:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed#abc", "GCPIamMultiBinding",
+                  {"role_name": "combo:CREATE_CLOUDBUILD_BUILD_AS_SA", "attached_scope_id": "projects/p"}),
+            _node("CAP:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed:hop_1#abc", "GCPCloudBuildBuild"),
         ]
         edges = [
             _edge("serviceAccount:attacker@p.iam.gserviceaccount.com",
-                  "combo_iambinding:CREATE_CLOUDBUILD_AS_SA@mixed#abc", "HAS_COMBO_BINDING"),
-            _edge("combo_iambinding:CREATE_CLOUDBUILD_AS_SA@mixed#abc",
-                  "CAP:CREATE_CLOUDBUILD_AS_SA@mixed:hop_1#abc", "CREATE_CLOUDBUILD_AS_SA"),
-            _edge("CAP:CREATE_CLOUDBUILD_AS_SA@mixed:hop_1#abc",
-                  "serviceAccount:victim@p.iam.gserviceaccount.com", "CREATE_CLOUDBUILD_AS_SA"),
+                  "combo_iambinding:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed#abc", "HAS_COMBO_BINDING"),
+            _edge("combo_iambinding:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed#abc",
+                  "CAP:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed:hop_1#abc", "CREATE_CLOUDBUILD_BUILD_AS_SA"),
+            _edge("CAP:CREATE_CLOUDBUILD_BUILD_AS_SA@mixed:hop_1#abc",
+                  "serviceAccount:victim@p.iam.gserviceaccount.com", "CREATE_CLOUDBUILD_BUILD_AS_SA"),
         ]
         graph = AttackGraph.from_path(_write(tmp_path, nodes, edges))
         paths = shortest_paths(graph, {"serviceAccount:victim@p.iam.gserviceaccount.com"})
@@ -216,7 +216,7 @@ class TestCollapse:
         assert len(path.edge_indices) == 3
         assert len(hops) == 1
         assert hops[0].dst == "serviceAccount:victim@p.iam.gserviceaccount.com"
-        assert hops[0].role == "combo:CREATE_CLOUDBUILD_AS_SA"
+        assert hops[0].role == "combo:CREATE_CLOUDBUILD_BUILD_AS_SA"
 
     def test_terminal_binding_is_reported_as_acquiring_the_role(self, chain_graph):
         targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids

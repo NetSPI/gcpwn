@@ -34,7 +34,7 @@ Edge kind contract (do not rename without updating wiki + export):
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Any, Iterable
 
@@ -55,6 +55,7 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphBuilder,
     OpenGraphNode,
     canonical_target_node_ref,
+    cap_update_node_id,
     gcp_resource_node_type,
     principal_member_properties,
     principal_type,
@@ -292,6 +293,7 @@ class ScopeResourceIndexes:
     allow_resources_by_project: dict[str, list[dict[str, str]]]
     allow_resources_by_project_type: dict[str, dict[str, list[dict[str, str]]]]
     resource_sa_by_name: dict[str, list[str]]
+    project_oslogin_by_project_id: dict[str, bool | None] = field(default_factory=dict)
 
 
 def canonical_scope_type_for_bindings(scope_type: str | None, scope_name: str | None) -> str:
@@ -592,6 +594,7 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
         "targets_from_permissions": targets_from_permissions,
         "via": str(raw_rule.get("via") or "").strip().lower(),
         "include_all_only": bool(raw_rule.get("include_all_only", False)),
+        "target_requires_permissions": list(_list_or_empty(raw_rule.get("target_requires_permissions"))),
     }
 
 
@@ -620,12 +623,26 @@ def expand_single_permission_rules(raw_rules: dict[str, dict[str, Any]] | None) 
         rule_copy = {
             key: value for key, value in raw_rule.items()
             if key not in {"permission", "permissions", "on",
-                           "resource_scopes_possible"}
+                           "resource_scopes_possible", "require_node_sa",
+                           "require_workload_pool", "require_active_execution"}
         }
         # `on: "type"` shorthand -> target_selector (skip if target_selector already present)
         on_type = str(raw_rule.get("on") or "").strip()
         if on_type and not rule_copy.get("target_selector"):
-            rule_copy["target_selector"] = {"mode": "resource_types", "resource_types": [on_type]}
+            selector: dict[str, Any] = {"mode": "resource_types", "resource_types": [on_type]}
+            # require_node_sa: true → only match clusters with a non-default SA on at least
+            # one node pool (populated during index build from gke_node_pools rows).
+            if raw_rule.get("require_node_sa"):
+                selector["resource_metadata_require"] = {"has_node_sa": True}
+            # require_workload_pool: true → only match clusters with Workload Identity enabled
+            # (workload_pool column non-empty in gke_clusters, propagated as has_workload_pool).
+            elif raw_rule.get("require_workload_pool"):
+                selector["resource_metadata_require"] = {"has_workload_pool": True}
+            # require_active_execution: true → only match jobs that have at least one
+            # currently running execution (running_count > 0 from cloudrun_job_executions).
+            elif raw_rule.get("require_active_execution"):
+                selector["resource_metadata_require"] = {"has_active_execution": True}
+            rule_copy["target_selector"] = selector
         if not rule_copy.get("requires_any"):
             rule_copy["requires_any"] = perms
         rule_copy.setdefault("combine_across_bindings", False)
@@ -681,6 +698,9 @@ def _desugar_multi_permission_rule(name: str, raw_rule: dict[str, Any]) -> dict[
             status_in = spec.get("status_in")
             if isinstance(status_in, list) and status_in:
                 selector["status_in"] = list(status_in)
+            metadata_require = spec.get("resource_metadata_require")
+            if isinstance(metadata_require, dict) and metadata_require:
+                selector["resource_metadata_require"] = dict(metadata_require)
             group["target_selector"] = selector
         return group
 
@@ -1364,6 +1384,48 @@ def _scope_contains_resource(
     return False
 
 
+def _resource_metadata_filter_passes(
+    resource: dict[str, Any],
+    metadata_require: dict[str, Any],
+    *,
+    project_oslogin_by_project_id: dict[str, bool | None],
+) -> bool:
+    """Return True only if the resource satisfies every key in metadata_require.
+
+    Currently supports:
+      enable_oslogin: true  — instance-level metadata_enable_os_login, with project-level fallback.
+        If neither instance nor project has it set (or the value is False), the filter fails.
+        Defaults to False (do not graph the edge) when data is absent.
+    """
+    for key, required_value in metadata_require.items():
+        if key == "enable_oslogin":
+            rd = resource.get("resourcedata") or {}
+            instance_flag = rd.get("metadata_enable_os_login")
+            if instance_flag is True or instance_flag == 1:
+                effective = True
+            elif instance_flag is False or instance_flag == 0:
+                effective = False
+            else:
+                # No instance-level override — fall back to project setting.
+                project_id = str(resource.get("project_id") or "").strip()
+                proj_flag = project_oslogin_by_project_id.get(project_id)
+                effective = bool(proj_flag) if proj_flag is not None else False
+            if bool(effective) != bool(required_value):
+                return False
+        elif key == "has_node_sa":
+            rd = resource.get("resourcedata") or {}
+            if bool(rd.get("has_node_sa")) != bool(required_value):
+                return False
+        elif key == "has_active_execution":
+            if bool(resource.get("has_active_execution")) != bool(required_value):
+                return False
+        elif key == "is_cf_build_capable":
+            if bool(resource.get("is_cf_build_capable")) != bool(required_value):
+                return False
+        # Unknown metadata filter keys: skip silently (forward-compat).
+    return True
+
+
 def _target_candidates_for_entry(
     *,
     entry: BindingPlusScopeEntry,
@@ -1375,6 +1437,7 @@ def _target_candidates_for_entry(
     project_scope_by_project_id: dict[str, str],
     project_id_by_scope_name: dict[str, str],
     scope_ancestor_cache: dict[str, set[str]] | None = None,
+    project_oslogin_by_project_id: dict[str, bool | None] | None = None,
 ) -> list[dict[str, str]]:
     mode = str(selector.get("mode") or "").strip().lower()
     if mode != "resource_types":
@@ -1416,6 +1479,14 @@ def _target_candidates_for_entry(
             _STATUS_NORM = {"TERMINATED": "STOPPED"}
             status_token = _STATUS_NORM.get(status_token, status_token)
             if not status_token or status_token not in selected_statuses:
+                continue
+        metadata_require = selector.get("resource_metadata_require")
+        if isinstance(metadata_require, dict) and metadata_require:
+            if not _resource_metadata_filter_passes(
+                resource,
+                metadata_require,
+                project_oslogin_by_project_id=project_oslogin_by_project_id or {},
+            ):
                 continue
         if not project_scoped_pool and not _scope_contains_resource(
             effective_scope_name=entry.effective_scope_name,
@@ -1603,6 +1674,25 @@ def _combo_scope_info(contributors: Iterable[BindingPlusScopeEntry]) -> dict[str
     }
 
 
+def _cap_capability_node_id(
+    resource_type: str,
+    scope_token: str,
+    rule_name: str,
+    hop_id: str,
+    target_id: str,
+) -> str:
+    """Build a compact capability node id: ``cap:new:<restype>@<scope>#<hash8>``.
+
+    The hash encodes (rule_name, scope_token, hop_id, target_id) so the ID is
+    deterministic per target SA — different SAs get different nodes; the same SA
+    always maps to the same node (dedup across contributors).
+    """
+    res = (resource_type or "resource").strip() or "resource"
+    payload = f"{rule_name}|{scope_token}|{hop_id}|{target_id}"
+    h = hashlib.sha1(payload.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    return f"cap:new:{res}@{scope_token}#{h}"
+
+
 def _combo_binding_id(
     *,
     subject_id: str,
@@ -1638,7 +1728,7 @@ def _combo_binding_id(
     # Keep IDs compact/readable: subject identity is still included in the hash
     # payload above, so uniqueness/isolation are preserved without embedding the
     # full principal string in the visible node ID.
-    node_id = f"combo_iambinding:{rule_name}@{effective_scope_token}#{combo_hash}"
+    node_id = f"combo_iambinding@{effective_scope_token}#{combo_hash}"
     return node_id, combo_hash
 
 
@@ -1871,6 +1961,7 @@ def _emit_combo_target_edge(
     inherited: bool,
     binding_origin: str = "combo",
     match_mode: str = "combo",
+    target_node_id_override: str | None = None,
 ) -> tuple[bool, str, str]:
     """
     Emit a combo/multi-permission edge from a given source node to a resource target.
@@ -1882,6 +1973,10 @@ def _emit_combo_target_edge(
     node is created/merged and the edge records the union combo evidence (matched perms/
     roles, contributing binding permission map, effective/source scope, conditions) plus
     `match_mode` so the hop's role in the chain is recoverable.
+
+    `target_node_id_override`: when set, the node is registered under this id instead of
+    the canonical `resource:<name>` id.  Used for `via=resource` combo hops where the
+    intermediate node is the cap:UPDATE clone rather than the real resource node.
 
     Returns (added_new_edge, target_node_id, target_resource_name); added is False when
     the edge already existed and ("","") when there is no target name.
@@ -1901,6 +1996,8 @@ def _emit_combo_target_edge(
     # A service-account target collapses onto its serviceAccount:<email> principal node
     # so the SA is one node (actor + object), not a disconnected resource duplicate.
     target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
+    if target_node_id_override:
+        target_id = target_node_id_override
     builder.add_node(
         target_id,
         target_node_kind,
@@ -2066,6 +2163,18 @@ def _emit_iam_binding_edges_from_entries(
     scope_display_by_name = hierarchy.get("scope_display_by_name") or {}
     parent_by_name = hierarchy.get("parent_by_name") or {}
     entries = list(entries or [])
+
+    # Index of (project_id -> sa_email -> set[permissions]) for target_requires_permissions checks.
+    sa_project_perms_index: dict[str, dict[str, frozenset[str]]] = {}
+    for _entry in entries:
+        _pid = str(_entry.project_id or "").strip()
+        _principal = str(_entry.principal_id or "").strip()
+        if _pid and _principal and _entry.permissions:
+            if _pid not in sa_project_perms_index:
+                sa_project_perms_index[_pid] = {}
+            existing = sa_project_perms_index[_pid].get(_principal, frozenset())
+            sa_project_perms_index[_pid][_principal] = existing | _entry.permissions
+
     rule_progress_label = (
         "single-permission rules checked"
         if dangerous_rule_mode == "base"
@@ -2257,6 +2366,7 @@ def _emit_iam_binding_edges_from_entries(
             example_command = str(event.get("example_command") or "").strip()
             selector = event.get("target_selector") or {}
             combo_hop = event.get("combo_hop") or {}
+            target_requires_permissions = set(event.get("target_requires_permissions") or ())
             targets_from_permissions = set(event.get("targets_from_permissions") or ())
             privilege_escalation = bool(event.get("privilege_escalation", False))
             emission_mode = str(event.get("emission_mode") or "binding").strip().lower()
@@ -2366,6 +2476,7 @@ def _emit_iam_binding_edges_from_entries(
                     project_scope_by_project_id=scope_resource_indexes.project_scope_by_project_id,
                     project_id_by_scope_name=scope_resource_indexes.project_id_by_scope_name,
                     scope_ancestor_cache=scope_ancestor_cache,
+                    project_oslogin_by_project_id=scope_resource_indexes.project_oslogin_by_project_id,
                 ):
                     target_key = (
                         str(target.get("resource_name") or "").strip(),
@@ -2602,6 +2713,7 @@ def _emit_iam_binding_edges_from_entries(
                 complete_chain = True
                 resource_name_by_node_id: dict[str, str] = {}
                 last_hop_was_resource = False
+                _deferred_cap_hop_meta: dict[str, Any] = {}
 
                 for hop_index, hop in enumerate(combo_hops):
                     hop_edge_type = str(hop.get("edge_from_subject") or edge_type).strip() or edge_type
@@ -2649,48 +2761,26 @@ def _emit_iam_binding_edges_from_entries(
                                     complete_chain = False
                                     current_source_node_ids = set()
                                     break
-                        for source_node_id in sorted(current_source_node_ids):
-                            capability_hop_id = str(hop.get("id") or f"hop_{hop_index + 1}").strip() or f"hop_{hop_index + 1}"
-                            scope_token = binding_scope_token(
-                                str(scope_info.get("effective_scope_type") or "resource").strip(),
-                                str(scope_info.get("effective_scope_id") or "").strip(),
-                                project_id=str(scope_info.get("effective_scope_project_id") or "").strip(),
-                            )
-                            # Include source_node_id so each combo binding gets its own capability
-                            # node, preventing cross-principal actAs target accumulation.
-                            capability_node_id = f"CAP:{str(rule_name or '').strip()}@{scope_token}:{capability_hop_id}:{source_node_id}"
-                            node_label = str(hop.get("node_label") or rule_name).strip() or rule_name
-                            cap_res_type = str(hop.get("capability_resource_type") or "").strip()
-                            if cap_res_type:
-                                node_type = gcp_resource_node_type(cap_res_type)
-                            else:
-                                node_type = str(hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability"
-                            builder.add_node(
-                                capability_node_id,
-                                node_type,
-                                name=node_label,
-                                display_name=node_label,
-                                rule_name=rule_name,
-                                rule_description=str(rule_description or "").strip(),
-                                effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
-                                effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
-                                effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
-                            )
-                            edge_key = (source_node_id, hop_edge_type, capability_node_id)
-                            existed = edge_key in builder.edge_map
-                            builder.add_edge(
-                                source_node_id,
-                                capability_node_id,
-                                hop_edge_type,
-                                rule_name=rule_name,
-                                rule_description=str(rule_description or "").strip(),
-                                match_mode="combo_hop",
-                                privilege_escalation=True,
-                            )
-                            hop_edge_seen = True
-                            if not existed:
-                                combo_branch_emitted += 1
-                            next_source_node_ids.add(capability_node_id)
+                        # Defer cap node creation to the terminal section, keying by target SA
+                        # rather than source node. Multiple principals targeting the same SA
+                        # through the same rule then share one cap node instead of each
+                        # getting a private duplicate.
+                        _cap_hop_id = str(hop.get("id") or f"hop_{hop_index + 1}").strip() or f"hop_{hop_index + 1}"
+                        _cap_node_label = str(hop.get("node_label") or rule_name).strip() or rule_name
+                        _cap_res_type = str(hop.get("capability_resource_type") or "").strip()
+                        _deferred_cap_hop_meta = {
+                            "hop_id": _cap_hop_id,
+                            "node_label": _cap_node_label,
+                            "resource_type": _cap_res_type,
+                            "node_type": (
+                                gcp_resource_node_type(_cap_res_type)
+                                if _cap_res_type
+                                else (str(hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability")
+                            ),
+                            "edge_type": hop_edge_type,
+                        }
+                        next_source_node_ids = set(current_source_node_ids)
+                        hop_edge_seen = bool(next_source_node_ids)
                     else:
                         hop_targets: dict[tuple[str, str, str], dict[str, str]] = {}
                         for contributor in hop_contributors:
@@ -2710,6 +2800,12 @@ def _emit_iam_binding_edges_from_entries(
                                 hop_target_name = str(hop_target.get("resource_name") or "").strip()
                                 if source_node_id == canonical_target_node_ref(hop_target_name, hop_target.get("resource_type"))[0]:
                                     continue
+                                # Route via=resource hops to a rule-specific cap:UPDATE clone
+                                # so that (a) the actual resource node stays a dead end and
+                                # (b) two different rules on the same resource never share an
+                                # intermediate node — which would let BloodHound traverse
+                                # rule_A → cap:UPDATE:res → rule_B_edge → SA as a false path.
+                                _hop_override = cap_update_node_id(hop_target_name, rule_name) if hop_mode == "resource" and hop_target_name else None
                                 added, hop_target_id, _ = _emit_combo_target_edge(
                                     builder,
                                     combo_binding_id=combo_binding_id,
@@ -2731,6 +2827,7 @@ def _emit_iam_binding_edges_from_entries(
                                     source_scope_types=source_scope_types,
                                     inherited=inherited,
                                     match_mode=f"combo_hop_resource_step_{hop_index + 1}",
+                                    target_node_id_override=_hop_override,
                                 )
                                 if hop_target_id:
                                     hop_edge_seen = True
@@ -2784,14 +2881,57 @@ def _emit_iam_binding_edges_from_entries(
                         ]
                     else:
                         _node_targets = list(combo_targets.values())
+                    # Compute scope token once per source iteration for cap node IDs.
+                    _terminal_scope_token = binding_scope_token(
+                        str(scope_info.get("effective_scope_type") or "resource").strip(),
+                        str(scope_info.get("effective_scope_id") or "").strip(),
+                        project_id=str(scope_info.get("effective_scope_project_id") or "").strip(),
+                    ) if _deferred_cap_hop_meta else ""
                     for target in _node_targets:
                         target_name_for_self_check = str(target.get("resource_name") or "").strip()
-                        if source_node_id == canonical_target_node_ref(target_name_for_self_check, target.get("resource_type"))[0]:
+                        target_sa_node_id, _ = canonical_target_node_ref(target_name_for_self_check, target.get("resource_type"))
+                        if source_node_id == target_sa_node_id:
                             continue
+                        if _deferred_cap_hop_meta:
+                            # Create/get a cap node keyed by target SA — shared across all
+                            # principals that can reach the same SA via this rule and scope.
+                            _cap_node_id = _cap_capability_node_id(
+                                _deferred_cap_hop_meta["resource_type"],
+                                _terminal_scope_token,
+                                rule_name,
+                                _deferred_cap_hop_meta["hop_id"],
+                                target_sa_node_id,
+                            )
+                            builder.add_node(
+                                _cap_node_id,
+                                _deferred_cap_hop_meta["node_type"],
+                                name=_deferred_cap_hop_meta["node_label"],
+                                display_name=_deferred_cap_hop_meta["node_label"],
+                                rule_name=rule_name,
+                                rule_description=str(rule_description or "").strip(),
+                                effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
+                                effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
+                                effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
+                            )
+                            _src_cap_edge_key = (source_node_id, _deferred_cap_hop_meta["edge_type"], _cap_node_id)
+                            _src_cap_existed = _src_cap_edge_key in builder.edge_map
+                            builder.add_edge(
+                                source_node_id,
+                                _cap_node_id,
+                                _deferred_cap_hop_meta["edge_type"],
+                                rule_name=rule_name,
+                                rule_description=str(rule_description or "").strip(),
+                                match_mode="combo_hop",
+                                privilege_escalation=True,
+                            )
+                            _emission_source = _cap_node_id
+                        else:
+                            _emission_source = source_node_id
+                            _src_cap_existed = True
                         added, target_id, target_name = _emit_combo_target_edge(
                             builder,
                             combo_binding_id=combo_binding_id,
-                            source_node_id=source_node_id,
+                            source_node_id=_emission_source,
                             subject_entry=subject_entry,
                             edge_type=combo_target_edge_type,
                             target=target,
@@ -2812,7 +2952,7 @@ def _emit_iam_binding_edges_from_entries(
                         if not target_id:
                             continue
                         final_target_edge_seen = True
-                        if not added:
+                        if not added and _src_cap_existed:
                             continue
                         for contributor in contributors:
                             pending_destination_records.append(
@@ -2952,6 +3092,11 @@ def _emit_iam_binding_edges_from_entries(
                         intermediate_source_ids: set[str] = set()
                         intermediate_node_to_resource_name: dict[str, str] = {}
                         for intermediate_target in intermediate_targets.values():
+                            _int_res_name_pre = str(intermediate_target.get("resource_name") or "").strip()
+                            # Route via=resource combo hops to a rule-specific cap:UPDATE node so
+                            # the actual resource node stays a dead end and different rules never
+                            # share an intermediate node.
+                            _cap_override = cap_update_node_id(_int_res_name_pre, rule_name) if _int_res_name_pre else None
                             added, intermediate_target_id, _ = _emit_combo_target_edge(
                                 builder,
                                 combo_binding_id=contributor.binding_composite_id,
@@ -2974,6 +3119,7 @@ def _emit_iam_binding_edges_from_entries(
                                 inherited=bool(contributor.inherited),
                                 binding_origin=binding_origin_from_entry(contributor),
                                 match_mode="binding_combo_hop_resource_intermediate",
+                                target_node_id_override=_cap_override,
                             )
                             if intermediate_target_id:
                                 intermediate_source_ids.add(intermediate_target_id)
@@ -3053,28 +3199,11 @@ def _emit_iam_binding_edges_from_entries(
                         emitted_dangerous += binding_branch_emitted
                         continue
 
-                    combo_target_source_id, hop_added = _emit_combo_capability_hop(
-                        builder,
-                        combo_binding_id=contributor.binding_composite_id,
-                        rule_name=rule_name,
-                        rule_description=rule_description,
-                        scope_info=scope_info,
-                        combo_hop={
-                            **combo_hop,
-                            "edge_from_subject": str(primary_hop.get("edge_from_subject") or combo_hop.get("edge_from_subject") or ""),
-                            "id": str(primary_hop.get("id") or combo_hop.get("id") or "hop_1"),
-                            "node_type": str(primary_hop.get("node_type") or combo_hop.get("node_type") or "GCPIamCapability"),
-                            "node_label": str(primary_hop.get("node_label") or combo_hop.get("node_label") or rule_name),
-                        },
-                    )
-                    if hop_added:
-                        binding_branch_emitted += 1
+                    # Collect targets before creating cap nodes so cap nodes can be keyed
+                    # by target SA rather than by contributor — multiple contributors
+                    # targeting the same SA then share one cap node.
                     hop_edge_type = str(primary_hop.get("edge_from_subject") or combo_hop.get("edge_from_subject") or "").strip()
-                    hop_edge_present = bool(
-                        hop_edge_type
-                        and (contributor.binding_composite_id, hop_edge_type, combo_target_source_id) in builder.edge_map
-                    )
-                    if not hop_edge_present:
+                    if not hop_edge_type:
                         _rollback_graph_mutation_state(mutation_snapshot)
                         continue
 
@@ -3083,12 +3212,77 @@ def _emit_iam_binding_edges_from_entries(
                         include_fanout=not scope_only,
                         selector_override=resolved_target_selector,
                     )
+                    if target_requires_permissions:
+                        _proj_id = str(contributor.project_id or "").strip()
+                        _proj_sa_perms = sa_project_perms_index.get(_proj_id, {})
+                        grant_targets = {
+                            k: v for k, v in grant_targets.items()
+                            if target_requires_permissions.issubset(
+                                _proj_sa_perms.get(str(v.get("resource_name") or "").strip(), frozenset())
+                            )
+                        }
+                    if not grant_targets:
+                        _rollback_graph_mutation_state(mutation_snapshot)
+                        continue
+
+                    # Cap node metadata (constant across all targets for this contributor).
+                    _b_hop_id = str(primary_hop.get("id") or combo_hop.get("id") or "hop_1").strip() or "hop_1"
+                    _b_node_label = str(primary_hop.get("node_label") or combo_hop.get("node_label") or rule_name).strip() or rule_name
+                    _b_cap_res_type = str(primary_hop.get("capability_resource_type") or combo_hop.get("capability_resource_type") or "").strip()
+                    _b_node_type = (
+                        gcp_resource_node_type(_b_cap_res_type)
+                        if _b_cap_res_type
+                        else (str(primary_hop.get("node_type") or combo_hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability")
+                    )
+                    _b_scope_id = str(scope_info.get("effective_scope_id") or "").strip()
+                    _b_scope_type = canonical_scope_type_for_bindings(
+                        str(scope_info.get("effective_scope_type") or "").strip(), _b_scope_id
+                    )
+                    _b_scope_token = binding_scope_token(
+                        _b_scope_type, _b_scope_id,
+                        project_id=str(scope_info.get("effective_scope_project_id") or "").strip(),
+                    )
 
                     for target in grant_targets.values():
+                        _b_target_name = str(target.get("resource_name") or "").strip()
+                        _b_target_sa_node_id, _ = canonical_target_node_ref(_b_target_name, target.get("resource_type"))
+
+                        # Create/get cap node keyed by target SA (shared across all contributors
+                        # that target the same SA through this rule and scope).
+                        _b_cap_node_id = _cap_capability_node_id(
+                            _b_cap_res_type,
+                            _b_scope_token,
+                            rule_name,
+                            _b_hop_id,
+                            _b_target_sa_node_id,
+                        )
+                        builder.add_node(
+                            _b_cap_node_id,
+                            _b_node_type,
+                            name=_b_node_label,
+                            display_name=_b_node_label,
+                            rule_name=rule_name,
+                            rule_description=str(rule_description or "").strip(),
+                            effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
+                            effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
+                            effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
+                        )
+                        _b_hop_edge_key = (contributor.binding_composite_id, hop_edge_type, _b_cap_node_id)
+                        _b_hop_existed = _b_hop_edge_key in builder.edge_map
+                        builder.add_edge(
+                            contributor.binding_composite_id,
+                            _b_cap_node_id,
+                            hop_edge_type,
+                            rule_name=rule_name,
+                            rule_description=str(rule_description or "").strip(),
+                            match_mode="binding_combo_hop",
+                            privilege_escalation=True,
+                        )
+
                         added, target_id, target_name = _emit_combo_target_edge(
                             builder,
                             combo_binding_id=contributor.binding_composite_id,
-                            source_node_id=combo_target_source_id,
+                            source_node_id=_b_cap_node_id,
                             subject_entry=contributor,
                             edge_type=combo_target_edge_type,
                             target=target,
@@ -3112,8 +3306,10 @@ def _emit_iam_binding_edges_from_entries(
                             continue
                         final_target_edge_seen = True
                         bindings_with_direct_dangerous_edges.add(contributor.binding_composite_id)
-                        if not added:
+                        if not added and _b_hop_existed:
                             continue
+                        if not _b_hop_existed:
+                            binding_branch_emitted += 1
                         pending_destination_records.append(
                             {
                                 "entry": contributor,
@@ -3128,7 +3324,8 @@ def _emit_iam_binding_edges_from_entries(
                                 "privilege_escalation": True,
                             }
                         )
-                        binding_branch_emitted += 1
+                        if added:
+                            binding_branch_emitted += 1
                     if not final_target_edge_seen:
                         _rollback_graph_mutation_state(mutation_snapshot)
                         continue

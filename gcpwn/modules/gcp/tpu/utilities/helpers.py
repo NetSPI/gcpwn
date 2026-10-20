@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from google.cloud import tpu_v2  # type: ignore
+from google.cloud import tpu_v2alpha1  # type: ignore
 from googleapiclient.discovery import build as discovery_build
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -55,6 +56,9 @@ class TpuNodesResource(GcpListResource):
     def _build_client(self, session):
         return tpu_v2.TpuClient(credentials=session.credentials)
 
+    def _build_alpha_client(self, session):
+        return tpu_v2alpha1.TpuClient(credentials=session.credentials)
+
     def _extra_save_fields(self, raw: dict[str, Any]) -> dict[str, Any]:
         sa = raw.get("service_account") or {}
         sa_email = sa.get("email", "") if isinstance(sa, dict) else str(sa or "")
@@ -70,16 +74,43 @@ class TpuNodesResource(GcpListResource):
 
     # ── Exploit helpers ────────────────────────────────────────────────────────
 
-    def create(self, parent: str, node_id: str, node: Any, timeout: int = 600) -> dict:
+    def create(self, parent: str, node_id: str, node: Any, timeout: int = 600,
+               use_alpha: bool = False) -> dict:
         """Create a TPU node and wait for the LRO to complete.
 
+        use_alpha=True selects the v2alpha1 API, required for v5litepod / v6e
+        accelerator types (v5e-rocky9 runtime is rejected by the v2 API).
         Blocks for up to `timeout` seconds. Returns the resulting node as a dict.
         """
-        operation = self.client.create_node(
-            parent=parent,
-            node_id=node_id,
-            node=node,
-        )
+        if use_alpha:
+            alpha_client = self._build_alpha_client(self.session)
+            # Convert tpu_v2.Node to tpu_v2alpha1.Node by field round-trip
+            node_dict = type(node).to_dict(node)
+            alpha_node = tpu_v2alpha1.Node(**{
+                k: v for k, v in node_dict.items() if v is not None and v != [] and v != {}
+            })
+            # Rebuild network_config and service_account using alpha protos
+            nc = node.network_config
+            if nc is not None:
+                alpha_node.network_config = tpu_v2alpha1.NetworkConfig(
+                    network=nc.network,
+                    subnetwork=nc.subnetwork,
+                    enable_external_ips=nc.enable_external_ips,
+                )
+            sa = node.service_account
+            if sa is not None:
+                alpha_node.service_account = tpu_v2alpha1.ServiceAccount(
+                    email=sa.email,
+                    scope=list(sa.scope),
+                )
+            sc = node.scheduling_config
+            if sc is not None:
+                alpha_node.scheduling_config = tpu_v2alpha1.SchedulingConfig(
+                    preemptible=sc.preemptible,
+                )
+            operation = alpha_client.create_node(parent=parent, node_id=node_id, node=alpha_node)
+        else:
+            operation = self.client.create_node(parent=parent, node_id=node_id, node=node)
         result = operation.result(timeout=timeout)
         return resource_to_dict(result)
 

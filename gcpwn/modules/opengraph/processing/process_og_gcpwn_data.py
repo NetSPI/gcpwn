@@ -883,6 +883,18 @@ def _parse_args(user_args):
         ),
     )
     parser.add_argument(
+        "--include-resource-iam",
+        dest="include_resource_iam",
+        action="store_true",
+        default=False,
+        help=(
+            "Include setIamPolicy edges that only grant resource-level takeover "
+            "(sa_token_theft_without_actas=false/partial). By default these are hidden "
+            "because they do NOT allow reaching the attached SA without actAs. "
+            "Enable to see all setIamPolicy edges regardless."
+        ),
+    )
+    parser.add_argument(
         "--cond-eval",
         action="store_true",
         help="Run IAM conditional workflow in pass-through mode (currently no-op filtering)",
@@ -1217,6 +1229,7 @@ def run_module(user_args, session):
                 cross_project=_cross_project,
                 cross_project_sa_projects=_cross_project_sa_projects,
                 edge_categories=_edge_categories,
+                include_resource_iam=bool(getattr(args, "include_resource_iam", False)),
             ),
         )
 
@@ -1273,6 +1286,24 @@ def run_module(user_args, session):
                 f"+{max(0, after_edges - before_edges)} edges"
             )
             UtilityTools.dlog(args.debug, "opengraph step stats", step=step, stats=step_stats)
+
+        # Phase 3.4: resource-only setIamPolicy edge filter.
+        # ROLE_OWNER/ROLE_EDITOR collapsed edges that arise from roles/owner or roles/editor
+        # are unaffected (different edge type, never in _resource_iam_edge_types).
+        # Resource nodes (resource:<name>) are structurally dead ends — RunsAs edges live on
+        # cap:UPDATE:<name> clones — so no RunsAs cleanup pass is needed here.
+        from gcpwn.modules.opengraph.utilities.helpers.graph.constants import load_resource_iam_edge_types
+        _resource_iam_edge_types = load_resource_iam_edge_types()
+        if _resource_iam_edge_types:
+            if not bool(getattr(args, "include_resource_iam", False)):
+                _resource_iam_removed = [k for k in list(context.builder.edge_map) if k[1] in _resource_iam_edge_types]
+                for _k in _resource_iam_removed:
+                    del context.builder.edge_map[_k]
+                if _resource_iam_removed:
+                    print(
+                        f"[*] Resource IAM filter: removed {len(_resource_iam_removed)} resource-only setIamPolicy "
+                        f"edge(s) (use --include-resource-iam to show all setIamPolicy edges)"
+                    )
 
         # Phase 3.5: deny-policy FINAL filter (opt-in) -- rewrite allow graph to effective
         # access (allow minus deny) before it is snapshotted to node/edge lists.
