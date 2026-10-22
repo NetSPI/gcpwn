@@ -230,7 +230,18 @@ def _build_project_role_members(
                     str(record.get("attached_scope_type") or "").strip(),
                     attached_scope_name,
                 )
-                if attached_scope_type != "project" or not attached_scope_name.startswith("projects/"):
+                # Only a binding on the PROJECT ITSELF (scope name exactly "projects/<id>")
+                # expands owner/editor/viewer into the projectOwner/Editor/Viewer convenience
+                # members. A sub-resource binding (projects/<id>/serviceAccounts/<x>,
+                # .../cryptoKeys/<k>, etc.) also starts with "projects/" and is mis-inferred as
+                # "project" by _canonical_scope_type, but granting roles/owner on one KMS key or
+                # SA does NOT make the member a project owner — expanding it emitted false
+                # project-wide edges (e.g. CAN_MODIFY_BUCKET_IAM on every bucket).
+                if (
+                    attached_scope_type != "project"
+                    or not attached_scope_name.startswith("projects/")
+                    or attached_scope_name.count("/") != 1
+                ):
                     continue
 
                 project_number = extract_path_tail(attached_scope_name, default=attached_scope_name)
