@@ -584,11 +584,14 @@ def run_authenticated_module_passthrough(
     if project_id and not any(arg in _selectors for arg in cleaned_args):
         cleaned_args = ["--project-id", str(project_id), *cleaned_args]
 
+    # Informational banners go to stderr so a module that emits JSON to stdout
+    # (e.g. process_og_attack_paths --json) is not preceded by a non-JSON preamble.
     print(
         f"[*] Drive-through: workspace='{resolved_name}' (id={workspace_id}) "
-        f"cred='{session.credname}' project='{session.project_id}'"
+        f"cred='{session.credname}' project='{session.project_id}'",
+        file=sys.stderr,
     )
-    print(f"[*] Running module: {module_import_path}")
+    print(f"[*] Running module: {module_import_path}", file=sys.stderr)
     try:
         result = interact_with_module(session, module_import_path, cleaned_args)
         return 0 if result == 0 else 1

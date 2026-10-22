@@ -1102,6 +1102,25 @@
       ]
     },
     {
+      "table_name": "cloudrun_job_executions",
+      "columns": [
+        "project_id",
+        "location",
+        "job_name",
+        "execution_id",
+        "name",
+        "running_count",
+        "succeeded_count",
+        "failed_count",
+        "create_time",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
       "table_name": "kms_keyrings",
       "columns": [
         "project_id",
@@ -1220,6 +1239,7 @@
         "node_count",
         "is_autopilot",
         "private_cluster",
+        "workload_pool",
         "network",
         "subnetwork",
         "create_time",

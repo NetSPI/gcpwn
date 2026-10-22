@@ -38,6 +38,10 @@ def _collect_table_names() -> dict[str, str]:
                         continue
                     if isinstance(child.value, ast.Constant) and isinstance(child.value.value, str):
                         name = child.value.value
+                        # TABLE_NAME = "" marks a resource that is intentionally not
+                        # persisted (no save_to_table call), so it needs no schema entry.
+                        if not name.strip():
+                            continue
                         found[name] = str(py_file.relative_to(REPO_ROOT))
     return found
 
