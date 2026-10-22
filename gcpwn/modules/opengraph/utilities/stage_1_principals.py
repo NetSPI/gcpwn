@@ -22,6 +22,7 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     principal_member_properties,
     principal_node_id,
     principal_type,
+    scope_ancestry_chain,
 )
 
 
@@ -37,7 +38,6 @@ def _normalized_principal_tokens(values: Iterable[str] | None) -> list[str]:
 
 # Shared progress helpers (see UtilityTools); aliased so the call sites below
 # keep their existing names.
-_progress_interval = UtilityTools.progress_interval
 _should_log_progress = UtilityTools.should_emit_progress
 
 
@@ -67,22 +67,6 @@ def _ensure_principal_node(
         props["source"] = source
     builder.add_node(token, principal_type(token), **props)
     return token
-
-
-def _scope_chain(start_scope: str, parent_by_name: dict[str, str]) -> list[str]:
-    chain = [start_scope.strip()]
-    if not chain[0]:
-        return []
-    seen = {chain[0]}
-    cursor = chain[0]
-    while True:
-        parent = parent_by_name.get(cursor, "").strip()
-        if not parent or parent in seen:
-            break
-        seen.add(parent)
-        chain.append(parent)
-        cursor = parent
-    return chain
 
 
 def _add_workspace_principal_nodes(
@@ -558,7 +542,7 @@ def _add_crm_service_account_principal_set_edges(
         if not service_account_id:
             continue
 
-        for scope_name in _scope_chain(project_scope, parent_by_name):
+        for scope_name in scope_ancestry_chain(project_scope, parent_by_name):
             if "/" not in scope_name:
                 continue
             scope_kind, scope_number = scope_name.split("/", 1)

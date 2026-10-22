@@ -137,10 +137,15 @@ class OpenGraphBuildContext:
         "workspace_group_settings": "workspace_group_settings",
         # Drive file exposure -> CAN_READ edges for public / anyone-with-link files.
         "workspace_drive_files": "workspace_drive_files",
-        # GKE clusters and GKEHub memberships -> seed k8scluster/fleetmembership
+        # GKE clusters, node pools, and GKEHub memberships -> seed k8scluster/fleetmembership
         # resource types so PE edge rules can find them as targets.
+        # gke_node_pools feeds has_node_sa on each cluster (CREATE_GKE_POD_STEAL_NODE_SA).
         "gke_clusters": "gke_clusters",
+        "gke_node_pools": "gke_node_pools",
         "gkehub_memberships": "gkehub_memberships",
+        # Cloud Composer environments -> seed composerenv resource nodes so
+        # UPDATE_COMPOSER_ENV_AS_SA / EXEC_COMPOSER_ENV_AS_SA PE edges fire.
+        "cloudcomposer_environments": "cloudcomposer_environments",
     }
 
     def _fetch_rows_for_key(self, key: str) -> list[dict[str, Any]]:
@@ -271,6 +276,7 @@ class OpenGraphBuildContext:
             iam_custom_roles_rows=self.rows("iam_custom_roles"),
             cloudrun_worker_pools_rows=self.rows("cloudrun_worker_pools"),
             cloudrun_job_executions_rows=self.rows("cloudrun_job_executions"),
+            cloudcomposer_environments_rows=self.rows("cloudcomposer_environments"),
         )
         return self._scope_resource_indexes_cache
 

@@ -31,10 +31,7 @@ REQUIRED_PERMS = {
     "CAN_IMPERSONATE_SA":               ["iam.serviceAccounts.implicitDelegation"],
     "CAN_CREATE_SA_ACCESS_TOKEN":       ["iam.serviceAccounts.getAccessToken"],
     "CAN_CREATE_SA_OIDC_TOKEN":         ["iam.serviceAccounts.generateOpenIdToken"],
-    "CAN_SIGN_JWT_AS_SA":               ["iam.serviceAccounts.signJwt"],
-    "CAN_SIGN_BLOB_AS_SA":              ["iam.serviceAccounts.signBlob"],
     "CAN_CREATE_SA_KEY":                ["iam.serviceAccounts.createKey", "iam.serviceAccountKeys.create"],
-    "CAN_DELETE_SA_KEY":                ["iam.serviceAccounts.deleteKey"],
     "CAN_MODIFY_PROJECT_IAM":           ["resourcemanager.projects.setIamPolicy"],
     "CAN_MODIFY_FOLDER_IAM":            ["resourcemanager.folders.setIamPolicy"],
     "CAN_MODIFY_ORG_IAM":               ["resourcemanager.organizations.setIamPolicy"],
@@ -324,7 +321,7 @@ def check_exists_in_project(edge: dict):
 # ── Dispatch ───────────────────────────────────────────────────────────────
 
 SKIP_KINDS = {
-    "CanFederateWith", "FederatedPrincipalInPool", "IdentityProviderInPool",
+    "CanFederateWith", "CanFederateAs", "FederatedPrincipalInPool", "IdentityProviderInPool",
     "HasImpliedPermissions", "RunsAs", "SWAP_COMPUTE_INSTANCE_SA",
 }
 
@@ -412,14 +409,13 @@ def main(graph_file: str, label: str = "") -> int:
     priority_first = [
         "HAS_IAM_BINDING", "HAS_COMBO_BINDING",
         "CAN_CREATE_SA_KEY", "CAN_CREATE_SA_ACCESS_TOKEN", "CAN_IMPERSONATE_SA",
-        "CAN_SIGN_JWT_AS_SA", "CAN_SIGN_BLOB_AS_SA",
         "CAN_MODIFY_PROJECT_IAM", "CAN_MODIFY_FOLDER_IAM", "CAN_MODIFY_ORG_IAM",
         "CAN_MODIFY_SA_IAM", "CAN_MODIFY_COMPUTE_INSTANCE_IAM", "CAN_READ_SECRET_DATA",
         "UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS",
         "ServiceAccountKeyFor", "ExistsInProject",
-        "CREATE_COMPUTE_INSTANCE_AS_SA", "SWAP_VM_SA_VIA_setServiceAccount",
-        "RESET_COMPUTE_STARTUP_SA", "START_COMPUTE_STARTUP_SA", "IAP_TUNNEL_TO_VM_SA",
-        "CREATE_CLOUDBUILD_BUILD_AS_SA", "CREATE_CLOUDRUN_JOB_AS_SA", "CREATE_APPENGINE_VERSION_AS_SA",
+        "CREATE_COMPUTE_INSTANCE_AS_SA",
+        "RESET_COMPUTE_STARTUP_SA", "START_COMPUTE_STARTUP_SA",
+        "CREATE_CLOUDBUILD_BUILD_AS_SA", "CREATE_AND_INVOKE_CLOUDRUN_JOB_AS_SA", "CREATE_APPENGINE_VERSION_AS_SA",
         "CREATE_DATAPROC_CLUSTER_AS_SA", "ROLE_OWNER", "ROLE_EDITOR",
     ]
     all_kinds = priority_first + sorted(k for k in by_kind if k not in priority_first)

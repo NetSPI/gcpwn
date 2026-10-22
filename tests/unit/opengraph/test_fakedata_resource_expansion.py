@@ -124,8 +124,8 @@ def expansion_context():
 
 def test_exists_in_project_edge_for_compute_instance(expansion_context):
     edges = _edges(expansion_context)
-    project_node = "resource:projects/proj-a"
-    instance_node = f"resource:{_INSTANCE_RESOURCE}"
+    project_node = "resource:proj-a@proj-a"
+    instance_node = "resource:vm1@proj-a"
     assert (project_node, "ExistsInProject", instance_node) in edges
     types = _node_types(expansion_context)
     assert types.get(instance_node) == "GCPComputeInstance"
@@ -136,7 +136,7 @@ def test_executes_with_edge_instance_to_attached_service_account(expansion_conte
     edges = _edges(expansion_context)
     # RunsAs edge lives on the cap:UPDATE clone node, not the actual resource node.
     # The resource node (resource:<name>) is a dead end used only as a setIamPolicy target.
-    cap_update_node = f"cap:UPDATE:{_INSTANCE_RESOURCE}"
+    cap_update_node = "cap:UPDATE:vm1@proj-a"
     sa_node = f"serviceAccount:{_SA_EMAIL}"
     assert (cap_update_node, "RunsAs", sa_node) in edges
     assert _node_types(expansion_context).get(sa_node) == "GCPServiceAccount"
@@ -158,7 +158,7 @@ def test_gcp_principal_set_edge_service_account_to_crm_set(expansion_context):
 
 def test_wif_principal_in_pool_edge(expansion_context):
     edges = _edges(expansion_context)
-    pool_node = f"resource:{_WIF_POOL_RESOURCE}"
+    pool_node = "resource:my-pool@123456"
     assert (_WIF_SUBJECT_MEMBER, "FederatedPrincipalInPool", pool_node) in edges
     assert _node_types(expansion_context).get(pool_node) == "GCPWorkloadIdentityPool"
 
@@ -185,3 +185,67 @@ def test_no_compute_rows_means_no_executes_with_or_exists_in_project():
     # The SA-key and WIF edges are independent of compute and still present.
     assert "ServiceAccountKeyFor" in kinds
     assert "FederatedPrincipalInPool" in kinds
+
+
+def test_provider_attribute_mapping_reads_nested_raw_json():
+    # Regression: enumeration stores a provider's attributeMapping nested under
+    # raw_json, not as a top-level column. _provider_attribute_mapping must unwrap
+    # raw_json, else the selector-support check falsely reports a missing mapping
+    # for a GitHub/OIDC provider that does map the attribute (observed live with a
+    # repo-restricted attribute.repository principalSet).
+    from gcpwn.modules.opengraph.utilities.stage_4_resource_expansion import (
+        _provider_attribute_mapping,
+        _wif_selector_support_for_pool,
+    )
+
+    provider_row = {
+        "name": "projects/123456/locations/global/workloadIdentityPools/gh/providers/gh-prov",
+        "raw_json": json.dumps(
+            {
+                "oidc": {"issuerUri": "https://token.actions.githubusercontent.com"},
+                "attribute_mapping": {
+                    "google.subject": "assertion.sub",
+                    "attribute.repository": "assertion.repository",
+                },
+            }
+        ),
+    }
+    mapping = _provider_attribute_mapping(provider_row)
+    assert mapping.get("attribute.repository") == "assertion.repository"
+
+    support = _wif_selector_support_for_pool(
+        parsed_principal={"kind": "attribute", "attribute_name": "repository", "pool_id": "gh"},
+        provider_rows=[provider_row],
+    )
+    assert support["supported"] is True
+    assert support["support_reason"] == "mapped_by_attribute.repository"
+
+
+def test_wif_exposure_badge_tiers():
+    # At-a-glance blue-team exposure badge joins binding-selector breadth with the
+    # pool's providers. Reserve no 'anonymous' tier for WIF (signed identities).
+    from gcpwn.modules.opengraph.utilities.stage_4_resource_expansion import (
+        _wif_exposure_for_principal,
+    )
+
+    gh_nocond = {"raw_json": json.dumps({"oidc": {"issuerUri": "https://token.actions.githubusercontent.com"}})}
+    gh_cond = {
+        "raw_json": json.dumps(
+            {
+                "oidc": {"issuerUri": "https://token.actions.githubusercontent.com"},
+                "attribute_condition": "assertion.repository_owner == 'someorg'",
+            }
+        )
+    }
+    aws = {"raw_json": json.dumps({"aws": {"accountId": "123456789012"}})}
+
+    # pool-wide + a provider with no condition -> any identity from that IdP.
+    assert _wif_exposure_for_principal({"kind": "pool"}, [gh_nocond])["wif_exposure"] == "external_unscoped:github"
+    assert _wif_exposure_for_principal({"kind": "pool"}, [aws])["wif_exposure"] == "external_unscoped:aws"
+    # pool-wide but every provider has a condition -> inspect it (not claimed scoped).
+    assert _wif_exposure_for_principal({"kind": "pool"}, [gh_cond])["wif_exposure"] == "external_conditioned:github"
+    # pool-wide but no provider enumerated -> undeterminable.
+    assert _wif_exposure_for_principal({"kind": "pool"}, [])["wif_exposure_tier"] == "external_unresolved"
+    # binding pins a specific attribute / subject.
+    assert _wif_exposure_for_principal({"kind": "attribute"}, [gh_nocond])["wif_exposure_tier"] == "external_scoped"
+    assert _wif_exposure_for_principal({"kind": "subject"}, [gh_nocond])["wif_exposure_tier"] == "external_pinned"

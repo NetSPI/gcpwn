@@ -260,7 +260,7 @@ def test_key_nondefault_resource_type_still_emits_resource_node_with_resourcedat
     )
 
     assert edges_added == 0
-    node_id = "resource:projects/example-project-a/locations/us-central1/keyRings/demo-key-ring/cryptoKeys/demo-key"
+    node_id = "resource:demo-key@example-project-a"
     assert node_id in context.builder.node_map
     exported = node_to_opengraph(context.builder.node_map[node_id])
     props = exported["properties"] or {}

@@ -63,9 +63,9 @@ def test_org_binding_without_inheritance_stays_at_org():
     node_types = {nt for _, nt in nodes}
     # descendant resource nodes are NOT materialized without fan-out
     assert "GCPFolder" not in node_types and "GCPProject" not in node_types
-    assert ("iambinding:roles/owner@org:111", "ROLE_OWNER", "resource:organizations/111") in edges
+    assert ("iambinding:roles/owner@org:111", "ROLE_OWNER", "resource:111") in edges
     # no inherited ROLE_OWNER on folder/project
-    assert not any(d in ("resource:folders/222", "resource:projects/proj-a") for _, k, d in edges if k == "ROLE_OWNER")
+    assert not any(d in ("resource:222", "resource:proj-a@proj-a") for _, k, d in edges if k == "ROLE_OWNER")
 
 
 def test_org_binding_with_inheritance_fans_to_folder_and_project():
@@ -75,8 +75,8 @@ def test_org_binding_with_inheritance_fans_to_folder_and_project():
     assert "iambinding:roles/owner@folder:222#src:org:111" in binding_ids
     assert "iambinding:roles/owner@project:proj-a#src:org:111" in binding_ids
     # each descendant scope gets its own ROLE_OWNER edge, with org provenance preserved
-    assert ("iambinding:roles/owner@folder:222#src:org:111", "ROLE_OWNER", "resource:folders/222") in edges
-    assert ("iambinding:roles/owner@project:proj-a#src:org:111", "ROLE_OWNER", "resource:projects/proj-a") in edges
+    assert ("iambinding:roles/owner@folder:222#src:org:111", "ROLE_OWNER", "resource:222") in edges
+    assert ("iambinding:roles/owner@project:proj-a#src:org:111", "ROLE_OWNER", "resource:proj-a@proj-a") in edges
     assert {"GCPOrganization", "GCPFolder", "GCPProject"} <= {nt for _, nt in nodes}
 
 
@@ -115,4 +115,4 @@ def test_folder_binding_inherits_only_to_its_project():
     assert "iambinding:roles/editor@folder:222" in binding_ids
     assert "iambinding:roles/editor@project:proj-a#src:folder:222" in binding_ids
     assert not any("org:111" in nid for nid in binding_ids)
-    assert ("iambinding:roles/editor@project:proj-a#src:folder:222", "ROLE_EDITOR", "resource:projects/proj-a") in edges
+    assert ("iambinding:roles/editor@project:proj-a#src:folder:222", "ROLE_EDITOR", "resource:proj-a@proj-a") in edges

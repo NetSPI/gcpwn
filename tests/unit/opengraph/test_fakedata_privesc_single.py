@@ -135,7 +135,7 @@ def test_can_modify_project_iam_edge_emitted():
     assert (
         "iambinding:projects/proj-a/roles/Custom@project:proj-a",
         "CAN_MODIFY_PROJECT_IAM",
-        "resource:projects/proj-a",
+        "resource:proj-a@proj-a",
     ) in _edges(ctx)
 
 
@@ -152,7 +152,7 @@ def test_can_modify_folder_iam_edge_emitted():
     assert (
         "iambinding:projects/proj-a/roles/Custom@folder:222",
         "CAN_MODIFY_FOLDER_IAM",
-        "resource:folders/222",
+        "resource:222",
     ) in _edges(ctx)
 
 
@@ -169,7 +169,7 @@ def test_can_modify_org_iam_edge_emitted():
     assert (
         "iambinding:projects/proj-a/roles/Custom@org:111",
         "CAN_MODIFY_ORG_IAM",
-        "resource:organizations/111",
+        "resource:111",
     ) in _edges(ctx)
 
 
@@ -231,5 +231,5 @@ def test_can_read_secret_data_edge_emitted():
     assert (
         _PROJECT_BINDING_NODE,
         "CAN_READ_SECRET_DATA",
-        "resource:projects/proj-a/secrets/db-password",
+        "resource:db-password@proj-a",
     ) in _edges(ctx)

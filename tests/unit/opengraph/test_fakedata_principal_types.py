@@ -62,7 +62,8 @@ def test_wif_principalset_member_and_in_pool_edge():
         stage4=True,
     )
     assert nodes.get(pset) == "GCPPrincipalSet"
-    assert (pset, "FederatedPrincipalInPool", f"resource:{pool}") in edges
+    # Resource node ids are now resource:<leaf>@<project-number>; pool leaf "pool1" @ project 123.
+    assert (pset, "FederatedPrincipalInPool", "resource:pool1@123") in edges
 
 
 def _privesc(permission, resource_type, resource_name):
@@ -79,8 +80,10 @@ def _privesc(permission, resource_type, resource_name):
 def test_cloudfunction_resource_node_type():
     fn = "projects/proj-a/locations/us-central1/functions/fn1"
     nodes, edges = _run(_privesc("cloudfunctions.functions.setIamPolicy", "cloudfunction", fn))
-    assert nodes.get(f"resource:{fn}") == "GCPCloudFunction"
-    assert any(k == "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM" and d == f"resource:{fn}" for _, k, d in edges)
+    # Resource node ids are now resource:<leaf>@<project-id>; function leaf "fn1" @ proj-a.
+    fn_id = "resource:fn1@proj-a"
+    assert nodes.get(fn_id) == "GCPCloudFunction"
+    assert any(k == "CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM" and d == fn_id for _, k, d in edges)
 
 
 def test_secret_resource_node_type():
@@ -99,5 +102,7 @@ def test_secret_resource_node_type():
     _run_iam_bindings_stage(ctx)
     nodes = {n.node_id: n.node_type for n in ctx.builder.node_map.values()}
     edges = {(e.source_id, e.edge_type, e.destination_id) for e in ctx.builder.edge_map.values()}
-    assert nodes.get(f"resource:{secret}") == "GCPSecret"
-    assert any(k == "CAN_READ_SECRET_DATA" and d == f"resource:{secret}" for _, k, d in edges)
+    # Resource node ids are now resource:<leaf>@<project-id>; secret leaf "db-password" @ proj-a.
+    secret_id = "resource:db-password@proj-a"
+    assert nodes.get(secret_id) == "GCPSecret"
+    assert any(k == "CAN_READ_SECRET_DATA" and d == secret_id for _, k, d in edges)

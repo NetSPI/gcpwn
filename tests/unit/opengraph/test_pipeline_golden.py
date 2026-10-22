@@ -119,8 +119,8 @@ def _parse(block: str, arity: int) -> set[tuple[str, ...]]:
 
 
 GOLDEN_NODES = """
-cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm1	GCPComputeInstance
-cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm2	GCPComputeInstance
+cap:UPDATE:vm1@proj-a	GCPComputeInstance
+cap:UPDATE:vm2@proj-a	GCPComputeInstance
 external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPExternalIdentitySource
 group:eng@corp.com	GoogleGroup
 iambinding:projects/proj-a/roles/Custom@project:proj-a	GCPIamSimpleBinding
@@ -129,13 +129,13 @@ iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.g
 iambinding:roles/owner@folder:222#src:org:111	GCPIamSimpleBinding
 iambinding:roles/owner@org:111	GCPIamSimpleBinding
 iambinding:roles/owner@project:proj-a#src:org:111	GCPIamSimpleBinding
-resource:folders/222	GCPFolder
-resource:organizations/111	GCPOrganization
-resource:projects/123/locations/global/workloadIdentityPools/pool1	GCPWorkloadIdentityPool
-resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	GCPWorkloadIdentityProvider
-resource:projects/proj-a	GCPProject
-resource:projects/proj-a/zones/us-central1-a/instances/vm1	GCPComputeInstance
-resource:projects/proj-a/zones/us-central1-a/instances/vm2	GCPComputeInstance
+resource:111	GCPOrganization
+resource:222	GCPFolder
+resource:gh@123	GCPWorkloadIdentityProvider
+resource:pool1@123	GCPWorkloadIdentityPool
+resource:proj-a@proj-a	GCPProject
+resource:vm1@proj-a	GCPComputeInstance
+resource:vm2@proj-a	GCPComputeInstance
 serviceAccount:svc@proj-a.iam.gserviceaccount.com	GCPServiceAccount
 service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	GCPServiceAccountKey
 user:admin@corp.com	GoogleUser
@@ -144,30 +144,28 @@ user:bob@corp.com	GoogleUser
 """
 
 GOLDEN_EDGES = """
-external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	CanFederateWith	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
+cap:UPDATE:vm1@proj-a	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+cap:UPDATE:vm2@proj-a	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+external_identity_source:ProviderNoCondition@projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	CanFederateWith	resource:gh@123
 group:eng@corp.com	HAS_IAM_BINDING	iambinding:roles/editor@project:proj-a
-iambinding:projects/proj-a/roles/Custom@project:proj-a	CAN_MODIFY_PROJECT_IAM	resource:projects/proj-a
-iambinding:roles/editor@project:proj-a	ROLE_EDITOR	resource:projects/proj-a
+iambinding:projects/proj-a/roles/Custom@project:proj-a	CAN_MODIFY_PROJECT_IAM	resource:proj-a@proj-a
+iambinding:roles/editor@project:proj-a	ROLE_EDITOR	resource:proj-a@proj-a
 iambinding:roles/editor@project:proj-a	ROLE_EDITOR	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_CREATE_SA_ACCESS_TOKEN	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_CREATE_SA_OIDC_TOKEN	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_IMPERSONATE_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_SIGN_BLOB_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-iambinding:roles/iam.serviceAccountTokenCreator@service-account:svc@proj-a.iam.gserviceaccount.com	CAN_SIGN_JWT_AS_SA	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-iambinding:roles/owner@folder:222#src:org:111	ROLE_OWNER	resource:folders/222
-iambinding:roles/owner@org:111	ROLE_OWNER	resource:organizations/111
-iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a
-iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a/zones/us-central1-a/instances/vm1
-iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:projects/proj-a/zones/us-central1-a/instances/vm2
+iambinding:roles/owner@folder:222#src:org:111	ROLE_OWNER	resource:222
+iambinding:roles/owner@org:111	ROLE_OWNER	resource:111
+iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:proj-a@proj-a
+iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:vm1@proj-a
+iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	resource:vm2@proj-a
 iambinding:roles/owner@project:proj-a#src:org:111	ROLE_OWNER	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh	IdentityProviderInPool	resource:projects/123/locations/global/workloadIdentityPools/pool1
-resource:projects/proj-a	ExistsInProject	resource:projects/123/locations/global/workloadIdentityPools/pool1
-resource:projects/proj-a	ExistsInProject	resource:projects/123/locations/global/workloadIdentityPools/pool1/providers/gh
-resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm1
-resource:projects/proj-a	ExistsInProject	resource:projects/proj-a/zones/us-central1-a/instances/vm2
-resource:projects/proj-a	ExistsInProject	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm1	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
-cap:UPDATE:projects/proj-a/zones/us-central1-a/instances/vm2	RunsAs	serviceAccount:svc@proj-a.iam.gserviceaccount.com
+resource:gh@123	IdentityProviderInPool	resource:pool1@123
+resource:proj-a@proj-a	ExistsInProject	resource:gh@123
+resource:proj-a@proj-a	ExistsInProject	resource:pool1@123
+resource:proj-a@proj-a	ExistsInProject	resource:vm1@proj-a
+resource:proj-a@proj-a	ExistsInProject	resource:vm2@proj-a
+resource:proj-a@proj-a	ExistsInProject	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 serviceAccount:svc@proj-a.iam.gserviceaccount.com	HAS_IAM_BINDING	iambinding:projects/proj-a/roles/Custom@project:proj-a
 service_account_key:projects/proj-a/serviceAccounts/svc@proj-a.iam.gserviceaccount.com/keys/k1	ServiceAccountKeyFor	serviceAccount:svc@proj-a.iam.gserviceaccount.com
 user:admin@corp.com	CanImpersonate	user:alice@corp.com

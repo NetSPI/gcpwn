@@ -1,14 +1,16 @@
 """Fake-data tests for IAM CONDITION handling on bindings.
 
-Conditional support is currently PASS-THROUGH (placeholder): the condition is
-detected, hashed, and recorded on the binding node, but not CEL-evaluated, so
---cond-eval (conditional_evaluation) does not narrow anything. These tests pin
-that contract:
+Conditions are detected, hashed, and recorded on the binding node regardless of
+--cond-eval. With --cond-eval the conservative CEL-subset engine narrows the binding's
+own effective scopes, but ONLY to a non-empty proper subset (see iam_conditionals): a
+project-level grant conditioned on child (bucket) names matches none of its own scopes,
+so it is kept at full scope rather than dropped (no false negative). These tests pin:
 - a conditioned binding gets a deterministic `#cond:<hash>` node-id suffix and
   `conditional` / `condition_expr_raw` / `condition_hash` properties;
 - the same expression always hashes to the same node (dedup); distinct
   expressions produce distinct nodes;
-- conditional_evaluation on vs off yields IDENTICAL output (pass-through).
+- for a project binding whose condition targets child resources, --cond-eval on vs off
+  yields IDENTICAL output (keep-all-if-no-own-scope-matches), so no edge is lost.
 """
 
 from __future__ import annotations
@@ -98,8 +100,10 @@ def test_unconditioned_binding_has_no_cond_suffix():
     assert not (node.properties or {}).get("conditional")
 
 
-def test_cond_eval_is_passthrough_identical_output():
-    # --cond-eval (conditional_evaluation) currently does NOT narrow; on vs off match.
+def test_cond_eval_keeps_full_scope_when_condition_targets_child_resources():
+    # The condition scopes to prod- buckets, but the binding is on the PROJECT, whose scope
+    # matches no predicate. Narrowing must keep the project edge (not drop it), so on vs off
+    # are identical here -- the keep-all-if-no-own-scope-matches guard preventing false negatives.
     def snapshot(cond_eval):
         ctx = _run(_conditioned_iam(), cond_eval=cond_eval)
         return (

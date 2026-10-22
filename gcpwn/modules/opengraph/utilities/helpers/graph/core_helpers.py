@@ -350,6 +350,36 @@ def gcp_resource_node_type(resource_type: str | None) -> str:
     return f"GCP{token.title()}"
 
 
+def _merge_opengraph_edge_properties(
+    existing: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Deterministically merge two edge property dicts when edges collapse onto one key.
+
+    Used when node dedup redirects several incoming edges onto a single canonical node:
+    list-valued evidence (scope ids, contributing bindings/roles/permissions,
+    permission_source_summary) becomes the sorted union so the surviving edge reflects ALL
+    merged contributors, and scalar conflicts resolve to a canonical value (smaller string
+    form) so the result never depends on which edge was processed first."""
+    merged: dict[str, Any] = dict(existing or {})
+    for key, inc_val in (incoming or {}).items():
+        if key not in merged:
+            merged[key] = inc_val
+            continue
+        cur_val = merged[key]
+        if isinstance(cur_val, list) and isinstance(inc_val, list):
+            union = list(cur_val)
+            for item in inc_val:
+                if item not in union:
+                    union.append(item)
+            if union and all(isinstance(item, str) for item in union):
+                union = sorted(union)
+            merged[key] = union
+        elif cur_val != inc_val:
+            # Deterministic scalar tie-break, independent of processing order.
+            merged[key] = cur_val if str(cur_val) <= str(inc_val) else inc_val
+    return merged
+
+
 class OpenGraphBuilder:
     """
     In-memory accumulator for the OpenGraph being assembled across all pipeline stages.
@@ -416,20 +446,7 @@ class OpenGraphBuilder:
         """
         if node_id in self.node_map:
             existing = self.node_map[node_id]
-            merged = dict(existing.properties)
-            for key, value in properties.items():
-                if key not in merged and value not in (None, "", [], {}):
-                    merged[key] = value
-                    continue
-                if (
-                    key in merged
-                    and isinstance(merged.get(key), dict)
-                    and isinstance(value, dict)
-                ):
-                    merged[key] = self._merge_nested_dict_missing(
-                        dict(merged.get(key) or {}),
-                        value,
-                    )
+            merged = self._merge_nested_dict_missing(existing.properties, properties)
             chosen_type = self._prefer_node_type(existing.node_type, node_type)
             self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=chosen_type, properties=merged)
             return
@@ -489,12 +506,18 @@ class OpenGraphBuilder:
             if len(members) <= 1:
                 continue
 
-            canonical_id = min(members, key=len)
-            for old_id in members:
-                if old_id == canonical_id:
-                    continue
-
-                for old_key in [(s, e, d) for (s, e, d) in list(self.edge_map) if d == old_id]:
+            # Shortest id wins, tie-broken lexicographically so the surviving node is
+            # deterministic. Without the lexicographic tie-break, equal-length hash ids
+            # (combo_iambinding@...#<10hex>) resolved by set-iteration order, churning the
+            # surviving combo node id run-to-run and breaking graph reproducibility.
+            canonical_id = min(members, key=lambda nid: (len(nid), nid))
+            # Process merged members and their incoming edges in a stable order. When several
+            # merged nodes carry an incoming edge with the same (src, etype), those edges
+            # collapse onto one key at the canonical node; merging their properties (rather
+            # than first/last-write-wins over a set-ordered sequence) makes the surviving
+            # edge both deterministic and a faithful union of all merged evidence.
+            for old_id in sorted(member for member in members if member != canonical_id):
+                for old_key in sorted((s, e, d) for (s, e, d) in list(self.edge_map) if d == old_id):
                     src, etype, _ = old_key
                     new_key = (src, etype, canonical_id)
                     old_edge = self.edge_map.pop(old_key)
@@ -506,6 +529,15 @@ class OpenGraphBuilder:
                             properties=old_edge.properties,
                         )
                     else:
+                        existing = self.edge_map[new_key]
+                        self.edge_map[new_key] = OpenGraphEdge(
+                            source_id=existing.source_id,
+                            destination_id=existing.destination_id,
+                            edge_type=existing.edge_type,
+                            properties=_merge_opengraph_edge_properties(
+                                existing.properties, old_edge.properties
+                            ),
+                        )
                         edges_removed += 1
 
                 for out_key in [(s, e, d) for (s, e, d) in list(self.edge_map) if s == old_id]:
@@ -643,6 +675,12 @@ def _standardize(value: Any, *, flatten: bool = False):
                 normalized.append(item)
                 continue
             continue
+        # Set-derived string collections (binding ids, permissions, roles, scope ids)
+        # are produced in nondeterministic order; sort all-string lists so exports are
+        # byte-reproducible. Non-string or mixed lists (e.g. numeric resource data, where
+        # order may be meaningful) are left in their given order.
+        if normalized and all(isinstance(item, str) for item in normalized):
+            normalized = sorted(normalized)
         return normalized
     return None
 
@@ -749,6 +787,26 @@ def _canonical_scope_type(scope_type: str) -> str:
     """Normalize scope-type spellings so 'organization' and 'org' compare equal."""
     token = str(scope_type or "").strip().lower()
     return "org" if token in {"org", "organization"} else token
+
+
+def scope_ancestry_chain(start_scope: str, parent_by_name: dict[str, str]) -> list[str]:
+    """Ancestry chain ``[start, parent, grandparent, ...]`` following ``parent_by_name`` until
+    an empty parent or a cycle. Shared by principal inheritance expansion (stage 1) and deny
+    coverage (stage 6); the latter normalizes a resource-level anchor to its project first."""
+    start = str(start_scope or "").strip()
+    if not start:
+        return []
+    chain = [start]
+    seen = {start}
+    cursor = start
+    while True:
+        parent = str(parent_by_name.get(cursor, "") or "").strip()
+        if not parent or parent in seen:
+            break
+        seen.add(parent)
+        chain.append(parent)
+        cursor = parent
+    return chain
 
 
 def _readable_binding_label(binding_id: str) -> str:

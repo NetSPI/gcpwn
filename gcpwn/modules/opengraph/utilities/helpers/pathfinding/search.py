@@ -104,12 +104,23 @@ def resolve_targets(
     return TargetSet(node_ids=resolved, description=" ".join(described) or "(none)")
 
 
+def _edge_is_conditional(edge: dict) -> bool:
+    """True when an edge carries an unevaluated IAM condition.
+
+    IAM conditions are not CEL-evaluated, so a conditionally-scoped grant is emitted as if
+    unconditional (a potential over-grant). ``--exclude-conditional`` lets a defender drop
+    these from traversal; they stay in the graph and are shown by default."""
+    props = edge.get("properties") or {}
+    return bool(props.get("conditional") or props.get("condition_expr_raw"))
+
+
 def reverse_distances(
     graph: AttackGraph,
     targets: set[str],
     traversable: frozenset[str],
     *,
     max_depth: int,
+    exclude_conditional: bool = False,
 ) -> tuple[dict[str, int], dict[str, tuple[str, int]]]:
     """Multi-source BFS backwards from ``targets``.
 
@@ -129,6 +140,8 @@ def reverse_distances(
             continue
         for predecessor, edge_index in graph.radj.get(node, ()):
             if graph.edges[edge_index]["kind"] not in traversable:
+                continue
+            if exclude_conditional and _edge_is_conditional(graph.edges[edge_index]):
                 continue
             if predecessor in dist:
                 continue
@@ -165,13 +178,16 @@ def shortest_paths(
     include_containment: bool = False,
     max_depth: int = 12,
     exclude_service_agents: bool = False,
+    exclude_conditional: bool = False,
 ) -> list[RawPath]:
     """One shortest path per principal that can reach any target.
 
     Single reverse BFS over the whole target set -- the cheap default mode.
     """
     traversable = graph.traversable_kinds(include_containment=include_containment)
-    dist, succ = reverse_distances(graph, targets, traversable, max_depth=max_depth)
+    dist, succ = reverse_distances(
+        graph, targets, traversable, max_depth=max_depth, exclude_conditional=exclude_conditional
+    )
 
     candidates = (
         list(sources)
@@ -200,6 +216,7 @@ def enumerate_paths(
     max_paths: int = 250,
     max_expansions: int = 400_000,
     exclude_service_agents: bool = False,
+    exclude_conditional: bool = False,
 ) -> tuple[list[RawPath], bool]:
     """Every simple path from ``sources`` to ``targets``, shortest first.
 
@@ -212,7 +229,9 @@ def enumerate_paths(
     search before it was exhausted.
     """
     traversable = graph.traversable_kinds(include_containment=include_containment)
-    dist, _ = reverse_distances(graph, targets, traversable, max_depth=max_depth)
+    dist, _ = reverse_distances(
+        graph, targets, traversable, max_depth=max_depth, exclude_conditional=exclude_conditional
+    )
 
     candidates = [
         source
@@ -262,6 +281,8 @@ def enumerate_paths(
             if neighbour in visited:
                 continue
             if graph.edges[edge_index]["kind"] not in traversable:
+                continue
+            if exclude_conditional and _edge_is_conditional(graph.edges[edge_index]):
                 continue
             remaining = dist.get(neighbour)
             if remaining is None:

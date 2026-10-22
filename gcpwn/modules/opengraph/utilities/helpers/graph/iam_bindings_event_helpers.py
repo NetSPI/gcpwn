@@ -96,20 +96,20 @@ def collect_rule_events(
                                 else ()
                             )
                         },
-                        "matched_group_permissions": {
-                            str(group_id): normalized_token_list(permissions)
-                            for group_id, permissions in (
-                                (match.get("matched_group_permissions") or {}).items()
-                                if isinstance(match.get("matched_group_permissions"), dict)
-                                else ()
-                            )
-                        },
                         "requires_groups": list(rule.get("requires_groups") or []),
                         "multi_permission_type": str(rule.get("multi_permission_type") or "simple").strip().lower() or "simple",
                         "combo_hop": rule.get("combo_hop") or {},
                         "targets_from_permissions": set(rule.get("targets_from_permissions") or ()),
+                        # target_requires_permissions gates a combo edge on the TARGET SA actually
+                        # holding a precondition permission (e.g. CREATE_VERTEX_KFP_JOB_AS_SA requires
+                        # aiplatform.metadataStores.get). _filter_targets_requiring_perms checks the
+                        # target SA's resolved permissions in sa_project_perms_index, which only
+                        # recognizes permissions present as keys in og_permission_to_roles_map.json;
+                        # the precondition perms are now in that map, so this no longer drops
+                        # legitimate targets (holders via owner/editor/aiplatform.* roles).
+                        "target_requires_permissions": set(rule.get("target_requires_permissions") or ()),
+                        "status": str(rule.get("status") or "").strip(),
                         "privilege_escalation": True,
-                        "via": str(rule.get("via") or "").strip().lower(),
                     }
                 )
                 matched_events += 1
@@ -157,7 +157,6 @@ def collect_owner_baseline_events(
                     "emission_mode": "binding",
                     "contributor_permission_map": {entry.binding_composite_id: []},
                     "matched_group_contributors": {},
-                    "matched_group_permissions": {},
                     "requires_groups": [],
                     "multi_permission_type": "simple",
                     "combo_hop": {},

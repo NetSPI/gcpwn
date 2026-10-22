@@ -54,7 +54,6 @@ _WIF_GKE_CLUSTER_SELECTOR_RE = re.compile(
 # Shared progress helpers (see UtilityTools); aliased so the call sites below
 # keep their existing names.
 _print_inline_progress = UtilityTools.print_inline_progress
-_progress_interval = UtilityTools.progress_interval
 _should_emit_progress = UtilityTools.should_emit_progress
 
 
@@ -643,288 +642,108 @@ def _add_compute_executes_with_edges(
     return edges_added
 
 
-def _add_cloudrun_runs_as_edges(
+def _emit_runs_as_edge(
     context,
     *,
-    cloudrun_services_rows: Iterable[dict[str, Any]] | None,
-    cloudrun_jobs_rows: Iterable[dict[str, Any]] | None,
+    row: dict[str, Any],
+    resource_type_token: str,
+    source: str,
+    email: str | None,
 ) -> int:
+    """Emit the shared ``resource -> cap:UPDATE -> RunsAs -> serviceAccount:<email>`` topology.
+
+    Every ``_add_*_runs_as_edges`` helper shares this tail; only SA-email extraction,
+    the resource-type token, and the ``source`` string vary per service. Returns 1 when
+    a new RunsAs edge was added, else 0.
     """
-    Add:
-      cloudrun_service/job -> RunsAs -> serviceAccount:<email>
-    """
+    project_id = str(row.get("project_id") or "").strip()
+    resource_name = str(row.get("name") or "").strip()
+    email = str(email or "").strip()
+    if not project_id or not resource_name or not email:
+        return 0
+    member = f"serviceAccount:{email}"
+    principal_id = principal_node_id(member)
+    if not principal_id:
+        return 0
+    node_type = gcp_resource_node_type(resource_type_token)
+    context.builder.add_node(
+        principal_id,
+        principal_type(member),
+        **principal_member_properties(member),
+        source=source,
+    )
+    # Seed the actual resource node so setIamPolicy edges have a target.
+    context.builder.add_node(
+        resource_node_id(resource_name),
+        node_type,
+        name=resource_name,
+        resource_name=resource_name,
+        project_id=project_id,
+        source=source,
+    )
+    resource_cap_update = cap_update_node_id(resource_name)
+    context.builder.add_node(
+        resource_cap_update,
+        node_type,
+        name=resource_name,
+        resource_name=resource_name,
+        project_id=project_id,
+        source=source,
+    )
+    edge_key = (resource_cap_update, "RunsAs", principal_id)
+    if edge_key in context.builder.edge_map:
+        return 0
+    context.builder.add_edge(
+        resource_cap_update,
+        principal_id,
+        "RunsAs",
+        source=source,
+        project_id=project_id,
+        instance_resource=resource_name,
+        service_account_email=email,
+    )
+    return 1
+
+
+def _emit_runs_as_edges_for_rows(
+    context,
+    rows: Iterable[dict[str, Any]] | None,
+    *,
+    resource_type_token: str,
+    source: str,
+    email_fn,
+) -> int:
+    """resource -> RunsAs -> serviceAccount:<email> for each row; the SA email per row comes
+    from email_fn(row). One generic iterator for every RunsAs-emitting resource family."""
     edges_added = 0
-
-    def _process(rows, resource_type: str, *, is_job: bool) -> None:
-        nonlocal edges_added
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            project_id = str(row.get("project_id") or "").strip()
-            resource_name = str(row.get("name") or "").strip()
-            if not project_id or not resource_name:
-                continue
-            email = _extract_cloudrun_service_account(row, is_job=is_job)
-            if not email:
-                continue
-            resource_node = resource_node_id(resource_name)
-            resource_cap_update = cap_update_node_id(resource_name)
-            member = f"serviceAccount:{email}"
-            principal_id = principal_node_id(member)
-            if not principal_id:
-                continue
-            _cr_source = f"cloudrun_{'jobs' if is_job else 'services'}"
-            context.builder.add_node(
-                principal_id,
-                principal_type(member),
-                **principal_member_properties(member),
-                source=_cr_source,
+    for row in rows or []:
+        if isinstance(row, dict):
+            edges_added += _emit_runs_as_edge(
+                context, row=row, resource_type_token=resource_type_token,
+                source=source, email=email_fn(row),
             )
-            # Seed the actual resource node so setIamPolicy edges have a target.
-            context.builder.add_node(
-                resource_node,
-                gcp_resource_node_type("cloudrunjob" if is_job else "cloudrunservice"),
-                name=resource_name,
-                resource_name=resource_name,
-                project_id=project_id,
-                source=_cr_source,
-            )
-            context.builder.add_node(
-                resource_cap_update,
-                gcp_resource_node_type("cloudrunjob" if is_job else "cloudrunservice"),
-                name=resource_name,
-                resource_name=resource_name,
-                project_id=project_id,
-                source=_cr_source,
-            )
-            edge_key = (resource_cap_update, "RunsAs", principal_id)
-            if edge_key in context.builder.edge_map:
-                continue
-            context.builder.add_edge(
-                resource_cap_update,
-                principal_id,
-                "RunsAs",
-                source=_cr_source,
-                project_id=project_id,
-                instance_resource=resource_name,
-                service_account_email=email,
-            )
-            edges_added += 1
-
-    _process(cloudrun_services_rows, "cloudrunservice", is_job=False)
-    _process(cloudrun_jobs_rows, "cloudrunjob", is_job=True)
     return edges_added
 
 
-def _add_cloudfunction_runs_as_edges(
-    context,
-    *,
-    cloudfunctions_functions_rows: Iterable[dict[str, Any]] | None,
-) -> int:
-    """
-    Add:
-      cloudfunction -> RunsAs -> serviceAccount:<email>
-
-    Gen2 functions store the SA in service_config.service_account_email.
-    Gen1 functions store it in build_config.service_account_email.
-    """
-    edges_added = 0
-    for row in cloudfunctions_functions_rows or []:
-        if not isinstance(row, dict):
-            continue
-        project_id = str(row.get("project_id") or "").strip()
-        resource_name = str(row.get("name") or "").strip()
-        if not project_id or not resource_name:
-            continue
-        service_config = parse_json_value(row.get("service_config"), default=None)
-        build_config = parse_json_value(row.get("build_config"), default=None)
-        email = ""
-        if isinstance(service_config, dict):
-            email = str(service_config.get("service_account_email") or "").strip().lower()
-        if not email and isinstance(build_config, dict):
-            email = str(build_config.get("service_account_email") or "").strip().lower()
-        if not email:
-            continue
-        resource_node = resource_node_id(resource_name)
-        resource_cap_update = cap_update_node_id(resource_name)
-        member = f"serviceAccount:{email}"
-        principal_id = principal_node_id(member)
-        if not principal_id:
-            continue
-        context.builder.add_node(
-            principal_id,
-            principal_type(member),
-            **principal_member_properties(member),
-            source="cloudfunctions_functions",
-        )
-        context.builder.add_node(
-            resource_node,
-            gcp_resource_node_type("cloudfunction"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudfunctions_functions",
-        )
-        context.builder.add_node(
-            resource_cap_update,
-            gcp_resource_node_type("cloudfunction"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudfunctions_functions",
-        )
-        edge_key = (resource_cap_update, "RunsAs", principal_id)
-        if edge_key in context.builder.edge_map:
-            continue
-        context.builder.add_edge(
-            resource_cap_update,
-            principal_id,
-            "RunsAs",
-            source="cloudfunctions_functions",
-            project_id=project_id,
-            instance_resource=resource_name,
-            service_account_email=email,
-        )
-        edges_added += 1
-    return edges_added
+def _cloudfunction_service_account(row: dict[str, Any]) -> str:
+    """Gen2 SA: service_config.service_account_email; Gen1: build_config.service_account_email."""
+    service_config = parse_json_value(row.get("service_config"), default=None)
+    build_config = parse_json_value(row.get("build_config"), default=None)
+    email = ""
+    if isinstance(service_config, dict):
+        email = str(service_config.get("service_account_email") or "").strip().lower()
+    if not email and isinstance(build_config, dict):
+        email = str(build_config.get("service_account_email") or "").strip().lower()
+    return email
 
 
-def _add_cloudscheduler_runs_as_edges(
-    context,
-    *,
-    cloudscheduler_jobs_rows: Iterable[dict[str, Any]] | None,
-) -> int:
-    """
-    Add:
-      cloudscheduler_job -> RunsAs -> serviceAccount:<email>
-    """
-    edges_added = 0
-    for row in cloudscheduler_jobs_rows or []:
-        if not isinstance(row, dict):
-            continue
-        project_id = str(row.get("project_id") or "").strip()
-        resource_name = str(row.get("name") or "").strip()
-        if not project_id or not resource_name:
-            continue
-        email = str(row.get("target_sa_email") or "").strip().lower()
-        if not email:
-            continue
-        resource_node = resource_node_id(resource_name)
-        resource_cap_update = cap_update_node_id(resource_name)
-        member = f"serviceAccount:{email}"
-        principal_id = principal_node_id(member)
-        if not principal_id:
-            continue
-        context.builder.add_node(
-            principal_id,
-            principal_type(member),
-            **principal_member_properties(member),
-            source="cloudscheduler_jobs",
-        )
-        context.builder.add_node(
-            resource_node,
-            gcp_resource_node_type("cloudschedulerjob"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudscheduler_jobs",
-        )
-        context.builder.add_node(
-            resource_cap_update,
-            gcp_resource_node_type("cloudschedulerjob"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudscheduler_jobs",
-        )
-        edge_key = (resource_cap_update, "RunsAs", principal_id)
-        if edge_key in context.builder.edge_map:
-            continue
-        context.builder.add_edge(
-            resource_cap_update,
-            principal_id,
-            "RunsAs",
-            source="cloudscheduler_jobs",
-            project_id=project_id,
-            instance_resource=resource_name,
-            service_account_email=email,
-        )
-        edges_added += 1
-    return edges_added
-
-
-def _add_cloudworkflows_runs_as_edges(
-    context,
-    *,
-    cloudworkflows_workflows_rows: Iterable[dict[str, Any]] | None,
-) -> int:
-    """
-    Add:
-      cloudworkflow -> RunsAs -> serviceAccount:<email>
-
-    The `service_account` column may be a full SA resource path
-    (projects/P/serviceAccounts/email) or a bare email.
-    """
-    edges_added = 0
-    for row in cloudworkflows_workflows_rows or []:
-        if not isinstance(row, dict):
-            continue
-        project_id = str(row.get("project_id") or "").strip()
-        resource_name = str(row.get("name") or "").strip()
-        if not project_id or not resource_name:
-            continue
-        sa_value = str(row.get("service_account") or "").strip()
-        if not sa_value:
-            continue
-        # Normalize full resource path to email
-        if "/" in sa_value:
-            email = sa_value.split("/")[-1].lower()
-        else:
-            email = sa_value.lower()
-        if not email or "@" not in email:
-            continue
-        resource_node = resource_node_id(resource_name)
-        resource_cap_update = cap_update_node_id(resource_name)
-        member = f"serviceAccount:{email}"
-        principal_id = principal_node_id(member)
-        if not principal_id:
-            continue
-        context.builder.add_node(
-            principal_id,
-            principal_type(member),
-            **principal_member_properties(member),
-            source="cloudworkflows_workflows",
-        )
-        context.builder.add_node(
-            resource_node,
-            gcp_resource_node_type("cloudworkflow"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudworkflows_workflows",
-        )
-        context.builder.add_node(
-            resource_cap_update,
-            gcp_resource_node_type("cloudworkflow"),
-            name=resource_name,
-            resource_name=resource_name,
-            project_id=project_id,
-            source="cloudworkflows_workflows",
-        )
-        edge_key = (resource_cap_update, "RunsAs", principal_id)
-        if edge_key in context.builder.edge_map:
-            continue
-        context.builder.add_edge(
-            resource_cap_update,
-            principal_id,
-            "RunsAs",
-            source="cloudworkflows_workflows",
-            project_id=project_id,
-            instance_resource=resource_name,
-            service_account_email=email,
-        )
-        edges_added += 1
-    return edges_added
+def _cloudworkflow_service_account(row: dict[str, Any]) -> str:
+    """`service_account` may be a full SA resource path (projects/P/serviceAccounts/email) or a bare email."""
+    sa_value = str(row.get("service_account") or "").strip()
+    if not sa_value:
+        return ""
+    email = sa_value.split("/")[-1].lower() if "/" in sa_value else sa_value.lower()
+    return email if "@" in email else ""
 
 
 def _add_wif_provider_pool_edges(
@@ -1311,8 +1130,16 @@ def _classify_wif_provider_source_kind(provider_row: dict[str, Any]) -> str:
 def _provider_attribute_mapping(provider_row: dict[str, Any]) -> dict[str, str]:
     if not isinstance(provider_row, dict):
         return {}
+    # Enumeration stores the attribute mapping nested under raw_json, so look
+    # there first (same unwrap the provider-node emitter does) before falling
+    # back to a top-level column; otherwise the selector-support check wrongly
+    # reports missing_provider_mapping for a provider that does map the attribute.
+    raw_payload = parse_json_value(provider_row.get("raw_json"), default=None)
+    provider_payload = raw_payload if isinstance(raw_payload, dict) else {}
     raw_mapping = parse_json_value(
-        provider_row.get("attributeMapping")
+        provider_payload.get("attributeMapping")
+        or provider_payload.get("attribute_mapping")
+        or provider_row.get("attributeMapping")
         or provider_row.get("attribute_mapping"),
         default=None,
     )
@@ -1406,6 +1233,92 @@ def _wif_selector_support_for_pool(
         "status": "unsupported",
         "support_reason": f"missing_provider_mapping:{required_mapping}",
         "matching_provider_names": [],
+    }
+
+
+# Selector kinds that pin the federated identity down to a specific external
+# identity (a repo/attribute/group/GKE workload) regardless of the provider's
+# own attribute condition.
+_WIF_SCOPED_SELECTOR_KINDS = frozenset(
+    {
+        "attribute",
+        "group",
+        "gke_service_account_name",
+        "gke_namespace",
+        "gke_cluster",
+    }
+)
+
+
+def _wif_exposure_for_principal(
+    parsed_principal: dict[str, Any],
+    provider_rows: list[dict[str, Any]] | None,
+) -> dict[str, str]:
+    """Derive an at-a-glance exposure badge for a WIF principalSet member.
+
+    Joins the binding's selector breadth (pool-wide ``/*`` vs a specific
+    attribute/subject/group) with the pool's providers (which IdP, and whether
+    any provider accepts tokens with no attribute condition) into three additive,
+    blue-team-readable properties: ``wif_exposure_tier``, ``wif_exposure_source``
+    and a combined ``wif_exposure`` badge (``tier:source``).
+
+    The tiers, broadest first:
+      - ``external_unscoped``       pool-wide binding AND at least one provider has
+                                    no attribute condition -> any identity from that
+                                    IdP can federate (the confused-deputy case).
+      - ``external_conditioned``    pool-wide binding but every provider narrows with
+                                    an attribute condition -> inspect the condition
+                                    (gcpwn does not yet parse CEL conditions).
+      - ``external_unresolved``     pool-wide binding but no provider was enumerated
+                                    for the pool -> breadth is undeterminable.
+      - ``external_scoped``         binding pins a specific repo/attribute/group/GKE
+                                    workload.
+      - ``external_pinned``         binding pins a single subject.
+
+    Note: this covers federated (signed-identity) sources only. The truly
+    anonymous/public members ``allUsers`` / ``allAuthenticatedUsers`` are their own
+    node kinds (GCPAllUsers / GCPAllAuthenticatedUsers) and are not WIF, so no WIF
+    tier is ever labelled ``anonymous``.
+    """
+    kind = str(parsed_principal.get("kind") or "").strip().lower()
+    rows = [row for row in (provider_rows or []) if isinstance(row, dict)]
+
+    source_kinds: set[str] = set()
+    any_unconditioned = False
+    for row in rows:
+        raw_payload = parse_json_value(row.get("raw_json"), default=None)
+        payload = raw_payload if isinstance(raw_payload, dict) else dict(row)
+        source_kinds.add(_classify_wif_provider_source_kind(payload))
+        condition = str(
+            payload.get("attributeCondition")
+            or payload.get("attribute_condition")
+            or row.get("attributeCondition")
+            or row.get("attribute_condition")
+            or ""
+        ).strip()
+        if not condition:
+            any_unconditioned = True
+
+    source = "+".join(sorted(source_kinds)) if source_kinds else "unknown"
+
+    if kind == "pool":
+        if not rows:
+            tier = "external_unresolved"
+        elif any_unconditioned:
+            tier = "external_unscoped"
+        else:
+            tier = "external_conditioned"
+    elif kind == "subject":
+        tier = "external_pinned"
+    elif kind in _WIF_SCOPED_SELECTOR_KINDS:
+        tier = "external_scoped"
+    else:
+        tier = "external_scoped"
+
+    return {
+        "wif_exposure_tier": tier,
+        "wif_exposure_source": source,
+        "wif_exposure": f"{tier}:{source}",
     }
 
 
@@ -1509,10 +1422,12 @@ def _add_wif_principal_pool_edges(
                     ).strip()
                     break
 
+        pool_provider_rows = provider_rows_by_pool_name.get(pool_name, []) if pool_name else []
         selector_support = _wif_selector_support_for_pool(
             parsed_principal=parsed,
-            provider_rows=provider_rows_by_pool_name.get(pool_name, []) if pool_name else [],
+            provider_rows=pool_provider_rows,
         )
+        exposure = _wif_exposure_for_principal(parsed, pool_provider_rows)
 
         if not pool_name:
             continue
@@ -1524,6 +1439,7 @@ def _add_wif_principal_pool_edges(
             wif_selector_support_status=str(selector_support.get("status") or ""),
             wif_selector_support_reason=str(selector_support.get("support_reason") or ""),
             wif_supporting_provider_names=list(selector_support.get("matching_provider_names") or []),
+            **exposure,
         )
         pool_row = pool_rows_by_name.get(pool_name, {})
         pool_node_id = resource_node_id(pool_name)
@@ -1569,6 +1485,7 @@ def _add_wif_principal_pool_edges(
             wif_selector_support_status=str(selector_support.get("status") or ""),
             wif_selector_support_reason=str(selector_support.get("support_reason") or ""),
             wif_supporting_provider_names=list(selector_support.get("matching_provider_names") or []),
+            **exposure,
         )
         edges_added += 1
 
@@ -1662,20 +1579,48 @@ def _enrich_wif_provider_nodes(
             conditionals_added=False,
         )
 
-        edge_key = (external_node_id, "CanFederateWith", provider_node_id)
-        if edge_key in context.builder.edge_map:
-            continue
-        context.builder.add_edge(
-            external_node_id,
-            provider_node_id,
-            "CanFederateWith",
-            source="resource_expansion",
-            provider_name=provider_name,
-            provider_source_kind=provider_source_kind,
-            issuer_uri=issuer_uri or None,
-            conditionals_added=False,
-        )
-        edges_added += 1
+        if (external_node_id, "CanFederateWith", provider_node_id) not in context.builder.edge_map:
+            context.builder.add_edge(
+                external_node_id,
+                provider_node_id,
+                "CanFederateWith",
+                source="resource_expansion",
+                provider_name=provider_name,
+                provider_source_kind=provider_source_kind,
+                issuer_uri=issuer_uri or None,
+                conditionals_added=False,
+            )
+            edges_added += 1
+
+        # A provider with NO attribute condition accepts ANY token from its issuer, so
+        # any identity from this external source satisfies the pool-wide ("/*")
+        # principalSet selector and assumes its grants. Link the external source to
+        # those pool-wide principalSets so the anonymous-federation blast radius is
+        # traversable onward to the SAs (the external source was otherwise a dead-end
+        # sink that only pointed into the pool). Attribute/subject/group-scoped
+        # principalSets are deliberately NOT linked: the external identity cannot forge
+        # the signed claim (e.g. assertion.repository) those selectors require.
+        provider_pool_name = str(row.get("pool_name") or "").strip()
+        if provider_pool_name:
+            pool_wide_principal_ids = sorted(
+                node.node_id
+                for node in context.builder.node_map.values()
+                if node.node_type == "GCPPrincipalSet"
+                and str((node.properties or {}).get("wif_principal_kind") or "") == "pool"
+                and str((node.properties or {}).get("wif_pool_name") or "") == provider_pool_name
+            )
+            for principal_id in pool_wide_principal_ids:
+                if (external_node_id, "CanFederateAs", principal_id) in context.builder.edge_map:
+                    continue
+                context.builder.add_edge(
+                    external_node_id,
+                    principal_id,
+                    "CanFederateAs",
+                    source="resource_expansion",
+                    provider_name=provider_name,
+                    provider_source_kind=provider_source_kind,
+                )
+                edges_added += 1
 
     return edges_added
 
@@ -1943,22 +1888,32 @@ def build_resource_expansion_graph(context) -> dict[str, int | bool]:
         context,
         cloudcompute_instances_rows=cloudcompute_instances_rows,
     )
-    section_stats["cloudrun_runs_as_edges_added"] = _add_cloudrun_runs_as_edges(
-        context,
-        cloudrun_services_rows=cloudrun_services_rows,
-        cloudrun_jobs_rows=cloudrun_jobs_rows,
+    section_stats["cloudrun_runs_as_edges_added"] = (
+        _emit_runs_as_edges_for_rows(
+            context, cloudrun_services_rows,
+            resource_type_token="cloudrunservice", source="cloudrun_services",
+            email_fn=lambda row: _extract_cloudrun_service_account(row, is_job=False),
+        )
+        + _emit_runs_as_edges_for_rows(
+            context, cloudrun_jobs_rows,
+            resource_type_token="cloudrunjob", source="cloudrun_jobs",
+            email_fn=lambda row: _extract_cloudrun_service_account(row, is_job=True),
+        )
     )
-    section_stats["cloudfunction_runs_as_edges_added"] = _add_cloudfunction_runs_as_edges(
-        context,
-        cloudfunctions_functions_rows=cloudfunctions_functions_rows,
+    section_stats["cloudfunction_runs_as_edges_added"] = _emit_runs_as_edges_for_rows(
+        context, cloudfunctions_functions_rows,
+        resource_type_token="cloudfunction", source="cloudfunctions_functions",
+        email_fn=_cloudfunction_service_account,
     )
-    section_stats["cloudscheduler_runs_as_edges_added"] = _add_cloudscheduler_runs_as_edges(
-        context,
-        cloudscheduler_jobs_rows=cloudscheduler_jobs_rows,
+    section_stats["cloudscheduler_runs_as_edges_added"] = _emit_runs_as_edges_for_rows(
+        context, cloudscheduler_jobs_rows,
+        resource_type_token="cloudschedulerjob", source="cloudscheduler_jobs",
+        email_fn=lambda row: str(row.get("target_sa_email") or "").strip().lower(),
     )
-    section_stats["cloudworkflow_runs_as_edges_added"] = _add_cloudworkflows_runs_as_edges(
-        context,
-        cloudworkflows_workflows_rows=cloudworkflows_workflows_rows,
+    section_stats["cloudworkflow_runs_as_edges_added"] = _emit_runs_as_edges_for_rows(
+        context, cloudworkflows_workflows_rows,
+        resource_type_token="cloudworkflow", source="cloudworkflows_workflows",
+        email_fn=_cloudworkflow_service_account,
     )
     processed_sections += 1
     _print_stage4_section_progress(

@@ -153,14 +153,15 @@ def _interactive_prompt_inputs(session, default_url: str) -> dict[str, str] | No
 
 
 def _load_cached_signature_catalog(session) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
-    raw_catalog = session.get_data("opengraph_ui_config") or []
-    for raw_entry in raw_catalog:
+    deduped: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for raw_entry in session.get_data("opengraph_ui_config") or []:
         token_id = str(raw_entry.get("custom_nodes_token_id") or "").strip()
         token_key = str(raw_entry.get("custom_nodes_token_key") or "").strip()
-        if not token_id or not token_key:
+        if not token_id or not token_key or token_id in seen_ids:
             continue
-        entries.append(
+        seen_ids.add(token_id)
+        deduped.append(
             {
                 "custom_nodes_url": str(raw_entry.get("custom_nodes_url") or "").strip(),
                 "auth_mode": str(raw_entry.get("auth_mode") or "signature").strip().lower() or "signature",
@@ -168,15 +169,6 @@ def _load_cached_signature_catalog(session) -> list[dict[str, str]]:
                 "custom_nodes_token_key": token_key,
             }
         )
-
-    deduped: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
-    for entry in entries:
-        token_id = str(entry.get("custom_nodes_token_id") or "").strip()
-        if not token_id or token_id in seen_ids:
-            continue
-        seen_ids.add(token_id)
-        deduped.append(entry)
     return deduped
 
 

@@ -68,7 +68,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     targets.add_argument(
         "--at-scope",
-        help="Restrict targets to a scope subtree, e.g. projects/my-proj, folders/123, organizations/456",
+        help=(
+            "Restrict targets to a scope and everything under it, e.g. "
+            "projects/my-proj, folders/123, organizations/456 (the bare id my-proj "
+            "or a project number also work). Combine with --to-role/--to-kind/--to-sa "
+            "for a focused query like 'all ways to reach roles/owner on projects/my-proj'."
+        ),
     )
 
     sources = parser.add_argument_group("Source selection")
@@ -102,6 +107,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--exclude-service-agents",
         action="store_true",
         help="Skip Google-managed service agents as path sources (cuts a lot of expected-by-design noise)",
+    )
+    search.add_argument(
+        "--exclude-conditional",
+        action="store_true",
+        help=(
+            "Skip IAM-condition-scoped edges during traversal. Conditions are not CEL-evaluated, "
+            "so a conditionally-scoped grant is modeled as unconditional (a potential over-grant); "
+            "this drops those edges. They remain in the graph and are included by default."
+        ),
     )
     search.add_argument(
         "--no-direct",
@@ -239,6 +253,7 @@ def run_module(user_args, session):
             max_paths=args.max_paths,
             max_expansions=args.max_expansions,
             exclude_service_agents=args.exclude_service_agents,
+            exclude_conditional=args.exclude_conditional,
         )
         # Raw walks differing only in which binding carried the same role at the
         # same scope are one finding to a human -- keep the first (shortest).
@@ -261,6 +276,7 @@ def run_module(user_args, session):
             include_containment=args.include_containment,
             max_depth=max_depth,
             exclude_service_agents=args.exclude_service_agents,
+            exclude_conditional=args.exclude_conditional,
         )
         mode = "shortest-path per principal"
 
@@ -321,7 +337,9 @@ def run_module(user_args, session):
     }
 
     if args.as_json:
-        report = paths_to_json(graph, paths, config=config, query=query)
+        # Apply the same display cap as the text report so the two agree on the path set;
+        # paths_total/paths_truncated in the JSON disclose when more exist.
+        report = paths_to_json(graph, paths, config=config, query=query, detail_limit=args.max_paths)
     else:
         report = render_report(
             graph,

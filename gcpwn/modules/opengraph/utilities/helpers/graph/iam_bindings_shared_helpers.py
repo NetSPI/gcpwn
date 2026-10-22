@@ -28,7 +28,7 @@ Edge kind contract (do not rename without updating wiki + export):
   HasImpliedPermissions principal -> implied GCPIamSimpleBinding (inferred stage)
   ROLE_OWNER/ROLE_EDITOR  collapsed dangerous edges for owner/editor roles
   per-rule edge kinds come from the `edge_type` (single) or `edge` (combo) field in
-  og_privilege_escalation_paths.json
+  og_defined_edges.json
 """
 
 import hashlib
@@ -54,6 +54,7 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphEdge,
     OpenGraphBuilder,
     OpenGraphNode,
+    _merge_opengraph_edge_properties,
     canonical_target_node_ref,
     cap_update_node_id,
     gcp_resource_node_type,
@@ -70,144 +71,14 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
 )
 
 
-# Permission prefix -> canonical Google API service (used by conditional narrowing).
-_PERMISSION_SERVICE_PREFIX_MAP: tuple[tuple[str, str], ...] = (
-    ("resourcemanager.", "cloudresourcemanager.googleapis.com"),
-    ("compute.", "compute.googleapis.com"),
-    ("storage.", "storage.googleapis.com"),
-    ("cloudfunctions.", "cloudfunctions.googleapis.com"),
-    ("iam.", "iam.googleapis.com"),
-    ("secretmanager.", "secretmanager.googleapis.com"),
-    ("cloudkms.", "cloudkms.googleapis.com"),
-    ("run.", "run.googleapis.com"),
-    ("artifactregistry.", "artifactregistry.googleapis.com"),
-    ("pubsub.", "pubsub.googleapis.com"),
-    ("servicedirectory.", "servicedirectory.googleapis.com"),
-    ("spanner.", "spanner.googleapis.com"),
-    ("cloudtasks.", "cloudtasks.googleapis.com"),
-)
-
-# Permission prefix -> canonical full resource type(s) used by IAM Conditions.
-_PERMISSION_RESOURCE_TYPE_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("resourcemanager.organizations.", ("cloudresourcemanager.googleapis.com/Organization",)),
-    ("resourcemanager.folders.", ("cloudresourcemanager.googleapis.com/Folder",)),
-    ("resourcemanager.projects.", ("cloudresourcemanager.googleapis.com/Project",)),
-    ("compute.instances.", ("compute.googleapis.com/Instance",)),
-    ("storage.buckets.", ("storage.googleapis.com/Bucket",)),
-    ("storage.objects.", ("storage.googleapis.com/Object",)),
-    ("cloudfunctions.functions.", ("cloudfunctions.googleapis.com/CloudFunction",)),
-    ("iam.serviceAccounts.", ("iam.googleapis.com/ServiceAccount",)),
-    ("iam.serviceAccountKeys.", ("iam.googleapis.com/ServiceAccountKey",)),
-    ("iam.roles.", ("iam.googleapis.com/Role",)),
-    ("secretmanager.secrets.", ("secretmanager.googleapis.com/Secret",)),
-    ("secretmanager.versions.", ("secretmanager.googleapis.com/SecretVersion",)),
-    ("cloudkms.keyRings.", ("cloudkms.googleapis.com/KeyRing",)),
-    ("cloudkms.cryptoKeys.", ("cloudkms.googleapis.com/CryptoKey",)),
-    ("run.services.", ("run.googleapis.com/Service",)),
-    ("run.jobs.", ("run.googleapis.com/Job",)),
-    ("artifactregistry.repositories.", ("artifactregistry.googleapis.com/Repository",)),
-    ("pubsub.topics.", ("pubsub.googleapis.com/Topic",)),
-    ("pubsub.subscriptions.", ("pubsub.googleapis.com/Subscription",)),
-    ("pubsub.snapshots.", ("pubsub.googleapis.com/Snapshot",)),
-    ("pubsub.schemas.", ("pubsub.googleapis.com/Schema",)),
-    ("servicedirectory.namespaces.", ("servicedirectory.googleapis.com/Namespace",)),
-    ("servicedirectory.services.", ("servicedirectory.googleapis.com/Service",)),
-    ("spanner.instances.", ("spanner.googleapis.com/Instance",)),
-    ("spanner.databases.", ("spanner.googleapis.com/Database",)),
-    ("cloudtasks.queues.", ("cloudtasks.googleapis.com/Queue",)),
-    ("cloudbuild.builds.", ("cloudbuild.googleapis.com/Build",)),
-)
-
-# Internal resource_type token -> owning Google API service.
-_RESOURCE_TYPE_TO_SERVICE: dict[str, str] = {
-    "org": "cloudresourcemanager.googleapis.com",
-    "folder": "cloudresourcemanager.googleapis.com",
-    "project": "cloudresourcemanager.googleapis.com",
-    "computeinstance": "compute.googleapis.com",
-    "bucket": "storage.googleapis.com",
-    "cloudfunction": "cloudfunctions.googleapis.com",
-    "service-account": "iam.googleapis.com",
-    "secrets": "secretmanager.googleapis.com",
-    "kmskeyring": "cloudkms.googleapis.com",
-    "kmscryptokey": "cloudkms.googleapis.com",
-    "cloudrunservice": "run.googleapis.com",
-    "cloudrunjob": "run.googleapis.com",
-    "artifactregistryrepo": "artifactregistry.googleapis.com",
-    "pubsubtopic": "pubsub.googleapis.com",
-    "pubsubsubscription": "pubsub.googleapis.com",
-    "pubsubschema": "pubsub.googleapis.com",
-    "pubsubsnapshot": "pubsub.googleapis.com",
-    "servicedirectorynamespace": "servicedirectory.googleapis.com",
-    "servicedirectoryservice": "servicedirectory.googleapis.com",
-    "spannerinstance": "spanner.googleapis.com",
-    "spannerdatabase": "spanner.googleapis.com",
-    "cloudtasksqueue": "cloudtasks.googleapis.com",
-    "cloudbuildbuild": "cloudbuild.googleapis.com",
-}
-
-# Internal resource_type token -> canonical full resource type(s).
-_RESOURCE_TYPE_TO_FULL_TYPE: dict[str, tuple[str, ...]] = {
-    "org": ("cloudresourcemanager.googleapis.com/Organization",),
-    "folder": ("cloudresourcemanager.googleapis.com/Folder",),
-    "project": ("cloudresourcemanager.googleapis.com/Project",),
-    "computeinstance": ("compute.googleapis.com/Instance",),
-    "bucket": ("storage.googleapis.com/Bucket",),
-    "cloudfunction": ("cloudfunctions.googleapis.com/CloudFunction",),
-    "service-account": ("iam.googleapis.com/ServiceAccount",),
-    "secrets": ("secretmanager.googleapis.com/Secret",),
-    "kmskeyring": ("cloudkms.googleapis.com/KeyRing",),
-    "kmscryptokey": ("cloudkms.googleapis.com/CryptoKey",),
-    "cloudrunservice": ("run.googleapis.com/Service",),
-    "cloudrunjob": ("run.googleapis.com/Job",),
-    "artifactregistryrepo": ("artifactregistry.googleapis.com/Repository",),
-    "pubsubtopic": ("pubsub.googleapis.com/Topic",),
-    "pubsubsubscription": ("pubsub.googleapis.com/Subscription",),
-    "pubsubsnapshot": ("pubsub.googleapis.com/Snapshot",),
-    "pubsubschema": ("pubsub.googleapis.com/Schema",),
-    "servicedirectorynamespace": ("servicedirectory.googleapis.com/Namespace",),
-    "servicedirectoryservice": ("servicedirectory.googleapis.com/Service",),
-    "spannerinstance": ("spanner.googleapis.com/Instance",),
-    "spannerdatabase": ("spanner.googleapis.com/Database",),
-    "cloudtasksqueue": ("cloudtasks.googleapis.com/Queue",),
-    "cloudbuildbuild": ("cloudbuild.googleapis.com/Build",),
-}
-
-_PREFERRED_RULE_RESOURCE_TOKENS: frozenset[str] = frozenset(
-    {
-        "org",
-        "folder",
-        "project",
-        "computeinstance",
-        "bucket",
-        "cloudfunction",
-        "service-account",
-        "secrets",
-        "kmskeyring",
-        "kmscryptokey",
-        "kmskeyversion",
-        "cloudrunservice",
-        "cloudrunjob",
-        "artifactregistryrepo",
-        "pubsubtopic",
-        "pubsubsubscription",
-        "pubsubsnapshot",
-        "pubsubschema",
-        "servicedirectorynamespace",
-        "servicedirectoryservice",
-        "spannerinstance",
-        "spannerdatabase",
-        "cloudtasksqueue",
-        "cloudsqlinstance",
-        "bigquerydataset",
-        "bigquerytable",
-        "bigqueryroutine",
-        "cloudbuildbuild",
-        # GKE cluster and fleet membership targets for GKE/GKEHub PE edges.
-        # Without these, rules with on="k8scluster"/"fleetmembership" silently
-        # fall back to ALL project resources, generating thousands of false-positive edges.
-        "k8scluster",
-        "fleetmembership",
-    }
+from gcpwn.modules.opengraph.utilities.helpers.graph.iam_permission_taxonomy import (
+    _RESOURCE_TYPE_TO_SERVICE,
+    _RESOURCE_TYPE_TO_FULL_TYPE,
+    _PREFERRED_RULE_RESOURCE_TOKENS,
+    _permission_service,
+    _services_for_permissions,
+    _permission_resource_types,
+    _resource_types_for_permissions,
 )
 
 _COLLAPSED_DANGEROUS_ROLE_EDGE_RULES: dict[str, dict[str, str]] = {
@@ -376,27 +247,37 @@ def existing_binding_rule_targets(builder) -> set[tuple[str, str, str]]:
     Return {(principal_id, edge_type, destination_id)} already proven by
     explicit IAM/combo bindings in the current graph.
     """
-    grant_owner: dict[str, str] = {}
+    # A binding node can be the destination of HAS_IAM_BINDING edges from SEVERAL
+    # members (one per principal in a multi-member binding). Map each binding node
+    # to the SET of all its members, not just the last-seen one, so the dedup guard
+    # proves the direct edge for every member (otherwise INFERRED_<X> duplicates of
+    # the other members' direct <X> edges are not suppressed).
+    grant_owner: dict[str, set[str]] = {}
     for edge in builder.edge_map.values():
         if edge.edge_type in {"HAS_IAM_BINDING", "HAS_COMBO_BINDING"}:
-            grant_owner[str(edge.destination_id or "").strip()] = str(edge.source_id or "").strip()
+            grant_owner.setdefault(str(edge.destination_id or "").strip(), set()).add(
+                str(edge.source_id or "").strip()
+            )
 
     proven: set[tuple[str, str, str]] = set()
     for edge in builder.edge_map.values():
         source_id = str(edge.source_id or "").strip()
-        owner = grant_owner.get(source_id)
-        if not owner:
+        owners = grant_owner.get(source_id)
+        if not owners:
             continue
         destination_id = str(edge.destination_id or "").strip()
         edge_type = str(edge.edge_type or "").strip()
-        proven.add((owner, edge_type, destination_id))
-
+        wrapped_types: list[str] = []
         if edge_type in {"ROLE_OWNER", "ROLE_EDITOR"}:
             properties = dict(edge.properties or {})
             wrapped_types = normalized_token_list(
                 list(properties.get("dangerous_edge_types") or [])
                 + list(properties.get("dangerous_rule_names") or [])
             )
+        for owner in owners:
+            if not owner:
+                continue
+            proven.add((owner, edge_type, destination_id))
             for wrapped_type in wrapped_types:
                 proven.add((owner, wrapped_type, destination_id))
     return proven
@@ -447,6 +328,13 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
                         if str(item).strip()
                     },
                 }
+                # Carry the resource-metadata gate through normalization. Without this,
+                # require_node_sa / require_workload_pool / require_active_execution
+                # (desugared into resource_metadata_require) are silently dropped here,
+                # making those gates no-ops in the matching path.
+                metadata_require = raw_selector_value.get("resource_metadata_require")
+                if isinstance(metadata_require, dict) and metadata_require:
+                    selector["resource_metadata_require"] = dict(metadata_require)
         return selector
 
     requires_groups: list[dict[str, Any]] = []
@@ -595,6 +483,12 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
         "via": str(raw_rule.get("via") or "").strip().lower(),
         "include_all_only": bool(raw_rule.get("include_all_only", False)),
         "target_requires_permissions": list(_list_or_empty(raw_rule.get("target_requires_permissions"))),
+        # Confidence tier (VALIDATED / CONFIRMED / PROPOSED); surfaced onto emitted edges so
+        # attack-path output can rank live-validated edges above theoretical ones.
+        "status": str(raw_rule.get("status") or "").strip().upper(),
+        # Extra precondition a source principal must satisfy before the edge is real
+        # (e.g. source_must_hold_custom_role for UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS).
+        "prerequisite_binding": str(raw_rule.get("prerequisite_binding") or "").strip(),
     }
 
 
@@ -860,42 +754,6 @@ def _requirement_permissions(rule: dict[str, Any]) -> set[str]:
     )
 
 
-def _permission_service(permission: str) -> str:
-    token = str(permission or "").strip()
-    if not token:
-        return ""
-    for prefix, service in _PERMISSION_SERVICE_PREFIX_MAP:
-        if token.startswith(prefix):
-            return service
-    return ""
-
-
-def _services_for_permissions(permissions: Iterable[str]) -> set[str]:
-    return {
-        service
-        for permission in (permissions or ())
-        if (service := _permission_service(str(permission or "")))
-    }
-
-
-def _permission_resource_types(permission: str) -> set[str]:
-    token = str(permission or "").strip()
-    if not token:
-        return set()
-    for prefix, resource_types in _PERMISSION_RESOURCE_TYPE_MAP:
-        if token.startswith(prefix):
-            return set(resource_types or ())
-    return set()
-
-
-def _resource_types_for_permissions(permissions: Iterable[str]) -> set[str]:
-    return {
-        resource_type
-        for permission in (permissions or ())
-        for resource_type in _permission_resource_types(str(permission or ""))
-    }
-
-
 def _match_rule_against_permissions(rule: dict[str, Any], permissions: set[str]) -> tuple[bool, set[str], dict[str, set[str]]]:
     seen_perms = set(permissions or ())
     requires_all = set(rule.get("requires_all", set()))
@@ -932,6 +790,64 @@ def _match_rule_against_permissions(rule: dict[str, Any], permissions: set[str])
     return True, matched, matched_group_permissions
 
 
+_SA_EMAIL_SUFFIX = ".iam.gserviceaccount.com"
+
+
+def _sa_home_project_from_email(email: str) -> str:
+    """Home project encoded in a service-account email, or "" if the domain doesn't name it.
+
+    ``x@PROJECT.iam.gserviceaccount.com`` -> PROJECT; ``PROJECT@appspot.gserviceaccount.com``
+    -> PROJECT. Compute-default (``developer.gserviceaccount.com``) emails carry a project
+    NUMBER, not id, so they return "" and the caller falls back to the recorded project id."""
+    token = str(email or "").strip()
+    token = token.split("/serviceAccounts/")[-1]
+    if token.startswith("serviceAccount:"):
+        token = token.split(":", 1)[1]
+    if "@" not in token:
+        return ""
+    local, _, domain = token.partition("@")
+    if domain.endswith(_SA_EMAIL_SUFFIX):
+        return domain[: -len(_SA_EMAIL_SUFFIX)]
+    if domain == "appspot.gserviceaccount.com" and local:
+        return local
+    return ""
+
+
+def _sa_home_project(entry: "BindingPlusScopeEntry") -> str:
+    """Home project of a service-account-scoped binding contributor.
+
+    The SA email encodes its true home project, which is the project whose
+    ``iam.disableCrossProjectServiceAccountUsage`` policy governs cross-project impersonation
+    -- authoritative even when the binding row's ``project_id`` was stamped from the
+    actor/resource side. Falls back to the recorded ``project_id`` for SA domains that don't
+    name the project."""
+    return _sa_home_project_from_email(str(getattr(entry, "attached_scope_name", "") or "")) or str(
+        getattr(entry, "project_id", "") or ""
+    ).strip()
+
+
+def _condition_summary(entry: "BindingPlusScopeEntry") -> str:
+    """Readable condition summary for an entry: the (truncated) raw CEL expression, or the
+    stored option summary when there is no raw expression."""
+    raw = entry.condition_expr_raw
+    return raw[:240] if raw else entry.condition_option_summary
+
+
+def _combo_evidence(entries: list["BindingPlusScopeEntry"]) -> dict[str, Any]:
+    """Shared evidence bundle for combo/combo-hop emission: scope info, condition hashes +
+    summaries, source scopes, and inherited flag over a set of contributing entries.
+    normalized_token_list drops empty tokens + dedups, so a single-entry call matches the
+    old per-site literals exactly."""
+    return {
+        "scope_info": _combo_scope_info(entries),
+        "condition_hashes": normalized_token_list(str(e.condition_hash or "").strip() for e in entries),
+        "condition_summaries": normalized_token_list(str(_condition_summary(e) or "").strip() for e in entries),
+        "source_scope_ids": normalized_token_list(str(e.source_scope_name or "").strip() for e in entries),
+        "source_scope_types": normalized_token_list(str(e.source_scope_type or "").strip() for e in entries),
+        "inherited": any(bool(e.inherited) for e in entries),
+    }
+
+
 def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry]) -> list[dict[str, Any]]:
     """
     Match one dangerous rule against a group of co-scoped binding entries.
@@ -954,6 +870,20 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
     # 2) only if no single entry works, search across multiple entries for combos
     if not entries:
         return []
+
+    # Precondition gate: UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS (prerequisite_binding ==
+    # "source_must_hold_custom_role") is only a real escalation for a principal who already
+    # holds a binding to a CUSTOM role (project/org-scoped role def) -- updating a custom role
+    # only benefits its holders. Without this, the edge fires for anyone with iam.roles.update
+    # (a false-positive privesc). Custom roles carry a project/organization-scoped role name;
+    # predefined roles are "roles/<name>".
+    if str(rule.get("prerequisite_binding") or "").strip() == "source_must_hold_custom_role":
+        if not any(
+            str(getattr(entry, "role_name", "") or "").strip().startswith(("projects/", "organizations/"))
+            for entry in entries
+        ):
+            return []
+
     valid_resource_scopes_possible = set(rule.get("resource_scopes_possible", set()))
     valid_attached_scope_types = set(rule.get("attached_scope_types", set()))
     eligible_entries = [
@@ -1003,6 +933,29 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
         perms_by_grant.setdefault(grant_id, set()).update(filtered_permissions)
     if not perms_by_grant:
         return []
+
+    # For complex combo rules (actAs-pivot PE edges), primitive owner/editor grants
+    # are represented exclusively by the collapsed ROLE_OWNER/ROLE_EDITOR edges, and
+    # the event layer already drops any combo whose contributors are all owner/editor.
+    # Keeping them in the matcher is not just redundant: a single owner grant satisfies
+    # the whole rule, so the single-match path returns it and short-circuits the combo
+    # search — suppressing legitimate non-owner combos (e.g. batch.jobsEditor +
+    # serviceAccountUser). This is the --expand-inherited false-negative: org-level
+    # roles/owner inherited into a project-scope group silently drops every CREATE_*_AS_SA
+    # combo for that principal. Exclude owner/editor so the real combos are always
+    # discovered, in both default and --expand-inherited builds.
+    if isinstance(rule.get("combo_hop"), dict) and rule.get("combo_hop"):
+        primitive_grant_ids = [
+            grant_id
+            for grant_id, representative in representative_by_grant.items()
+            if str(representative.role_name or "").strip().split("_withcond_")[0]
+            in {"roles/owner", "roles/editor"}
+        ]
+        for grant_id in primitive_grant_ids:
+            perms_by_grant.pop(grant_id, None)
+            representative_by_grant.pop(grant_id, None)
+        if not perms_by_grant:
+            return []
 
     normalized_group_defs: list[dict[str, Any]] = []
     for index, raw_group in enumerate(rule.get("requires_groups", []) or []):
@@ -1128,10 +1081,108 @@ def _matches_for_group(rule: dict[str, Any], entries: list[BindingPlusScopeEntry
         ]
         if len(candidate_grant_ids) < 2:
             return []
+
+    # --- actAs target fan-out (CREATE_*_AS_SA / act_as-pivot combos) --------------
+    # A combo_hop rule pairs a CREATE-side capability with impersonation of N target SAs.
+    # Choosing a target SA is independent (a fan-out), NOT a subset to combine, so folding
+    # the N actAs grants into the generic subset search makes it look exponential and the
+    # max_candidates=12 cut then drops targets past 12 (edges that are never generated).
+    # Here the CREATE side keeps the bounded combination search while EVERY eligible target
+    # grant is attached to the match, so one combo node fans out to all N targets (linear).
+    # Generic combos with no act_as pivot fall through to the unchanged search below.
+    combo_hop_cfg = rule.get("combo_hop") if isinstance(rule.get("combo_hop"), dict) else {}
+    target_group_ids = (
+        set(normalized_token_list(combo_hop_cfg.get("target_from_groups") or []))
+        if combo_hop_cfg
+        else set()
+    )
+    target_group_defs = [g for g in normalized_group_defs if str(g.get("id")) in target_group_ids]
+    non_target_group_defs = [g for g in normalized_group_defs if str(g.get("id")) not in target_group_ids]
+
+    def _grant_contributes_to_any(grant_id: str, group_defs: list[dict[str, Any]]) -> bool:
+        representative = representative_by_grant.get(grant_id)
+        if representative is None:
+            return False
+        grant_perms = perms_by_grant.get(grant_id, set())
+        for group_def in group_defs:
+            if _entry_matches_group_constraints(representative, group_def) and grant_perms.intersection(
+                set(group_def.get("permissions") or ())
+            ):
+                return True
+        return False
+
+    if target_group_ids and target_group_defs and non_target_group_defs:
+        target_grant_ids = sorted(
+            gid for gid in candidate_grant_ids if _grant_contributes_to_any(gid, target_group_defs)
+        )
+        create_candidate_ids = sorted(
+            gid for gid in candidate_grant_ids if _grant_contributes_to_any(gid, non_target_group_defs)
+        )
+        if not target_grant_ids or not create_candidate_ids:
+            return []
+        # Bound ONLY the create side; every target grant is kept so the combo fans out to all
+        # N impersonation targets without truncation.
+        create_candidate_ids = create_candidate_ids[:max_candidates]
+        target_union_permissions: set[str] = set()
+        for gid in target_grant_ids:
+            target_union_permissions.update(perms_by_grant.get(gid, set()))
+
+        minimal_create_sets: list[frozenset[str]] = []
+        combo_matches = []
+        for size in range(1, len(create_candidate_ids) + 1):
+            for grant_tuple in combinations(create_candidate_ids, size):
+                create_set = frozenset(grant_tuple)
+                if any(existing.issubset(create_set) for existing in minimal_create_sets):
+                    continue
+                union_permissions = set(target_union_permissions)
+                for grant_id in grant_tuple:
+                    union_permissions.update(perms_by_grant.get(grant_id, set()))
+                ok, matched, matched_group_permissions = _match_rule_against_permissions(rule, union_permissions)
+                if not ok:
+                    continue
+                full_grant_ids = list(grant_tuple) + target_grant_ids
+                group_ok, matched_group_contributors, group_permissions_from_entries = _group_contribution_for_grants(full_grant_ids)
+                if not group_ok:
+                    continue
+                for group_id, permissions in matched_group_permissions.items():
+                    if not permissions:
+                        continue
+                    existing = set(group_permissions_from_entries.get(group_id, []))
+                    existing.update(permissions)
+                    group_permissions_from_entries[group_id] = sorted(existing)
+                keep_indices = [idx for idx, existing in enumerate(minimal_create_sets) if not create_set.issubset(existing)]
+                minimal_create_sets = [minimal_create_sets[idx] for idx in keep_indices]
+                combo_matches = [combo_matches[idx] for idx in keep_indices]
+                minimal_create_sets.append(create_set)
+                combo_contributors = [
+                    representative_by_grant[grant_id] for grant_id in sorted(set(full_grant_ids))
+                ]
+                combo_roles = {
+                    str(entry.role_name or "").strip()
+                    for entry in combo_contributors
+                    if str(entry.role_name or "").strip()
+                }
+                combo_matches.append(
+                    {
+                        "contributors": combo_contributors,
+                        "matched_permissions": matched,
+                        "combine_across_bindings": True,
+                        "emission_mode": "binding" if len(combo_roles) <= 1 else "combo",
+                        "contributor_permission_map": _permission_map_for(set(full_grant_ids), matched),
+                        "matched_group_contributors": matched_group_contributors,
+                        "matched_group_permissions": group_permissions_from_entries,
+                    }
+                )
+                if len(combo_matches) >= max_combos:
+                    break
+            if len(combo_matches) >= max_combos:
+                break
+        return combo_matches
+
     candidate_grant_ids = candidate_grant_ids[:max_candidates]
 
     minimal_combo_sets: list[frozenset[str]] = []
-    combo_matches: list[dict[str, Any]] = []
+    combo_matches = []
 
     for size in range(2, len(candidate_grant_ids) + 1):
         for grant_tuple in combinations(candidate_grant_ids, size):
@@ -1226,7 +1277,7 @@ def _edge_properties_from_entry(
         "conditional": bool(entry.condition_hash),
         "condition_expr_raw": entry.condition_expr_raw,
         "condition_hash": entry.condition_hash,
-        "condition_summary": (entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary),
+        "condition_summary": _condition_summary(entry),
         "condition_option_id": entry.condition_option_id,
         "condition_option_summary": entry.condition_option_summary,
         "condition_services": normalized_token_list(entry.condition_services),
@@ -1593,7 +1644,7 @@ def _emit_subject_binding(
         conditional=bool(entry.condition_hash),
         condition_expr_raw=entry.condition_expr_raw,
         condition_hash=entry.condition_hash,
-        condition_summary=(entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary),
+        condition_summary=_condition_summary(entry),
         inherited=bool(entry.inherited),
         source=entry.source,
         binding_display=binding_display,
@@ -1701,6 +1752,7 @@ def _combo_binding_id(
     contributing_binding_ids: Iterable[str],
     condition_hashes: Iterable[str],
     source_scope_ids: Iterable[str],
+    effective_scope_ids: Iterable[str] = (),
 ) -> tuple[str, str]:
     """
     Compute the stable id (and short hash) for a combo (GCPIamMultiBinding) node.
@@ -1720,6 +1772,11 @@ def _combo_binding_id(
             "contributing_binding_ids": normalized_token_list(contributing_binding_ids),
             "condition_hashes": normalized_token_list(condition_hashes),
             "source_scope_ids": normalized_token_list(source_scope_ids),
+            # Include the concrete effective-scope set so distinct multi-scope combos (which
+            # all share the opaque "mixed" token) never collapse onto one node id. Without
+            # this, combos resolving through different scope sets dedup together and the
+            # shared subject->combo edge records one combo's scope/evidence nondeterministically.
+            "effective_scope_ids": normalized_token_list(effective_scope_ids),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -1825,6 +1882,93 @@ def _emit_subject_combo_binding(
     )
 
 
+def _register_target_node(
+    builder: OpenGraphBuilder,
+    target: dict[str, str],
+    *,
+    fallback_project_id: str,
+    node_id_override: str | None = None,
+) -> tuple[str, str, str, str, str]:
+    """Create/merge the TARGET resource node shared by the single-grant and combo edge
+    emitters. Returns (target_id, target_name, target_type, target_project_id, target_status);
+    an empty target_name signals no target (caller bails). A service-account target collapses
+    onto its serviceAccount:<email> principal node (canonical_target_node_ref); node_id_override
+    pins the id for via=resource combo hops (the cap:UPDATE clone)."""
+    target_name = str(target.get("resource_name") or "").strip()
+    target_type = str(target.get("resource_type") or "").strip()
+    if not target_name:
+        return "", "", "", "", ""
+    target_project_id = str(target.get("project_id") or "").strip() or fallback_project_id
+    target_status = str(target.get("status") or target.get("state") or "").strip().upper()
+    target_label = resource_display_label(
+        target_name,
+        resource_type=target_type,
+        project_id=target_project_id,
+    )
+    target_region = resource_location_token(target_name)
+    target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
+    if node_id_override:
+        target_id = node_id_override
+    builder.add_node(
+        target_id,
+        target_node_kind,
+        name=target_label,
+        display_name=target_label,
+        resource_name=target_name,
+        region=target_region,
+        project_id=target_project_id,
+        resource_type=target_type,
+        status=target_status or None,
+    )
+    return target_id, target_name, target_type, target_project_id, target_status
+
+
+def _emit_cap_hop(
+    builder: OpenGraphBuilder,
+    *,
+    source_node_id: str,
+    cap_resource_type: str,
+    scope_token: str,
+    hop_id: str,
+    target_sa_node_id: str,
+    node_type: str,
+    node_label: str,
+    edge_type: str,
+    match_mode: str,
+    rule_name: str,
+    rule_description: str,
+    scope_info: dict[str, Any],
+) -> tuple[str, bool]:
+    """Create (or reuse) the per-target capability node and the source->cap edge for a combo
+    hop. The cap node is keyed by target SA so all principals reaching that SA via this rule
+    and scope share one node. Returns (cap_node_id, edge_already_existed); the existed flag is
+    captured BEFORE add_edge (add_edge is first-write-wins) so callers can drive their
+    'already emitted' dedup correctly."""
+    cap_node_id = _cap_capability_node_id(cap_resource_type, scope_token, rule_name, hop_id, target_sa_node_id)
+    builder.add_node(
+        cap_node_id,
+        node_type,
+        name=node_label,
+        display_name=node_label,
+        rule_name=rule_name,
+        rule_description=str(rule_description or "").strip(),
+        effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
+        effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
+        effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
+    )
+    existed = (source_node_id, edge_type, cap_node_id) in builder.edge_map
+    builder.add_edge(
+        source_node_id,
+        cap_node_id,
+        edge_type,
+        rule_name=rule_name,
+        rule_description=str(rule_description or "").strip(),
+        match_mode=match_mode,
+        privilege_escalation=True,
+    )
+    return cap_node_id, existed
+
+
 def _emit_binding_target_edge(
     builder: OpenGraphBuilder,
     *,
@@ -1840,6 +1984,7 @@ def _emit_binding_target_edge(
     combine_across_bindings: bool,
     privilege_escalation: bool,
     contributing_binding_permission_map: dict[str, Iterable[str]] | None = None,
+    status: str = "",
 ) -> tuple[bool, str, str, str]:
     """
     Emit (or merge) the binding-node -> resource edge for a single-grant dangerous path.
@@ -1859,32 +2004,11 @@ def _emit_binding_target_edge(
     added is False when the edge already existed (or a merge occurred) and ("","","")
     when there is no target name.
     """
-    target_name = str(target.get("resource_name") or "").strip()
-    target_type = str(target.get("resource_type") or "").strip()
+    target_id, target_name, target_type, target_project_id, target_status = _register_target_node(
+        builder, target, fallback_project_id=entry.project_id
+    )
     if not target_name:
         return False, "", "", ""
-    target_project_id = str(target.get("project_id") or "").strip() or entry.project_id
-    target_status = str(target.get("status") or target.get("state") or "").strip().upper()
-    target_label = resource_display_label(
-        target_name,
-        resource_type=target_type,
-        project_id=target_project_id,
-    )
-    target_region = resource_location_token(target_name)
-    # A service-account target collapses onto its serviceAccount:<email> principal node
-    # so the SA is one node (actor + object), not a disconnected resource duplicate.
-    target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
-    builder.add_node(
-        target_id,
-        target_node_kind,
-        name=target_label,
-        display_name=target_label,
-        resource_name=target_name,
-        region=target_region,
-        project_id=target_project_id,
-        resource_type=target_type,
-        status=target_status or None,
-    )
     collapsed_edge_type = ""
     collapsed_edge_description = ""
     if str(edge_type or "").strip() not in _NO_COLLAPSE_MULTI_PERMISSION_EDGE_TYPES:
@@ -1921,6 +2045,8 @@ def _emit_binding_target_edge(
             props["collapsed_edge_description"] = str(collapsed_edge_description).strip()
     if str(example_command or "").strip():
         props["example_command"] = str(example_command).strip()
+    if str(status or "").strip():
+        props["status"] = str(status).strip().upper()
     props["target_resource_id"] = target_name
     props["target_resource_type"] = target_type
     edge_key = (entry.binding_composite_id, actual_edge_type, target_id)
@@ -1962,6 +2088,7 @@ def _emit_combo_target_edge(
     binding_origin: str = "combo",
     match_mode: str = "combo",
     target_node_id_override: str | None = None,
+    status: str = "",
 ) -> tuple[bool, str, str]:
     """
     Emit a combo/multi-permission edge from a given source node to a resource target.
@@ -1981,34 +2108,11 @@ def _emit_combo_target_edge(
     Returns (added_new_edge, target_node_id, target_resource_name); added is False when
     the edge already existed and ("","") when there is no target name.
     """
-    target_name = str(target.get("resource_name") or "").strip()
-    target_type = str(target.get("resource_type") or "").strip()
+    target_id, target_name, target_type, target_project_id, target_status = _register_target_node(
+        builder, target, fallback_project_id=subject_entry.project_id, node_id_override=target_node_id_override
+    )
     if not target_name:
         return False, "", ""
-    target_project_id = str(target.get("project_id") or "").strip() or subject_entry.project_id
-    target_status = str(target.get("status") or target.get("state") or "").strip().upper()
-    target_label = resource_display_label(
-        target_name,
-        resource_type=target_type,
-        project_id=target_project_id,
-    )
-    target_region = resource_location_token(target_name)
-    # A service-account target collapses onto its serviceAccount:<email> principal node
-    # so the SA is one node (actor + object), not a disconnected resource duplicate.
-    target_id, target_node_kind = canonical_target_node_ref(target_name, target_type)
-    if target_node_id_override:
-        target_id = target_node_id_override
-    builder.add_node(
-        target_id,
-        target_node_kind,
-        name=target_label,
-        display_name=target_label,
-        resource_name=target_name,
-        region=target_region,
-        project_id=target_project_id,
-        resource_type=target_type,
-        status=target_status or None,
-    )
     normalized_contribution_map = _normalize_binding_permission_map(contributing_binding_permission_map)
     contributing_permissions: set[str] = set()
     for permissions in normalized_contribution_map.values():
@@ -2048,69 +2152,70 @@ def _emit_combo_target_edge(
         props["rule_description"] = str(rule_description).strip()
     if str(example_command or "").strip():
         props["example_command"] = str(example_command).strip()
+    if str(status or "").strip():
+        props["status"] = str(status).strip().upper()
     edge_key = (source_node_id, edge_type, target_id)
-    existed = edge_key in builder.edge_map
+    existing = builder.edge_map.get(edge_key)
+    if existing is not None:
+        # add_edge is first-write-wins, so when several contributors produce the SAME combo
+        # edge (same source node, edge kind, target) with different evidence, the later ones
+        # would be dropped and their evidence lost. Merge deterministically instead (sorted
+        # union of list evidence, canonical scalars) so the surviving edge reflects all
+        # contributors regardless of emission order. Mirrors the dedup-redirect merge.
+        builder.edge_map[edge_key] = OpenGraphEdge(
+            source_id=existing.source_id,
+            destination_id=existing.destination_id,
+            edge_type=existing.edge_type,
+            properties=_merge_opengraph_edge_properties(existing.properties, props),
+        )
+        return False, target_id, target_name
     builder.add_edge(source_node_id, target_id, edge_type, **props)
-    return (not existed), target_id, target_name
+    return True, target_id, target_name
 
 
-def _emit_combo_capability_hop(
-    builder: OpenGraphBuilder,
+def _filter_targets_requiring_perms(
+    grant_targets: dict[tuple[str, str, str], dict[str, str]],
     *,
-    combo_binding_id: str,
-    rule_name: str,
-    rule_description: str = "",
-    scope_info: dict[str, Any],
-    combo_hop: dict[str, Any],
-) -> tuple[str, bool]:
-    """
-    Emit an optional intermediate capability node for combo rules:
-      combo_binding -(edge_from_subject)-> capability_node -(edge_to_target)-> target
-    """
-    node_label = str(combo_hop.get("node_label") or rule_name).strip() or rule_name
-    cap_res_type = str(combo_hop.get("capability_resource_type") or "").strip()
-    if cap_res_type:
-        node_type = gcp_resource_node_type(cap_res_type)
-    else:
-        node_type = str(combo_hop.get("node_type") or "GCPIamCapability").strip() or "GCPIamCapability"
-    scope_id = str(scope_info.get("effective_scope_id") or "").strip()
-    scope_type = canonical_scope_type_for_bindings(
-        str(scope_info.get("effective_scope_type") or "").strip(),
-        scope_id,
-    )
-    scope_project_id = str(scope_info.get("effective_scope_project_id") or "").strip()
-    scope_token = binding_scope_token(scope_type, scope_id, project_id=scope_project_id)
-    hop_id = str(combo_hop.get("id") or "hop_1").strip() or "hop_1"
-    # Include combo_binding_id so each act_as contributor gets its own capability
-    # node, preventing cross-principal target accumulation on shared nodes.
-    capability_node_id = f"CAP:{str(rule_name or '').strip()}@{scope_token}:{hop_id}:{combo_binding_id}"
-    builder.add_node(
-        capability_node_id,
-        node_type,
-        name=node_label,
-        display_name=node_label,
-        rule_name=rule_name,
-        rule_description=str(rule_description or "").strip(),
-        effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
-        effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
-        effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
-    )
+    required_perms: "frozenset[str] | set[str]",
+    project_id: str,
+    sa_project_perms_index: dict[str, dict[str, "frozenset[str]"]],
+) -> dict[tuple[str, str, str], dict[str, str]]:
+    """Keep only target SAs that actually hold `required_perms` (rule `target_requires_permissions`).
 
-    edge_type = str(combo_hop.get("edge_from_subject") or "").strip()
-    if not edge_type:
-        return capability_node_id, False
-    edge_key = (combo_binding_id, edge_type, capability_node_id)
-    existed = edge_key in builder.edge_map
-    builder.add_edge(
-        combo_binding_id,
-        capability_node_id,
-        edge_type,
-        rule_name=rule_name,
-        rule_description=str(rule_description or "").strip(),
-        match_mode="combo_hop",
-        privilege_escalation=True,
-    )
-    return capability_node_id, (not existed)
+    Applies to BOTH the single-grant (binding-mode) and the combo/MULTI_SCOPE emission
+    paths, so a rule like CREATE_VERTEX_KFP_JOB_AS_SA never draws an edge to a target SA
+    that lacks the precondition permission (e.g. aiplatform.metadataStores.get) regardless
+    of which emission branch builds it.
+    """
+    if not required_perms:
+        return grant_targets
+    required = set(required_perms)
+    proj_sa_perms = sa_project_perms_index.get(str(project_id or "").strip(), {})
+
+    def _target_holds(target: dict[str, str]) -> bool:
+        email = str(target.get("resource_name") or "").strip()
+        if not email:
+            return False
+        # sa_project_perms_index is keyed by the grantee's PRINCIPAL id (serviceAccount:<email>),
+        # not the bare SA email, so look the target up in that form (fall back to the bare email
+        # for any non-SA target). A target SA may also live in a different project than the acting
+        # grant, so consult its own home project's index as well.
+        rtype = str(target.get("resource_type") or "").strip()
+        principal = (
+            email if email.startswith("serviceAccount:")
+            else (f"serviceAccount:{email}" if rtype == "service-account" else email)
+        )
+        perms: "frozenset[str] | set[str]" = (
+            proj_sa_perms.get(principal) or proj_sa_perms.get(email) or frozenset()
+        )
+        if not required.issubset(perms):
+            home_project = _sa_home_project_from_email(email)
+            if home_project:
+                home_perms = sa_project_perms_index.get(home_project, {})
+                perms = home_perms.get(principal) or home_perms.get(email) or perms
+        return required.issubset(perms)
+
+    return {key: target for key, target in grant_targets.items() if _target_holds(target)}
 
 
 def _emit_iam_binding_edges_from_entries(
@@ -2162,7 +2267,24 @@ def _emit_iam_binding_edges_from_entries(
     scope_type_by_name = hierarchy.get("scope_type_by_name") or {}
     scope_display_by_name = hierarchy.get("scope_display_by_name") or {}
     parent_by_name = hierarchy.get("parent_by_name") or {}
-    entries = list(entries or [])
+    # Sort entries into a stable, total order before any grouping/matching. Downstream,
+    # collect_rule_events groups entries into (principal, scope, condition, project) buckets
+    # in iteration order and _matches_for_group keeps the first entry seen per grant as the
+    # representative; combo nodes then record properties (effective_scope_ids, combo_id) from
+    # whichever match landed first. If the incoming order is nondeterministic (it is derived
+    # from sets/dicts upstream), those recorded properties churn run-to-run even though node
+    # ids and reachability are stable. A deterministic sort makes the whole build byte-reproducible.
+    entries = sorted(
+        (entries or []),
+        key=lambda e: (
+            str(getattr(e, "principal_id", "") or ""),
+            str(getattr(e, "binding_composite_id", "") or ""),
+            str(getattr(e, "effective_scope_name", "") or ""),
+            str(getattr(e, "attached_scope_name", "") or ""),
+            str(getattr(e, "role_name", "") or ""),
+            str(getattr(e, "condition_option_id", "") or ""),
+        ),
+    )
 
     # Index of (project_id -> sa_email -> set[permissions]) for target_requires_permissions checks.
     sa_project_perms_index: dict[str, dict[str, frozenset[str]]] = {}
@@ -2260,6 +2382,30 @@ def _emit_iam_binding_edges_from_entries(
     _opts = getattr(context, "options", None)
     _cross_project = bool(getattr(_opts, "cross_project", False))
     _cross_project_sa_projects: frozenset[str] = getattr(_opts, "cross_project_sa_projects", frozenset()) or frozenset()
+    # Hint: when cross-project actAs is OFF (the safe default matching
+    # iam.disableCrossProjectServiceAccountUsage), surface that real cross-project
+    # impersonation grants exist and are being suppressed, so an operator in a looser tenant
+    # knows to re-run with --cross-sa-project-allowed. Precise for SA actors (project encoded
+    # in the email); user/group actors carry no project and are skipped. Emitted once, on the
+    # combo (advanced) pass -- cross-project actAs only matters for CREATE_*_AS_SA combos.
+    if not _cross_project and dangerous_rule_mode != "base":
+        _xproj_targets: set[str] = set()
+        for _e in entries:
+            if str(getattr(_e, "attached_scope_type", "") or "") != "service-account":
+                continue
+            if not any("serviceAccounts.actAs" in p for p in getattr(_e, "permissions", ()) or ()):
+                continue
+            _actor_proj = _sa_home_project_from_email(str(getattr(_e, "principal_id", "") or ""))
+            _sa_proj = _sa_home_project(_e)
+            if _actor_proj and _sa_proj and _actor_proj != _sa_proj:
+                _xproj_targets.add(_sa_proj)
+        if _xproj_targets:
+            sys.stderr.write(
+                f"[!] {len(_xproj_targets)} service-account home-project(s) have cross-project "
+                "actAs grants that are SUPPRESSED by default (iam.disableCrossProjectServiceAccountUsage). "
+                "If that org policy is disabled in this tenant, re-run with "
+                "--cross-sa-project-allowed <projects> to graph those paths.\n"
+            )
     dangerous_events = collect_rule_events(
         entries=entries,
         rules=rules,
@@ -2284,10 +2430,23 @@ def _emit_iam_binding_edges_from_entries(
             if len(_project_ids) <= 1:
                 # same-project combo event — always keep
                 filtered_events.append(_ev)
-            else:
-                # cross-project: keep only if the minority (SA) project is in the allowlist
-                if _project_ids & _cross_project_sa_projects:
-                    filtered_events.append(_ev)
+                continue
+            # Cross-project combo: iam.disableCrossProjectServiceAccountUsage is a policy on
+            # the SERVICE ACCOUNT's home project, so only the SA-side contributor's project
+            # may gate the edge — never the actor/resource project. Isolate the actAs
+            # (service-account scoped) contributors and test only their home project(s).
+            _sa_projects = {
+                proj
+                for c in _contribs
+                if str(getattr(c, "attached_scope_type", "") or "") == "service-account"
+                and (proj := _sa_home_project(c))
+            }
+            if not _sa_projects:
+                # Can't identify an SA home project (unexpected for a cross-project combo);
+                # don't silently drop a real edge.
+                filtered_events.append(_ev)
+            elif _sa_projects & _cross_project_sa_projects:
+                filtered_events.append(_ev)
         dangerous_events = filtered_events
     if rules:
         _finalize_inline_progress()
@@ -2295,7 +2454,23 @@ def _emit_iam_binding_edges_from_entries(
         entries=entries,
         collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
     )
-    all_events = list(dangerous_events) + list(owner_baseline_events)
+    # Emit events in a stable, total order. _emit_events is first-write-wins per combo-node
+    # id / edge key, so when several events collapse onto one shared combo node (e.g. a
+    # via=resource combo fanning to many targets), the event that lands first fixes the
+    # recorded properties (effective_scope_ids, combo_id, permission_source_summary). A
+    # canonical event order makes that choice deterministic and the export byte-reproducible.
+    def _event_sort_key(event: dict[str, Any]) -> tuple:
+        contributors = event.get("contributors") or []
+        return (
+            str(event.get("rule_name") or ""),
+            str(event.get("emission_mode") or ""),
+            tuple(sorted(str(b) for b in (event.get("evidence_bindings") or []))),
+            tuple(sorted(str(getattr(c, "binding_composite_id", "") or "") for c in contributors)),
+            tuple(sorted(str(getattr(c, "effective_scope_name", "") or "") for c in contributors)),
+            tuple(sorted(str(getattr(c, "principal_id", "") or "") for c in contributors)),
+        )
+
+    all_events = sorted(list(dangerous_events) + list(owner_baseline_events), key=_event_sort_key)
 
     bindings_with_dangerous_edges: set[str] = {
         contributor.binding_composite_id
@@ -2367,6 +2542,7 @@ def _emit_iam_binding_edges_from_entries(
             selector = event.get("target_selector") or {}
             combo_hop = event.get("combo_hop") or {}
             target_requires_permissions = set(event.get("target_requires_permissions") or ())
+            rule_status = str(event.get("status") or "").strip()
             targets_from_permissions = set(event.get("targets_from_permissions") or ())
             privilege_escalation = bool(event.get("privilege_escalation", False))
             emission_mode = str(event.get("emission_mode") or "binding").strip().lower()
@@ -2411,6 +2587,7 @@ def _emit_iam_binding_edges_from_entries(
                     rule_name=rule_name,
                     rule_description=rule_description,
                     example_command=example_command,
+                    status=rule_status,
                     matched_permissions=matched_permissions,
                     matched_roles=matched_roles,
                     evidence_bindings=evidence_bindings,
@@ -2649,28 +2826,13 @@ def _emit_iam_binding_edges_from_entries(
                     contributors,
                     key=lambda item: (str(item.binding_composite_id or ""), str(item.attached_scope_name or ""), str(item.role_name or "")),
                 )[0]
-                scope_info = _combo_scope_info(contributors)
-                condition_hashes = normalized_token_list(
-                    str(entry.condition_hash or "").strip()
-                    for entry in contributors
-                    if str(entry.condition_hash or "").strip()
-                )
-                condition_summaries = normalized_token_list(
-                    str((entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary) or "").strip()
-                    for entry in contributors
-                    if str((entry.condition_expr_raw[:240] if entry.condition_expr_raw else entry.condition_option_summary) or "").strip()
-                )
-                source_scope_ids = normalized_token_list(
-                    str(entry.source_scope_name or "").strip()
-                    for entry in contributors
-                    if str(entry.source_scope_name or "").strip()
-                )
-                source_scope_types = normalized_token_list(
-                    str(entry.source_scope_type or "").strip()
-                    for entry in contributors
-                    if str(entry.source_scope_type or "").strip()
-                )
-                inherited = any(bool(entry.inherited) for entry in contributors)
+                _evidence = _combo_evidence(contributors)
+                scope_info = _evidence["scope_info"]
+                condition_hashes = _evidence["condition_hashes"]
+                condition_summaries = _evidence["condition_summaries"]
+                source_scope_ids = _evidence["source_scope_ids"]
+                source_scope_types = _evidence["source_scope_types"]
+                inherited = _evidence["inherited"]
                 combo_binding_id, combo_hash = _combo_binding_id(
                     subject_id=subject_entry.principal_id,
                     rule_name=rule_name,
@@ -2678,6 +2840,7 @@ def _emit_iam_binding_edges_from_entries(
                     contributing_binding_ids=evidence_bindings,
                     condition_hashes=condition_hashes,
                     source_scope_ids=source_scope_ids,
+                    effective_scope_ids=scope_info.get("effective_scope_ids") or [],
                 )
                 if combo_binding_id not in emitted_combo_bindings:
                     _emit_subject_combo_binding(
@@ -2816,6 +2979,7 @@ def _emit_iam_binding_edges_from_entries(
                                     rule_name=rule_name,
                                     rule_description=rule_description,
                                     example_command=example_command,
+                                    status=rule_status,
                                     matched_permissions=matched_permissions,
                                     matched_roles=matched_roles,
                                     evidence_bindings=evidence_bindings,
@@ -2857,27 +3021,43 @@ def _emit_iam_binding_edges_from_entries(
                 ) or default_target_group_selector or selector
 
                 combo_targets: dict[tuple[str, str, str], dict[str, str]] = {}
-                if not last_hop_was_resource:
-                    for contributor in target_source_contributors:
-                        combo_targets.update(
-                            _collect_targets_for_contributor(
-                                contributor,
-                                include_fanout=True,
-                                selector_override=hop_target_selector,
-                            )
-                        )
+                for contributor in target_source_contributors:
+                    _c_targets = _collect_targets_for_contributor(
+                        contributor,
+                        include_fanout=True,
+                        selector_override=hop_target_selector,
+                    )
+                    # Apply target_requires_permissions on the combo/MULTI_SCOPE path too
+                    # (the single-grant branch filters at its own grant_targets); without
+                    # this, a rule's precondition leaks through mixed-scope capability nodes.
+                    _c_targets = _filter_targets_requiring_perms(
+                        _c_targets,
+                        required_perms=target_requires_permissions,
+                        project_id=contributor.project_id,
+                        sa_project_perms_index=sa_project_perms_index,
+                    )
+                    combo_targets.update(_c_targets)
+                # Node ids of the SAs the principal can actually actAs (the act_as group's
+                # satisfied targets). For via=resource rules the terminal SA is the resource's
+                # OWN attached SA, but we must only claim theft of that SA when the principal
+                # holds actAs on THAT SA -- not merely actAs on some other SA in scope.
+                _actas_target_node_ids = {
+                    canonical_target_node_ref(str(t.get("resource_name") or ""), t.get("resource_type"))[0]
+                    for t in combo_targets.values()
+                }
 
                 final_target_edge_seen = False
                 for source_node_id in sorted(current_source_node_ids):
                     if last_hop_was_resource:
                         # For via=resource paths, the terminal SA is the resource's own
-                        # attached SA (from enumerated data), not the attacker's actAs SA.
-                        # This prevents cross-contamination when multiple principals with
-                        # different actAs scopes can all update the same shared resource node.
+                        # attached SA (from enumerated data), gated to the SAs the principal
+                        # can actAs so an edge is not drawn to an instance SA the attacker
+                        # cannot actually impersonate.
                         _res_name = resource_name_by_node_id.get(source_node_id, "")
                         _node_targets: list[dict[str, str]] = [
                             {"resource_name": _sa_email, "resource_type": "service-account", "project_id": ""}
                             for _sa_email in scope_resource_indexes.resource_sa_by_name.get(_res_name, [])
+                            if canonical_target_node_ref(_sa_email, "service-account")[0] in _actas_target_node_ids
                         ]
                     else:
                         _node_targets = list(combo_targets.values())
@@ -2895,34 +3075,20 @@ def _emit_iam_binding_edges_from_entries(
                         if _deferred_cap_hop_meta:
                             # Create/get a cap node keyed by target SA — shared across all
                             # principals that can reach the same SA via this rule and scope.
-                            _cap_node_id = _cap_capability_node_id(
-                                _deferred_cap_hop_meta["resource_type"],
-                                _terminal_scope_token,
-                                rule_name,
-                                _deferred_cap_hop_meta["hop_id"],
-                                target_sa_node_id,
-                            )
-                            builder.add_node(
-                                _cap_node_id,
-                                _deferred_cap_hop_meta["node_type"],
-                                name=_deferred_cap_hop_meta["node_label"],
-                                display_name=_deferred_cap_hop_meta["node_label"],
-                                rule_name=rule_name,
-                                rule_description=str(rule_description or "").strip(),
-                                effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
-                                effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
-                                effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
-                            )
-                            _src_cap_edge_key = (source_node_id, _deferred_cap_hop_meta["edge_type"], _cap_node_id)
-                            _src_cap_existed = _src_cap_edge_key in builder.edge_map
-                            builder.add_edge(
-                                source_node_id,
-                                _cap_node_id,
-                                _deferred_cap_hop_meta["edge_type"],
-                                rule_name=rule_name,
-                                rule_description=str(rule_description or "").strip(),
+                            _cap_node_id, _src_cap_existed = _emit_cap_hop(
+                                builder,
+                                source_node_id=source_node_id,
+                                cap_resource_type=_deferred_cap_hop_meta["resource_type"],
+                                scope_token=_terminal_scope_token,
+                                hop_id=_deferred_cap_hop_meta["hop_id"],
+                                target_sa_node_id=target_sa_node_id,
+                                node_type=_deferred_cap_hop_meta["node_type"],
+                                node_label=_deferred_cap_hop_meta["node_label"],
+                                edge_type=_deferred_cap_hop_meta["edge_type"],
                                 match_mode="combo_hop",
-                                privilege_escalation=True,
+                                rule_name=rule_name,
+                                rule_description=rule_description,
+                                scope_info=scope_info,
                             )
                             _emission_source = _cap_node_id
                         else:
@@ -2938,6 +3104,7 @@ def _emit_iam_binding_edges_from_entries(
                             rule_name=rule_name,
                             rule_description=rule_description,
                             example_command=example_command,
+                            status=rule_status,
                             matched_permissions=matched_permissions,
                             matched_roles=matched_roles,
                             evidence_bindings=evidence_bindings,
@@ -3045,20 +3212,12 @@ def _emit_iam_binding_edges_from_entries(
                     final_target_edge_seen = False
                     pending_destination_records: list[dict[str, Any]] = []
 
-                    scope_info = _combo_scope_info([contributor])
-                    condition_hashes = normalized_token_list(
-                        [str(contributor.condition_hash or "").strip()] if str(contributor.condition_hash or "").strip() else []
-                    )
-                    condition_summaries = normalized_token_list(
-                        [
-                            str(
-                                (contributor.condition_expr_raw[:240] if contributor.condition_expr_raw else contributor.condition_option_summary)
-                                or ""
-                            ).strip()
-                        ]
-                    )
-                    source_scope_ids = normalized_token_list([str(contributor.source_scope_name or "").strip()])
-                    source_scope_types = normalized_token_list([str(contributor.source_scope_type or "").strip()])
+                    _evidence = _combo_evidence([contributor])
+                    scope_info = _evidence["scope_info"]
+                    condition_hashes = _evidence["condition_hashes"]
+                    condition_summaries = _evidence["condition_summaries"]
+                    source_scope_ids = _evidence["source_scope_ids"]
+                    source_scope_types = _evidence["source_scope_types"]
 
                     combo_target_edge_type = str(combo_hop.get("edge_to_target") or "RunsAs").strip() or "RunsAs"
                     contribution_map_for_binding = {
@@ -3107,6 +3266,7 @@ def _emit_iam_binding_edges_from_entries(
                                 rule_name=rule_name,
                                 rule_description=rule_description,
                                 example_command=example_command,
+                                status=rule_status,
                                 matched_permissions=matched_permissions,
                                 matched_roles=matched_roles,
                                 evidence_bindings=[contributor.binding_composite_id],
@@ -3131,10 +3291,21 @@ def _emit_iam_binding_edges_from_entries(
                         if not intermediate_source_ids:
                             _rollback_graph_mutation_state(mutation_snapshot)
                             continue
+                        # SAs this contributor can actually actAs (act_as group targets); the
+                        # via=resource terminal must only reach an instance's attached SA when
+                        # the principal holds actAs on THAT SA.
+                        _binding_actas_node_ids = {
+                            canonical_target_node_ref(str(t.get("resource_name") or ""), t.get("resource_type"))[0]
+                            for t in _collect_targets_for_contributor(
+                                contributor,
+                                include_fanout=True,
+                                selector_override=hop_target_selector,
+                            ).values()
+                        }
                         for source_node_id in sorted(intermediate_source_ids):
                             # For via=resource hop_mode, the terminal SA is the resource's own
-                            # attached SA, not the attacker's actAs SA. Build per-source targets
-                            # from enumerated data to prevent cross-principal SA contamination.
+                            # attached SA, gated to the SAs the principal can actAs (prevents
+                            # claiming theft of an instance SA the attacker cannot impersonate).
                             _binding_res_name = intermediate_node_to_resource_name.get(source_node_id, "")
                             _binding_sa_list = scope_resource_indexes.resource_sa_by_name.get(_binding_res_name, [])
                             grant_targets: dict[tuple[str, str, str], dict[str, str]] = {
@@ -3144,6 +3315,7 @@ def _emit_iam_binding_edges_from_entries(
                                     "project_id": "",
                                 }
                                 for _sa_email in _binding_sa_list
+                                if canonical_target_node_ref(_sa_email, "service-account")[0] in _binding_actas_node_ids
                             }
                             for target in grant_targets.values():
                                 if source_node_id == canonical_target_node_ref(str(target.get("resource_name") or "").strip(), target.get("resource_type"))[0]:
@@ -3158,6 +3330,7 @@ def _emit_iam_binding_edges_from_entries(
                                     rule_name=rule_name,
                                     rule_description=rule_description,
                                     example_command=example_command,
+                                    status=rule_status,
                                     matched_permissions=matched_permissions,
                                     matched_roles=matched_roles,
                                     evidence_bindings=[contributor.binding_composite_id],
@@ -3212,15 +3385,12 @@ def _emit_iam_binding_edges_from_entries(
                         include_fanout=not scope_only,
                         selector_override=resolved_target_selector,
                     )
-                    if target_requires_permissions:
-                        _proj_id = str(contributor.project_id or "").strip()
-                        _proj_sa_perms = sa_project_perms_index.get(_proj_id, {})
-                        grant_targets = {
-                            k: v for k, v in grant_targets.items()
-                            if target_requires_permissions.issubset(
-                                _proj_sa_perms.get(str(v.get("resource_name") or "").strip(), frozenset())
-                            )
-                        }
+                    grant_targets = _filter_targets_requiring_perms(
+                        grant_targets,
+                        required_perms=target_requires_permissions,
+                        project_id=contributor.project_id,
+                        sa_project_perms_index=sa_project_perms_index,
+                    )
                     if not grant_targets:
                         _rollback_graph_mutation_state(mutation_snapshot)
                         continue
@@ -3249,34 +3419,20 @@ def _emit_iam_binding_edges_from_entries(
 
                         # Create/get cap node keyed by target SA (shared across all contributors
                         # that target the same SA through this rule and scope).
-                        _b_cap_node_id = _cap_capability_node_id(
-                            _b_cap_res_type,
-                            _b_scope_token,
-                            rule_name,
-                            _b_hop_id,
-                            _b_target_sa_node_id,
-                        )
-                        builder.add_node(
-                            _b_cap_node_id,
-                            _b_node_type,
-                            name=_b_node_label,
-                            display_name=_b_node_label,
-                            rule_name=rule_name,
-                            rule_description=str(rule_description or "").strip(),
-                            effective_scope_id=str(scope_info.get("effective_scope_id") or ""),
-                            effective_scope_type=str(scope_info.get("effective_scope_type") or ""),
-                            effective_scope_display=str(scope_info.get("effective_scope_display") or ""),
-                        )
-                        _b_hop_edge_key = (contributor.binding_composite_id, hop_edge_type, _b_cap_node_id)
-                        _b_hop_existed = _b_hop_edge_key in builder.edge_map
-                        builder.add_edge(
-                            contributor.binding_composite_id,
-                            _b_cap_node_id,
-                            hop_edge_type,
-                            rule_name=rule_name,
-                            rule_description=str(rule_description or "").strip(),
+                        _b_cap_node_id, _b_hop_existed = _emit_cap_hop(
+                            builder,
+                            source_node_id=contributor.binding_composite_id,
+                            cap_resource_type=_b_cap_res_type,
+                            scope_token=_b_scope_token,
+                            hop_id=_b_hop_id,
+                            target_sa_node_id=_b_target_sa_node_id,
+                            node_type=_b_node_type,
+                            node_label=_b_node_label,
+                            edge_type=hop_edge_type,
                             match_mode="binding_combo_hop",
-                            privilege_escalation=True,
+                            rule_name=rule_name,
+                            rule_description=rule_description,
+                            scope_info=scope_info,
                         )
 
                         added, target_id, target_name = _emit_combo_target_edge(
@@ -3289,6 +3445,7 @@ def _emit_iam_binding_edges_from_entries(
                             rule_name=rule_name,
                             rule_description=rule_description,
                             example_command=example_command,
+                            status=rule_status,
                             matched_permissions=matched_permissions,
                             matched_roles=matched_roles,
                             evidence_bindings=[contributor.binding_composite_id],

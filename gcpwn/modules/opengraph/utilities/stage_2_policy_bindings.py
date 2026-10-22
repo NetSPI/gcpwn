@@ -51,7 +51,6 @@ _DEFAULT_CONDITION_OPTION = ConditionOption(
 
 # Shared progress helpers (see UtilityTools); aliased so the call sites below
 # keep their existing names.
-_progress_interval = UtilityTools.progress_interval
 _should_emit_progress = UtilityTools.should_emit_progress
 
 
@@ -322,6 +321,7 @@ def build_scope_and_resource_indexes(
     gke_clusters_rows: Iterable[dict[str, Any]] | None = None,
     gke_node_pools_rows: Iterable[dict[str, Any]] | None = None,
     gkehub_memberships_rows: Iterable[dict[str, Any]] | None = None,
+    cloudcomposer_environments_rows: Iterable[dict[str, Any]] | None = None,
     raw_allow_bindings_rows: Iterable[dict[str, Any]] | None = None,
     iam_custom_roles_rows: Iterable[dict[str, Any]] | None = None,
     cloudrun_worker_pools_rows: Iterable[dict[str, Any]] | None = None,
@@ -695,6 +695,34 @@ def build_scope_and_resource_indexes(
                 "resource_name": membership_name,
                 "resource_type": "fleetmembership",
                 "display_name": str(row.get("membership_id") or _scope_leaf(membership_name)),
+                "project_id": project_id,
+                "status": str(row.get("state") or "").strip().upper(),
+            }
+        )
+
+    # Seed enumerated Cloud Composer environments as "composerenv" targets for
+    # UPDATE_COMPOSER_ENV_AS_SA and EXEC_COMPOSER_ENV_AS_SA PE rules.
+    for row in cloudcomposer_environments_rows or []:
+        env_name = str(row.get("name") or "").strip()
+        if not env_name:
+            continue
+        # Extract project_id from resource name: projects/{project_id}/locations/...
+        project_id = str(row.get("project_id") or "").strip()
+        if not project_id and "/" in env_name:
+            parts = env_name.split("/")
+            if len(parts) >= 2 and parts[0] == "projects":
+                project_id = parts[1]
+        if not project_id:
+            continue
+        resource_key_tuple = (env_name, "composerenv", project_id)
+        if resource_key_tuple in seen_resources:
+            continue
+        seen_resources.add(resource_key_tuple)
+        allow_resources.append(
+            {
+                "resource_name": env_name,
+                "resource_type": "composerenv",
+                "display_name": str(row.get("environment_id") or _scope_leaf(env_name)),
                 "project_id": project_id,
                 "status": str(row.get("state") or "").strip().upper(),
             }

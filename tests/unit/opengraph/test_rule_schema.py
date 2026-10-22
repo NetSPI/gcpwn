@@ -48,12 +48,30 @@ _SA_EMAIL = "runner@proj-a.iam.gserviceaccount.com"
 _SA_RESOURCE = f"projects/proj-a/serviceAccounts/{_SA_EMAIL}"
 
 
+def _cf_build_capable_row():
+    """A policy_json-only binding making the combo target SA CF-build-capable.
+
+    Read only by _compute_cf_build_capable_emails (which keys off ``policy_json``);
+    the main binding parser keys off ``policy`` and ignores this row. Needed so
+    CREATE/UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA, whose act_as gate requires
+    is_cf_build_capable, can fire against the target SA.
+    """
+    return {
+        "project_id": "proj-a",
+        "resource_type": "project",
+        "resource_name": "projects/proj-a",
+        "policy_json": _policy(("roles/cloudbuild.builds.builder", [f"serviceAccount:{_SA_EMAIL}"])),
+    }
+
+
 def _run_combo(iam_roles, iam_policies):
     tables = {
-        "iam_allow_policies": iam_policies,
+        "iam_allow_policies": list(iam_policies) + [_cf_build_capable_row()],
         "abstract_tree_hierarchy": _HIERARCHY,
         "iam_roles": iam_roles,
-        "iam_service_accounts": [],
+        # Seed the target SA (email-keyed, as live allow-policy SA rows are) so stage 2
+        # creates its resource entry and tags is_cf_build_capable from _cf_build_capable_row().
+        "iam_service_accounts": [{"email": _SA_EMAIL, "project_id": "proj-a", "type": "serviceAccount"}],
         "workspace_users": [],
         "workspace_groups": [],
         "workspace_group_memberships": [],
@@ -428,13 +446,6 @@ def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo
         "STOPPED",
         "START_COMPUTE_STARTUP_SA",
         "START_COMPUTE_STARTUP_SA",
-    ),
-    (
-        "IAP_TUNNEL_TO_VM_SA",
-        ["iap.tunnelInstances.accessViaIAP", "compute.instances.get"],
-        "RUNNING",
-        "IAP_TUNNEL_TO_VM_SA",
-        "IAP_TUNNEL_TO_VM_SA",
     ),
 ])
 def test_compute_combo_rules_produce_correct_edges(rule_name, perms, vm_status, subject_edge, combo_edge):

@@ -124,6 +124,11 @@ CUSTOM_NODE_TYPES = {
     # API Gateway
     "GCPApiGateway": _fa_icon("network-wired", "#F57C00"),
 
+    # Sensitive-resource-access read targets
+    "GCPApiKey": _fa_icon("key", "#EF6C00"),
+    "GCPDeveloperConnectGitRepoLink": _fa_icon("code-branch", "#5C6BC0"),
+    "GCPBigQueryConnection": _fa_icon("plug", "#1A73E8"),
+
     # Expansion helpers
     "GCPServiceAccountKey": _fa_icon("file-signature", "#F9A825"),
 }

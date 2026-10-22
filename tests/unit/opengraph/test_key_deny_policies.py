@@ -159,12 +159,13 @@ def _build_inherit(tables, *, expand):
     return ctx
 
 
-def test_ancestor_deny_reaches_descendant_only_with_expand_inheritance():
-    # An org-level deny sits ABOVE proj-a: it should block alice's proj-a grant only when
-    # --expand-inheritance models that downward reach.
+def test_ancestor_deny_reaches_descendant_regardless_of_expand_inheritance():
+    # An org-level deny sits ABOVE proj-a. IAM v2 denies always inherit downward in GCP,
+    # independent of how the ALLOW graph renders inheritance, so the org deny must block
+    # alice's proj-a grant whether or not --expand-inheritance is set.
     tbl = _inherit_tables(deny_scope_type="organization", deny_scope_name="organizations/111")
-    assert _modify_iam_edges(_build_inherit(tbl, expand=True)) == []       # inherited down -> dropped
-    assert len(_modify_iam_edges(_build_inherit(tbl, expand=False))) == 1  # confined to org scope -> untouched
+    assert _modify_iam_edges(_build_inherit(tbl, expand=True)) == []   # inherited down -> dropped
+    assert _modify_iam_edges(_build_inherit(tbl, expand=False)) == []  # still inherited down -> dropped
 
 
 def test_deny_in_a_sibling_subtree_never_touches_the_grant():

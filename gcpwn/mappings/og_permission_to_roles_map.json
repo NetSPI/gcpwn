@@ -109,6 +109,37 @@
     "roles/owner",
     "roles/visualinspection.serviceAgent"
   ],
+  "aiplatform.metadataStores.get": [
+    "roles/admin",
+    "roles/aiplatform.admin",
+    "roles/aiplatform.customCodeServiceAgent",
+    "roles/aiplatform.editor",
+    "roles/aiplatform.serviceAgent",
+    "roles/aiplatform.tuningServiceAgent",
+    "roles/aiplatform.user",
+    "roles/aiplatform.viewer",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/owner",
+    "roles/viewer"
+  ],
+  "aiplatform.models.upload": [
+    "roles/admin",
+    "roles/aiplatform.admin",
+    "roles/aiplatform.customCodeServiceAgent",
+    "roles/aiplatform.editor",
+    "roles/aiplatform.serviceAgent",
+    "roles/aiplatform.user",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/visualinspection.serviceAgent",
+    "roles/writer"
+  ],
+  "aiplatform.notebookRuntimeTemplates.apply": [
+    "roles/aiplatform.admin"
+  ],
   "aiplatform.notebookRuntimeTemplates.setIamPolicy": [
     "roles/admin",
     "roles/aiplatform.admin",
@@ -119,6 +150,12 @@
     "roles/iam.securityAdmin",
     "roles/owner",
     "roles/visualinspection.serviceAgent"
+  ],
+  "aiplatform.notebookRuntimes.assign": [
+    "roles/aiplatform.admin"
+  ],
+  "aiplatform.notebookRuntimes.create": [
+    "roles/aiplatform.admin"
   ],
   "aiplatform.pipelineJobs.create": [
     "roles/admin",
@@ -150,6 +187,36 @@
     "roles/aiplatform.serviceAgent",
     "roles/aiplatform.user",
     "roles/discoveryengine.serviceAgent",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/visualinspection.serviceAgent",
+    "roles/writer"
+  ],
+  "aiplatform.reasoningEngines.update": [
+    "roles/admin",
+    "roles/aiplatform.admin",
+    "roles/aiplatform.customCodeServiceAgent",
+    "roles/aiplatform.editor",
+    "roles/aiplatform.expressAdmin",
+    "roles/aiplatform.expressUser",
+    "roles/aiplatform.serviceAgent",
+    "roles/aiplatform.user",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/visualinspection.serviceAgent",
+    "roles/writer"
+  ],
+  "aiplatform.trainingPipelines.create": [
+    "roles/admin",
+    "roles/aiplatform.admin",
+    "roles/aiplatform.customCodeServiceAgent",
+    "roles/aiplatform.editor",
+    "roles/aiplatform.serviceAgent",
+    "roles/aiplatform.user",
     "roles/editor",
     "roles/iam.dataScientist",
     "roles/iam.mlEngineer",
@@ -226,6 +293,16 @@
     "roles/iam.securityAdmin",
     "roles/owner"
   ],
+  "apigee.environments.update": [
+    "roles/admin",
+    "roles/apigee.environmentAdmin",
+    "roles/editor",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "apigee.proxyrevisions.deploy": [
+    "roles/apigee.apiAdminV2"
+  ],
   "apigee.spaces.setIamPolicy": [
     "roles/admin",
     "roles/apigee.admin",
@@ -255,6 +332,14 @@
     "roles/apigeeregistry.admin",
     "roles/iam.securityAdmin",
     "roles/owner"
+  ],
+  "apikeys.keys.getKeyString": [
+    "roles/admin",
+    "roles/editor",
+    "roles/owner",
+    "roles/serviceusage.apiKeysAdmin",
+    "roles/serviceusage.apiKeysViewer",
+    "roles/writer"
   ],
   "appengine.applications.update": [
     "roles/admin",
@@ -413,6 +498,12 @@
     "roles/owner",
     "roles/writer"
   ],
+  "bigquery.connections.delegate": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/bigquery.connectionAdmin",
+    "roles/owner"
+  ],
   "bigquery.connections.setIamPolicy": [
     "roles/admin",
     "roles/bigquery.admin",
@@ -423,6 +514,15 @@
     "roles/iam.databasesAdmin",
     "roles/iam.securityAdmin",
     "roles/owner"
+  ],
+  "bigquery.connections.use": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/bigquery.connectionAdmin",
+    "roles/bigquery.connectionUser",
+    "roles/editor",
+    "roles/owner",
+    "roles/writer"
   ],
   "bigquery.dataPolicies.setIamPolicy": [
     "roles/admin",
@@ -519,6 +619,24 @@
     "roles/owner",
     "roles/writer"
   ],
+  "bigquery.readsessions.create": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/bigquery.readSessionUser",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "bigquery.readsessions.getData": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/bigquery.readSessionUser",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/owner",
+    "roles/writer"
+  ],
   "bigquery.reservations.setIamPolicy": [
     "roles/admin",
     "roles/bigquery.admin",
@@ -544,6 +662,14 @@
     "roles/iam.mlEngineer",
     "roles/iam.securityAdmin",
     "roles/owner"
+  ],
+  "bigquery.tables.export": [
+    "roles/bigquery.admin",
+    "roles/bigquery.dataEditor",
+    "roles/bigquery.dataOwner",
+    "roles/bigquery.dataViewer",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer"
   ],
   "bigquery.tables.getData": [
     "roles/admin",
@@ -931,6 +1057,19 @@
     "roles/owner",
     "roles/writer"
   ],
+  "cloudkms.cryptoKeyVersions.useToDecrypt": [
+    "roles/admin",
+    "roles/cloudkms.cryptoKeyDecrypter",
+    "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+    "roles/iam.dataScientist",
+    "roles/owner"
+  ],
+  "cloudkms.cryptoKeyVersions.useToSign": [
+    "roles/admin",
+    "roles/cloudkms.signer",
+    "roles/cloudkms.signerVerifier",
+    "roles/owner"
+  ],
   "cloudkms.cryptoKeys.setIamPolicy": [
     "roles/admin",
     "roles/cloudkms.admin",
@@ -996,6 +1135,31 @@
     "roles/owner",
     "roles/writer"
   ],
+  "cloudscheduler.jobs.update": [
+    "roles/admin",
+    "roles/cloudscheduler.admin",
+    "roles/editor",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "cloudsql.instances.connect": [
+    "roles/admin",
+    "roles/cloudsql.admin",
+    "roles/cloudsql.client",
+    "roles/cloudsql.editor",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "cloudsql.sslCerts.create": [
+    "roles/admin",
+    "roles/cloudsql.admin",
+    "roles/cloudsql.editor",
+    "roles/editor",
+    "roles/owner",
+    "roles/writer"
+  ],
   "cloudsupport.accounts.setIamPolicy": [
     "roles/admin",
     "roles/cloudsupport.admin",
@@ -1031,6 +1195,10 @@
     "roles/owner",
     "roles/writer"
   ],
+  "composer.environments.access": [
+    "roles/composer.environmentAndStorageObjectUser",
+    "roles/composer.admin"
+  ],
   "composer.environments.create": [
     "roles/admin",
     "roles/composer.admin",
@@ -1039,6 +1207,14 @@
     "roles/editor",
     "roles/owner",
     "roles/writer"
+  ],
+  "composer.environments.executeAirflowCommand": [
+    "roles/composer.environmentAndStorageObjectAdmin",
+    "roles/composer.admin"
+  ],
+  "composer.environments.update": [
+    "roles/composer.environmentAndStorageObjectAdmin",
+    "roles/composer.admin"
   ],
   "compute.backendBuckets.setIamPolicy": [
     "roles/admin",
@@ -2061,6 +2237,41 @@
     "roles/iam.securityAdmin",
     "roles/owner"
   ],
+  "container.clusters.create": [
+    "roles/container.clusterAdmin",
+    "roles/container.admin"
+  ],
+  "container.clusters.get": [
+    "roles/container.viewer",
+    "roles/container.admin"
+  ],
+  "container.clusters.impersonate": [
+    "roles/container.clusterAdmin",
+    "roles/container.admin"
+  ],
+  "container.clusters.list": [
+    "roles/container.viewer",
+    "roles/container.admin"
+  ],
+  "container.clusters.update": [
+    "roles/container.clusterAdmin",
+    "roles/container.admin"
+  ],
+  "container.pods.attach": [
+    "roles/container.developer",
+    "roles/container.admin"
+  ],
+  "container.pods.create": [
+    "roles/container.developer",
+    "roles/container.admin"
+  ],
+  "container.serviceAccounts.createToken": [
+    "roles/admin",
+    "roles/container.admin",
+    "roles/container.developer",
+    "roles/iam.mlEngineer",
+    "roles/owner"
+  ],
   "containeranalysis.notes.setIamPolicy": [
     "roles/admin",
     "roles/containeranalysis.admin",
@@ -2354,6 +2565,14 @@
     "roles/iam.securityAdmin",
     "roles/owner"
   ],
+  "dataplex.lakes.create": [
+    "roles/admin",
+    "roles/dataplex.admin",
+    "roles/dataplex.editor",
+    "roles/editor",
+    "roles/owner",
+    "roles/writer"
+  ],
   "dataplex.lakes.setIamPolicy": [
     "roles/admin",
     "roles/dataplex.admin",
@@ -2567,6 +2786,21 @@
     "roles/admin",
     "roles/designcenter.admin",
     "roles/iam.securityAdmin",
+    "roles/owner"
+  ],
+  "developerconnect.gitRepositoryLinks.fetchReadToken": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/developerconnect.readTokenAccessor",
+    "roles/developerconnect.tokenAccessor",
+    "roles/iam.mlEngineer",
+    "roles/owner"
+  ],
+  "developerconnect.gitRepositoryLinks.fetchReadWriteToken": [
+    "roles/admin",
+    "roles/bigquery.admin",
+    "roles/developerconnect.tokenAccessor",
+    "roles/iam.mlEngineer",
     "roles/owner"
   ],
   "discoveryengine.agents.setIamPolicy": [
@@ -2790,6 +3024,26 @@
     "roles/iam.securityAdmin",
     "roles/krmapihosting.anthosApiEndpointServiceAgent",
     "roles/owner"
+  ],
+  "gkehub.gateway.patch": [
+    "roles/gkehub.gatewayEditor",
+    "roles/gkehub.admin"
+  ],
+  "gkehub.gateway.post": [
+    "roles/gkehub.gatewayEditor",
+    "roles/gkehub.admin"
+  ],
+  "gkehub.gateway.put": [
+    "roles/gkehub.gatewayEditor",
+    "roles/gkehub.admin"
+  ],
+  "gkehub.memberships.get": [
+    "roles/gkehub.viewer",
+    "roles/gkehub.admin"
+  ],
+  "gkehub.memberships.list": [
+    "roles/gkehub.viewer",
+    "roles/gkehub.admin"
   ],
   "gkehub.memberships.setIamPolicy": [
     "roles/admin",
@@ -3126,6 +3380,15 @@
     "roles/ids.admin",
     "roles/owner"
   ],
+  "integrations.integrationVersions.create": [
+    "roles/admin",
+    "roles/editor",
+    "roles/integrations.admin",
+    "roles/integrations.integrationAdmin",
+    "roles/integrations.integrationEditor",
+    "roles/owner",
+    "roles/writer"
+  ],
   "integrations.integrations.create": [
     "roles/admin",
     "roles/editor",
@@ -3135,6 +3398,25 @@
     "roles/integrations.integrationAdmin",
     "roles/integrations.integrationEditor",
     "roles/integrations.serviceAgent",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "integrations.integrations.deploy": [
+    "roles/admin",
+    "roles/editor",
+    "roles/integrations.admin",
+    "roles/integrations.integrationAdmin",
+    "roles/integrations.integrationDeployer",
+    "roles/owner",
+    "roles/writer"
+  ],
+  "integrations.integrations.invoke": [
+    "roles/admin",
+    "roles/editor",
+    "roles/integrations.admin",
+    "roles/integrations.integrationAdmin",
+    "roles/integrations.integrationEditor",
+    "roles/integrations.integrationInvoker",
     "roles/owner",
     "roles/writer"
   ],
@@ -3423,6 +3705,10 @@
     "roles/notebooks.serviceAgent",
     "roles/owner"
   ],
+  "notebooks.runtimes.create": [
+    "roles/notebooks.admin",
+    "roles/aiplatform.admin"
+  ],
   "notebooks.runtimes.setIamPolicy": [
     "roles/admin",
     "roles/iam.securityAdmin",
@@ -3537,6 +3823,11 @@
     "roles/securedlandingzone.bqdwProjectRemediator",
     "roles/securedlandingzone.serviceAgent"
   ],
+  "resourcemanager.folders.createPolicyBinding": [
+    "roles/admin",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/resourcemanager.organizationAdmin"
+  ],
   "resourcemanager.folders.setIamPolicy": [
     "roles/admin",
     "roles/iam.securityAdmin",
@@ -3546,12 +3837,31 @@
     "roles/resourcemanager.folderIamAdmin",
     "roles/resourcemanager.organizationAdmin"
   ],
+  "resourcemanager.folders.updatePolicyBinding": [
+    "roles/admin",
+    "roles/resourcemanager.folderIamAdmin",
+    "roles/resourcemanager.organizationAdmin"
+  ],
+  "resourcemanager.organizations.createPolicyBinding": [
+    "roles/admin",
+    "roles/resourcemanager.organizationAdmin"
+  ],
   "resourcemanager.organizations.setIamPolicy": [
     "roles/admin",
     "roles/iam.securityAdmin",
     "roles/privilegedaccessmanager.organizationServiceAgent",
     "roles/privilegedaccessmanager.serviceAgent",
     "roles/resourcemanager.organizationAdmin"
+  ],
+  "resourcemanager.organizations.updatePolicyBinding": [
+    "roles/admin",
+    "roles/resourcemanager.organizationAdmin"
+  ],
+  "resourcemanager.projects.createPolicyBinding": [
+    "roles/admin",
+    "roles/owner",
+    "roles/resourcemanager.organizationAdmin",
+    "roles/resourcemanager.projectIamAdmin"
   ],
   "resourcemanager.projects.setIamPolicy": [
     "roles/admin",
@@ -3564,6 +3874,12 @@
     "roles/privilegedaccessmanager.projectServiceAgent",
     "roles/privilegedaccessmanager.serviceAgent",
     "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.organizationAdmin",
+    "roles/resourcemanager.projectIamAdmin"
+  ],
+  "resourcemanager.projects.updatePolicyBinding": [
+    "roles/admin",
+    "roles/owner",
     "roles/resourcemanager.organizationAdmin",
     "roles/resourcemanager.projectIamAdmin"
   ],
@@ -3636,6 +3952,17 @@
     "roles/iam.securityAdmin",
     "roles/owner",
     "roles/run.admin"
+  ],
+  "run.jobs.sshRoot": [
+    "roles/admin",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/run.admin",
+    "roles/run.developer",
+    "roles/run.sourceDeveloper",
+    "roles/writer"
   ],
   "run.jobs.update": [
     "roles/admin",
@@ -3719,6 +4046,9 @@
     "roles/owner",
     "roles/run.admin"
   ],
+  "run.services.sshRoot": [
+    "roles/run.admin"
+  ],
   "run.services.update": [
     "roles/admin",
     "roles/cloudfunctions.admin",
@@ -3739,7 +4069,17 @@
     "roles/run.sourceDeveloper",
     "roles/writer"
   ],
-  "run.workerPools.create": [],
+  "run.workerpools.create": [
+    "roles/admin",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/run.admin",
+    "roles/run.developer",
+    "roles/run.sourceDeveloper",
+    "roles/writer"
+  ],
   "run.workerpools.setIamPolicy": [
     "roles/admin",
     "roles/cloudfunctions.admin",
@@ -3748,6 +4088,17 @@
     "roles/iam.securityAdmin",
     "roles/owner",
     "roles/run.admin"
+  ],
+  "run.workerpools.sshRoot": [
+    "roles/admin",
+    "roles/editor",
+    "roles/iam.dataScientist",
+    "roles/iam.mlEngineer",
+    "roles/owner",
+    "roles/run.admin",
+    "roles/run.developer",
+    "roles/run.sourceDeveloper",
+    "roles/writer"
   ],
   "runtimeconfig.configs.setIamPolicy": [
     "roles/admin",
@@ -4224,6 +4575,14 @@
     "roles/workflows.editor",
     "roles/writer"
   ],
+  "workstations.workstationClusters.create": [
+    "roles/admin",
+    "roles/editor",
+    "roles/owner",
+    "roles/workstations.admin",
+    "roles/workstations.editor",
+    "roles/writer"
+  ],
   "workstations.workstationConfigs.create": [
     "roles/admin",
     "roles/editor",
@@ -4254,5 +4613,16 @@
     "roles/owner",
     "roles/workstations.admin",
     "roles/workstations.policyAdmin"
+  ],
+  "workstations.workstations.start": [
+    "roles/admin",
+    "roles/editor",
+    "roles/owner",
+    "roles/workstations.admin",
+    "roles/workstations.editor",
+    "roles/writer"
+  ],
+  "workstations.workstations.use": [
+    "roles/workstations.user"
   ]
 }

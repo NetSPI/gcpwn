@@ -22,6 +22,7 @@ with the role.
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -52,6 +53,9 @@ PRINCIPAL_KINDS = frozenset(
         "GCPAllAuthenticatedUsers",
         "GCPDomainPrincipal",
         "GCPExternalIdentitySource",
+        # Broadest-principal node for an open group (whoCanJoin=ALL_IN_DOMAIN_CAN_JOIN);
+        # it originates CanJoin edges and must count as a traversal start vector.
+        "PrincipalsInOrg",
     }
 )
 
@@ -65,6 +69,7 @@ PRINCIPAL_ID_PREFIXES = (
     "principal://",
     "allUsers",
     "allAuthenticatedUsers",
+    "principals_in_org:",
 )
 
 _SA_EMAIL_SUFFIX = ".iam.gserviceaccount.com"
@@ -124,6 +129,7 @@ class AttackGraph:
             )
             if not files:
                 raise FileNotFoundError(f"No OpenGraph .json files found under {target}")
+            cls._warn_if_partial_split(target, files)
         else:
             files = [target]
 
@@ -176,6 +182,42 @@ class AttackGraph:
 
         return cls(nodes, edges, sources_loaded=[str(f) for f in files])
 
+    @staticmethod
+    def _warn_if_partial_split(directory: Path, loaded_files: list[Path]) -> None:
+        """Warn (stderr) when a directory load is missing sections the split manifest expected.
+
+        ``--split-json-output`` writes a ``*_split_manifest.json`` listing every section's part
+        files. Loading a directory that holds only SOME of those parts (a hand-picked subset, an
+        interrupted export) otherwise analyzes as if complete and silently UNDER-reports paths.
+        Surfaces that instead of failing silently; absence of a manifest means a plain single-file
+        or non-split directory, which is fine."""
+        manifest = next(iter(sorted(directory.rglob("*_split_manifest.json"))), None)
+        if manifest is None:
+            return
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        sections = data.get("sections")
+        if not isinstance(sections, dict) or not sections:
+            return
+        loaded_names = {p.name for p in loaded_files}
+        missing = [
+            str(section)
+            for section, info in sections.items()
+            if isinstance(info, dict)
+            and (basenames := {Path(str(f)).name for f in (info.get("files") or [])})
+            and not (basenames & loaded_names)
+        ]
+        if missing:
+            print(
+                f"[!] Partial split load: manifest lists {len(sections)} section(s) but "
+                f"{len(missing)} are not present on disk ({', '.join(sorted(missing))}). "
+                "Attack-path results will UNDER-report; load the full split export or re-run "
+                "process_og_gcpwn_data.",
+                file=sys.stderr,
+            )
+
     # ------------------------------------------------------------- classification
 
     def kind_of(self, node_id: str) -> str:
@@ -224,15 +266,6 @@ class AttackGraph:
                 if node["kind"] == "GCPProject" and node["properties"].get("project_id")
             }
         return self._known_projects
-
-    def display_name(self, node_id: str) -> str:
-        """Short human label for a node, preferring emitted display properties."""
-        properties = self.props(node_id)
-        for key in ("display_name", "name", "role_display_name"):
-            value = properties.get(key)
-            if value:
-                return str(value)
-        return node_id
 
     def role_of_binding(self, node_id: str) -> str | None:
         value = self.props(node_id).get("role_name")
@@ -336,21 +369,52 @@ class AttackGraph:
     # ------------------------------------------------------------------ matching
 
     def scope_matches(self, node_id: str, scope: str) -> bool:
-        """True when a node sits at/under ``scope`` (project/folder/org or any path)."""
-        if not scope:
+        """True when a node sits at or under ``scope`` (a project/folder/org).
+
+        Accepts any of the forms a user naturally types for the same scope:
+        ``projects/my-proj`` (the documented form), the bare id ``my-proj``, the
+        project number ``projects/799...``/``799...``, the node-id form
+        ``project:my-proj``, and the folder/organization equivalents. Matching is
+        segment-exact (not a raw substring), so ``my-proj`` does not spuriously
+        match ``my-proj-2``, and a binding's own scope id in its node id is matched
+        even when its stored ``attached_scope_id`` uses the numeric form.
+        """
+        if not scope or not scope.strip():
             return True
-        needle = scope.lower()
-        if needle in node_id.lower():
+        want = scope.strip().lower()
+        for prefix in (
+            "projects/", "folders/", "organizations/", "organization/",
+            "project:", "folder:", "org:", "organization:",
+        ):
+            if want.startswith(prefix):
+                want = want[len(prefix):]
+                break
+        want = want.strip("/")
+        if not want:
             return True
+
+        tokens: set[str] = set()
+        # The binding/resource node id carries its own scope as ``...@<type>:<leaf>``
+        # (optionally ``#src:...`` for an inherited grant). The leaf is the scope id
+        # (e.g. the project id), which is what a user types -- and is present even when
+        # attached_scope_id stores the numeric form.
+        lowered_id = node_id.lower()
+        at_index = lowered_id.rfind("@")
+        if at_index != -1:
+            tail = lowered_id[at_index + 1:].split("#", 1)[0]
+            if ":" in tail:
+                tokens.add(tail.split(":", 1)[1])
         properties = self.props(node_id)
-        for key in ("attached_scope_id", "effective_scope_id", "project_id", "name", "effective_scope_ids"):
+        for key in ("attached_scope_id", "effective_scope_id", "effective_scope_ids", "project_id", "name"):
             value = properties.get(key)
-            if isinstance(value, (list, tuple)):
-                if any(needle in str(item).lower() for item in value):
-                    return True
-            elif value and needle in str(value).lower():
-                return True
-        return False
+            values = value if isinstance(value, (list, tuple)) else [value]
+            for item in values:
+                if not item:
+                    continue
+                for segment in str(item).lower().split("/"):
+                    if segment:
+                        tokens.add(segment)
+        return want in tokens
 
     def basic_roles_held(self, node_id: str) -> frozenset[tuple[str, str | None]]:
         """(role, scope) pairs for basic roles node_id directly holds via IAM binding edges."""

@@ -93,17 +93,44 @@ def test_cai_ingest_builds_expected_graph():
 
     nodes, edges = _nodes(ctx), _edges(ctx)
     # the project node is materialized (it carries the owner binding + resources)
-    assert "resource:projects/proj-a" in nodes
+    assert "resource:proj-a@proj-a" in nodes
     # the owner binding collapses to ROLE_OWNER on the project resource
-    assert any(k == "ROLE_OWNER" and d == "resource:projects/proj-a" for _, k, d in edges)
+    assert any(k == "ROLE_OWNER" and d == "resource:proj-a@proj-a" for _, k, d in edges)
     # alice holds the owner binding
     assert any(s == "user:alice@corp.com" and k == "HAS_IAM_BINDING" for s, k, _ in edges)
     # SA key -> SA edge
     assert any(k == "ServiceAccountKeyFor" for _, k, _ in edges)
     # WIF provider -> pool edge
-    assert ("resource:projects/proj-a/locations/global/workloadIdentityPools/pool1/providers/gh",
+    assert ("resource:gh@proj-a",
             "IdentityProviderInPool",
-            "resource:projects/proj-a/locations/global/workloadIdentityPools/pool1") in edges
+            "resource:pool1@proj-a") in edges
+
+
+def test_project_scoped_export_synthesizes_ancestor_hierarchy():
+    # A project-scoped CAI export (the common hand-over) has NO Folder/Org resource records,
+    # only the project's `ancestors` chain. The mapper must synthesize the folder/org
+    # hierarchy rows from it so inheritance above the project still has a parent chain.
+    records = [
+        {"name": "//cloudresourcemanager.googleapis.com/projects/123456",
+         "assetType": "cloudresourcemanager.googleapis.com/Project",
+         "resource": {"data": {"projectId": "proj-a", "name": "proj-a"}},
+         "ancestors": ["projects/123456", "folders/456", "organizations/789"]},
+        {"name": "//iam.googleapis.com/projects/123456/serviceAccounts/svc@proj-a.iam.gserviceaccount.com",
+         "assetType": "iam.googleapis.com/ServiceAccount",
+         "resource": {"data": {"email": "svc@proj-a.iam.gserviceaccount.com"}},
+         "ancestors": ["projects/123456", "folders/456", "organizations/789"]},
+    ]
+    hier = {r["name"]: r for r in cai_records_to_tables(records)["abstract_tree_hierarchy"]}
+    assert hier["projects/proj-a"]["type"] == "project"
+    assert hier["folders/456"]["type"] == "folder" and hier["folders/456"]["parent"] == "organizations/789"
+    assert hier["organizations/789"]["type"] == "organization" and hier["organizations/789"]["parent"] == ""
+
+
+def test_explicit_hierarchy_records_are_not_duplicated_by_synthesis():
+    # When Folder/Org DO appear as resource records, ancestors must not create duplicates.
+    tables = cai_records_to_tables(_RECORDS)
+    names = [r["name"] for r in tables["abstract_tree_hierarchy"]]
+    assert len(names) == len(set(names))
 
 
 def test_process_og_cai_file_end_to_end(tmp_path):
@@ -128,6 +155,6 @@ def test_process_og_cai_file_end_to_end(tmp_path):
     graph = payload.get("graph") or {}
     node_ids = {str(n.get("id") or "") for n in (graph.get("nodes") or [])}
     edge_kinds = {str(e.get("kind") or "") for e in (graph.get("edges") or [])}
-    assert "resource:projects/proj-a" in node_ids
+    assert "resource:proj-a@proj-a" in node_ids
     assert "IdentityProviderInPool" in edge_kinds
     assert "ServiceAccountKeyFor" in edge_kinds

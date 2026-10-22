@@ -53,7 +53,6 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import normal
 
 # Shared progress helpers (see UtilityTools); aliased so the call sites below
 # keep their existing names.
-_progress_interval = UtilityTools.progress_interval
 _should_emit_progress = UtilityTools.should_emit_progress
 
 
@@ -963,42 +962,6 @@ def _emit_inferred_permissions_for_rules(
     }
 
 
-def build_inferred_permissions_single_permission(
-    *,
-    context,
-    entries: list[BindingPlusScopeEntry],
-    entry_metadata: dict[str, dict[str, Any]],
-    scope_resource_indexes: ScopeResourceIndexes,
-    rules: Iterable[dict[str, Any]],
-) -> dict[str, int]:
-    return _emit_inferred_permissions_for_rules(
-        context=context,
-        entries=entries,
-        entry_metadata=entry_metadata,
-        scope_resource_indexes=scope_resource_indexes,
-        rules=rules,
-        progress_label="single-permission",
-    )
-
-
-def build_inferred_permissions_multiple_permissions(
-    *,
-    context,
-    entries: list[BindingPlusScopeEntry],
-    entry_metadata: dict[str, dict[str, Any]],
-    scope_resource_indexes: ScopeResourceIndexes,
-    rules: Iterable[dict[str, Any]],
-) -> dict[str, int]:
-    return _emit_inferred_permissions_for_rules(
-        context=context,
-        entries=entries,
-        entry_metadata=entry_metadata,
-        scope_resource_indexes=scope_resource_indexes,
-        rules=rules,
-        progress_label="multi-permission",
-    )
-
-
 def build_iam_inferred_permissions_graph(context) -> dict[str, int | bool]:
     """
     Build inferred-permission grant paths from cached credential permission summaries:
@@ -1033,19 +996,21 @@ def build_iam_inferred_permissions_graph(context) -> dict[str, int | bool]:
         }
 
     scope_resource_indexes = augment_scope_resource_indexes(context.scope_resource_indexes(), entries)
-    single_stats = build_inferred_permissions_single_permission(
+    single_stats = _emit_inferred_permissions_for_rules(
         context=context,
         entries=entries,
         entry_metadata=entry_metadata,
         scope_resource_indexes=scope_resource_indexes,
         rules=inferred_single_rules,
+        progress_label="single-permission",
     )
-    multi_stats = build_inferred_permissions_multiple_permissions(
+    multi_stats = _emit_inferred_permissions_for_rules(
         context=context,
         entries=entries,
         entry_metadata=entry_metadata,
         scope_resource_indexes=scope_resource_indexes,
         rules=inferred_multi_rules,
+        progress_label="multi-permission",
     )
     emit_stats = {
         "events_total": int(single_stats.get("matched_events", 0)) + int(multi_stats.get("matched_events", 0)),

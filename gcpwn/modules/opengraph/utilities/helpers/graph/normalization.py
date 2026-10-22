@@ -81,6 +81,10 @@ RESOURCE_TOKEN_TO_NODE_TYPE: dict[str, str] = {
     # GKE cluster and GKEHub fleet membership (targets for GKE/GKEHub PE edges).
     "k8scluster": "GCPGKECluster",
     "fleetmembership": "GCPFleetMembership",
+    # Sensitive-resource-access read targets.
+    "apikey": "GCPApiKey",
+    "gitrepolink": "GCPDeveloperConnectGitRepoLink",
+    "bigqueryconnection": "GCPBigQueryConnection",
 }
 
 

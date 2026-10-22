@@ -102,11 +102,11 @@ def test_inferred_project_iam_edge_from_credential_evidence():
     ]
     assert implied_from_principal == [("user:eve@corp.com", implied_from_principal[0][1])]
     implied_node_id = implied_from_principal[0][1]
-    assert (implied_node_id, "INFERRED_CAN_MODIFY_PROJECT_IAM", "resource:projects/proj-a") in edges
+    assert (implied_node_id, "INFERRED_CAN_MODIFY_PROJECT_IAM", "resource:proj-a@proj-a") in edges
 
     types = _node_types(ctx)
     assert types.get(implied_node_id) == "GCPIamSimpleBinding"
-    assert types.get("resource:projects/proj-a") == "GCPProject"
+    assert types.get("resource:proj-a@proj-a") == "GCPProject"
 
 
 def test_inferred_org_iam_edge_from_credential_evidence():
@@ -125,7 +125,7 @@ def test_inferred_org_iam_edge_from_credential_evidence():
     edges = _edges(ctx)
     assert "INFERRED_CAN_MODIFY_ORG_IAM" in _edge_kinds(ctx)
     assert any(
-        kind == "INFERRED_CAN_MODIFY_ORG_IAM" and dst == "resource:organizations/111"
+        kind == "INFERRED_CAN_MODIFY_ORG_IAM" and dst == "resource:111"
         for _src, kind, dst in edges
     )
 
@@ -200,7 +200,7 @@ def test_combo_edge_single_role_emits_capability_hop_and_combo_edge():
     assert "CREATE_CLOUDSCHEDULER_JOB_AS_SA" in kinds
     assert "CREATE_CLOUDSCHEDULER_JOB_AS_SA" in kinds
 
-    capability_nodes = [nid for nid in types if nid.startswith("CAP:CREATE_CLOUDSCHEDULER_JOB_AS_SA")]
+    capability_nodes = [nid for nid in types if nid.startswith("cap:new:cloudschedulerjob@project:proj-a")]
     assert len(capability_nodes) == 1
     capability_id = capability_nodes[0]
 

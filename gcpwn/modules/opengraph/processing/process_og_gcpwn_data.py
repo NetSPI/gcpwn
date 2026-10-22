@@ -128,7 +128,6 @@ _PRINCIPAL_NODE_KINDS: set[str] = {
 # Shared progress helpers (see UtilityTools); aliased so the call sites below
 # keep their existing names.
 _print_inline_progress = UtilityTools.print_inline_progress
-_progress_interval = UtilityTools.progress_interval
 _should_emit_progress = UtilityTools.should_emit_progress
 
 
@@ -218,10 +217,6 @@ def _build_split_graph_payload(*, metadata: dict[str, Any], nodes: list[dict[str
     if split_metadata:
         payload["metadata"] = split_metadata
     return payload
-
-
-def _payload_size_bytes(payload: dict[str, Any]) -> int:
-    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _write_json_payload(path: Path, payload: dict[str, Any]) -> None:
@@ -397,7 +392,7 @@ def _write_split_outputs(
         current_edges_bytes = 0
         current_nodes_bytes = 0
         current_node_count = 0
-        base_chunk_overhead_bytes = _payload_size_bytes(
+        base_chunk_overhead_bytes = _json_value_size_bytes(
             _build_split_graph_payload(
                 metadata=metadata,
                 nodes=[],
@@ -699,12 +694,17 @@ def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = Fal
     edges = [edge_to_opengraph(r) for r in (edges_in_memory or [])]
 
     nodes = sorted(nodes, key=lambda n: str(n["id"] or ""))
+    # (start, end, kind) is not a total order: distinct raw edge_types can sanitize to the
+    # same kind on the same endpoints, leaving ties broken by insertion order (run-to-run
+    # nondeterministic). Append a stable serialization of the properties so the sort is
+    # total and the exported JSON is byte-reproducible.
     edges = sorted(
         edges,
         key=lambda e: (
             str(e["start"]["value"] or ""),
             str(e["end"]["value"] or ""),
             str(e["kind"] or ""),
+            json.dumps(e.get("properties") or {}, sort_keys=True, ensure_ascii=False),
         ),
     )
 
@@ -725,6 +725,29 @@ def _safe_export_token(raw_value: str | None) -> str:
         return "export"
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", token).strip("_")
     return normalized or "export"
+
+
+def _auto_cross_project_sa_projects(data_source) -> frozenset[str]:
+    """Project ids whose org policy explicitly does NOT enforce cross-project SA usage.
+
+    ``iam.disableCrossProjectServiceAccountUsage`` enforced (the GCP default) blocks a
+    principal in project A from using an SA in project B. When a project's org policy sets
+    that constraint to ``not_enforced``, cross-project impersonation of its SAs IS allowed,
+    so those SA home-projects can safely be graphed cross-project without the operator
+    having to name them by hand. Returns the set of such project ids (empty when org-policy
+    data is absent, i.e. the asset/orgpolicy enumerators were not run)."""
+    projects: set[str] = set()
+    for row in (data_source.get_data("orgpolicy_policies") or []):
+        constraint = str((row or {}).get("constraint") or "")
+        if "disableCrossProjectServiceAccountUsage" not in constraint:
+            continue
+        # rule_summary encodes boolean-constraint state as "enforce" / "not_enforced".
+        if "not_enforced" not in str((row or {}).get("rule_summary") or ""):
+            continue
+        project_id = str((row or {}).get("project_id") or "").strip()
+        if project_id:
+            projects.add(project_id)
+    return frozenset(projects)
 
 
 def _resolve_export_paths(session, args) -> tuple[str, str | None]:
@@ -883,6 +906,18 @@ def _parse_args(user_args):
         ),
     )
     parser.add_argument(
+        "--no-auto-cross-project",
+        dest="no_auto_cross_project",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable the automatic cross-project actAs detection that enables cross-project "
+            "paths for SA home-projects whose org policy leaves "
+            "iam.disableCrossProjectServiceAccountUsage not_enforced. Has no effect without "
+            "org-policy data, and is ignored when --cross-sa-project-allowed is given."
+        ),
+    )
+    parser.add_argument(
         "--include-resource-iam",
         dest="include_resource_iam",
         action="store_true",
@@ -1035,6 +1070,11 @@ def _print_trim_summary(trim_stats: dict[str, dict[str, int]]) -> None:
             ("implied_bindings", "nodes", "edges"),
         ),
         (
+            "non_escalation_simple_bindings",
+            "[*] Pruned non-escalation simple IAM-binding nodes (default mode; use --include-all to keep)",
+            ("simple_bindings", "nodes", "edges"),
+        ),
+        (
             "isolated_service_accounts",
             "[*] Pruned isolated service-account nodes",
             ("service_accounts", "nodes", "edges"),
@@ -1052,6 +1092,8 @@ def _print_trim_summary(trim_stats: dict[str, dict[str, int]]) -> None:
                 details.append(f"key_islands={int(stat.get('key_islands_removed', 0))}")
             elif output_key == "implied_bindings":
                 details.append(f"implied_bindings={int(stat.get('implied_bindings_removed', 0))}")
+            elif output_key == "simple_bindings":
+                details.append(f"simple_bindings={int(stat.get('non_escalation_simple_bindings_removed', 0))}")
             elif output_key == "service_accounts":
                 details.append(f"service_accounts={int(stat.get('isolated_service_accounts_removed', 0))}")
             elif output_key == "nodes":
@@ -1211,6 +1253,21 @@ def run_module(user_args, session):
                 print(f"[*] --cross-sa-project-allowed: cross-project actAs enabled for SA projects: {', '.join(sorted(_cross_project_sa_projects))}")
             else:
                 print("[*] --cross-sa-project-allowed: cross-project actAs enabled for ALL projects (ensure iam.disableCrossProjectServiceAccountUsage is disabled where needed)")
+        elif not getattr(args, "no_auto_cross_project", False):
+            # No explicit flag: auto-enable cross-project only for SA home-projects whose org
+            # policy explicitly does NOT enforce iam.disableCrossProjectServiceAccountUsage.
+            # Needs org-policy data (asset/orgpolicy enumeration); a no-op otherwise. The
+            # explicit --cross-sa-project-allowed always wins over this.
+            _auto_projects = _auto_cross_project_sa_projects(data_source)
+            if _auto_projects:
+                _cross_project = True
+                _cross_project_sa_projects = _auto_projects
+                print(
+                    "[*] Auto cross-project actAs: org policy leaves "
+                    "iam.disableCrossProjectServiceAccountUsage not_enforced for "
+                    f"{', '.join(sorted(_auto_projects))}; graphing their SAs cross-project "
+                    "(pass --no-auto-cross-project to disable, --cross-sa-project-allowed to override)."
+                )
         _raw_cats = getattr(args, "edge_categories", None)
         if not _raw_cats:
             _edge_categories: frozenset[str] = frozenset({"priv_escalation", "sensitive_resource_access"})

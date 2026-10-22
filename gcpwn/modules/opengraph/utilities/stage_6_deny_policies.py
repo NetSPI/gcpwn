@@ -29,6 +29,7 @@ from typing import Any
 from gcpwn.modules.opengraph.utilities.helpers.graph.core_helpers import (
     OpenGraphEdge,
     _scope_type_from_id,
+    scope_ancestry_chain,
 )
 from gcpwn.modules.opengraph.utilities.helpers.graph.iam_conditionals import (
     StatementConditionalsEngine,
@@ -123,14 +124,7 @@ def _scope_chain(anchor: str, project_id: str, parent_by_name: dict[str, str]) -
     denies can be tested against real ancestry rather than a blind 'applies to everything'."""
     if anchor and not _scope_type_from_id(anchor):
         anchor = f"projects/{project_id}" if project_id else anchor
-    chain: list[str] = []
-    seen: set[str] = set()
-    cur = anchor
-    while cur and cur not in seen:
-        seen.add(cur)
-        chain.append(cur)
-        cur = str(parent_by_name.get(cur) or "").strip()
-    return chain
+    return scope_ancestry_chain(anchor, parent_by_name)
 
 
 class _DenyRule:
@@ -146,18 +140,20 @@ class _DenyRule:
         self.condition = condition       # str summary
 
     def covers(self, scope_chain: list[str], expand_inheritance: bool) -> bool:
-        """Deny inherits DOWNWARD. `scope_chain` is the grant edge's ancestry
-        [home_scope, parent, ...]. The deny covers the edge when:
-          * it is at the edge's own home scope (exact match -- always), or
-          * it sits ABOVE the edge in the real hierarchy AND --expand-inheritance is on,
-            so an org/folder deny only reaches its genuine descendants (not the whole
-            tenant), mirroring the way the allow graph only models inheritance under that
-            flag. With --expand-inheritance off, a deny is confined to its exact scope."""
+        """Deny inherits DOWNWARD, unconditionally. `scope_chain` is the grant edge's
+        ancestry [home_scope, parent, ...]. The deny covers the edge when it sits at the
+        edge's own home scope OR anywhere above it in the real hierarchy.
+
+        This is independent of --expand-inheritance: IAM v2 denies always inherit to
+        descendants in GCP, regardless of how the ALLOW graph chooses to render
+        inheritance. Coupling coverage to that flag (the old behaviour) let an org/folder
+        deny silently fail to block a descendant-project edge whenever --deny-policies was
+        on but inheritance expansion was off -- a false-positive attack path a real deny
+        would stop. `expand_inheritance` is retained in the signature for callers but no
+        longer gates coverage; it only affects how the blocked edge is displayed."""
         if not self.scope_name or not scope_chain:
             return False
-        if self.scope_name == scope_chain[0]:
-            return True
-        return bool(expand_inheritance) and self.scope_name in scope_chain[1:]
+        return self.scope_name in scope_chain
 
 
 def _load_deny_rules(context, engine: StatementConditionalsEngine) -> list[_DenyRule]:

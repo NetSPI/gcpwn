@@ -53,6 +53,29 @@ def _apply_pruned_sets(
     return pruned_nodes, pruned_edges
 
 
+def _finish_trim(
+    nodes: list[OpenGraphNode],
+    edges: list[OpenGraphEdge],
+    *,
+    nodes_to_remove: set[str],
+    edges_to_remove: set[tuple[str, str, str]],
+    extra: dict[str, int],
+) -> tuple[list[OpenGraphNode], list[OpenGraphEdge], dict[str, int]]:
+    """Shared trimmer tail: when nothing is pruned, return the inputs unchanged with all
+    counts at 0; otherwise prune and report the removed counts alongside the trimmer-specific
+    ``extra`` stats. Keeps every trimmer's fast path + stat shape identical."""
+    if not nodes_to_remove and not edges_to_remove:
+        return nodes, edges, {**{key: 0 for key in extra}, "nodes_removed": 0, "edges_removed": 0}
+    pruned_nodes, pruned_edges = _apply_pruned_sets(
+        nodes, edges, nodes_to_remove=nodes_to_remove, edges_to_remove=edges_to_remove
+    )
+    return pruned_nodes, pruned_edges, {
+        **extra,
+        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
+        "edges_removed": max(0, len(edges) - len(pruned_edges)),
+    }
+
+
 def trim_service_account_binding_islands(
     nodes: list[OpenGraphNode],
     edges: list[OpenGraphEdge],
@@ -172,21 +195,11 @@ def trim_service_account_binding_islands(
         if not remaining_incident:
             nodes_to_remove.add(key_node_id)
 
-    if not nodes_to_remove and not edges_to_remove:
-        return nodes, edges, {"pairs_removed": 0, "key_islands_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
-    pruned_nodes, pruned_edges = _apply_pruned_sets(
-        nodes,
-        edges,
-        nodes_to_remove=nodes_to_remove,
-        edges_to_remove=edges_to_remove,
+    return _finish_trim(
+        nodes, edges,
+        nodes_to_remove=nodes_to_remove, edges_to_remove=edges_to_remove,
+        extra={"pairs_removed": pairs_removed, "key_islands_removed": key_islands_removed},
     )
-    return pruned_nodes, pruned_edges, {
-        "pairs_removed": pairs_removed,
-        "key_islands_removed": key_islands_removed,
-        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
-        "edges_removed": max(0, len(edges) - len(pruned_edges)),
-    }
 
 
 def trim_orphan_implied_bindings(
@@ -218,20 +231,11 @@ def trim_orphan_implied_bindings(
             edges_to_remove.add(edge_key)
         implied_bindings_removed += 1
 
-    if not nodes_to_remove and not edges_to_remove:
-        return nodes, edges, {"implied_bindings_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
-    pruned_nodes, pruned_edges = _apply_pruned_sets(
-        nodes,
-        edges,
-        nodes_to_remove=nodes_to_remove,
-        edges_to_remove=edges_to_remove,
+    return _finish_trim(
+        nodes, edges,
+        nodes_to_remove=nodes_to_remove, edges_to_remove=edges_to_remove,
+        extra={"implied_bindings_removed": implied_bindings_removed},
     )
-    return pruned_nodes, pruned_edges, {
-        "implied_bindings_removed": implied_bindings_removed,
-        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
-        "edges_removed": max(0, len(edges) - len(pruned_edges)),
-    }
 
 
 def trim_isolated_service_accounts(
@@ -260,20 +264,11 @@ def trim_isolated_service_accounts(
         if incident_counts.get(node_id, 0) == 0:
             nodes_to_remove.add(node_id)
 
-    if not nodes_to_remove:
-        return nodes, edges, {"isolated_service_accounts_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
-    pruned_nodes, pruned_edges = _apply_pruned_sets(
-        nodes,
-        edges,
-        nodes_to_remove=nodes_to_remove,
-        edges_to_remove=set(),
+    return _finish_trim(
+        nodes, edges,
+        nodes_to_remove=nodes_to_remove, edges_to_remove=set(),
+        extra={"isolated_service_accounts_removed": len(nodes_to_remove)},
     )
-    return pruned_nodes, pruned_edges, {
-        "isolated_service_accounts_removed": len(nodes_to_remove),
-        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
-        "edges_removed": max(0, len(edges) - len(pruned_edges)),
-    }
 
 
 def trim_non_escalation_simple_bindings(
@@ -293,20 +288,11 @@ def trim_non_escalation_simple_bindings(
             continue
         nodes_to_remove.add(str(node.node_id or "").strip())
 
-    if not nodes_to_remove:
-        return nodes, edges, {"non_escalation_simple_bindings_removed": 0, "nodes_removed": 0, "edges_removed": 0}
-
-    pruned_nodes, pruned_edges = _apply_pruned_sets(
-        nodes,
-        edges,
-        nodes_to_remove=nodes_to_remove,
-        edges_to_remove=set(),
+    return _finish_trim(
+        nodes, edges,
+        nodes_to_remove=nodes_to_remove, edges_to_remove=set(),
+        extra={"non_escalation_simple_bindings_removed": len(nodes_to_remove)},
     )
-    return pruned_nodes, pruned_edges, {
-        "non_escalation_simple_bindings_removed": len(nodes_to_remove),
-        "nodes_removed": max(0, len(nodes) - len(pruned_nodes)),
-        "edges_removed": max(0, len(edges) - len(pruned_edges)),
-    }
 
 
 def apply_final_allowlist_trims(

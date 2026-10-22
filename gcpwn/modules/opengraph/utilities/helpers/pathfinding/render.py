@@ -163,13 +163,20 @@ def describe_target(graph: AttackGraph, node_id: str) -> str:
     return f"{graph.kind_of(node_id)} {short_id(node_id)}"
 
 
-def _hop_line(graph: AttackGraph, hop: Hop) -> str:
+def _notes_suffix(*, inherited_from: str | None, conditional: bool) -> str:
+    """The `   [inherited from …; conditional]` suffix shared by the collapsed hop line and
+    its terminal line (both 3-space lead). The expanded view's inline `[…]` note differs and
+    is intentionally not folded in here."""
     notes = []
-    if hop.inherited_from:
-        notes.append(f"inherited from {short_id(hop.inherited_from, limit=44)}")
-    if hop.conditional:
+    if inherited_from:
+        notes.append(f"inherited from {short_id(inherited_from, limit=44)}")
+    if conditional:
         notes.append("conditional")
-    suffix = f"   [{'; '.join(notes)}]" if notes else ""
+    return f"   [{'; '.join(notes)}]" if notes else ""
+
+
+def _hop_line(graph: AttackGraph, hop: Hop) -> str:
+    suffix = _notes_suffix(inherited_from=hop.inherited_from, conditional=hop.conditional)
 
     scope = _scope_label(hop.scope, hop.scope_display)
     if hop.permission_sources:
@@ -222,12 +229,7 @@ def render_path(graph: AttackGraph, path: RawPath) -> list[str]:
     lines.extend(_hop_line(graph, hop) for hop in steps)
     if terminal and count > 0:
         scope = _scope_label(terminal.scope, terminal.scope_display)
-        notes = []
-        if terminal.inherited_from:
-            notes.append(f"inherited from {short_id(terminal.inherited_from, limit=44)}")
-        if terminal.conditional:
-            notes.append("conditional")
-        suffix = f"   [{'; '.join(notes)}]" if notes else ""
+        suffix = _notes_suffix(inherited_from=terminal.inherited_from, conditional=terminal.conditional)
         lines.append(f"        └─ holds {terminal.role or '?'} on {scope}{suffix}")
     return lines
 
@@ -460,10 +462,23 @@ def render_report(
     return "\n".join(lines)
 
 
-def paths_to_json(graph: AttackGraph, paths: list[RawPath], *, config: dict, query: dict) -> str:
-    """Machine-readable form of the same findings."""
+def paths_to_json(
+    graph: AttackGraph,
+    paths: list[RawPath],
+    *,
+    config: dict,
+    query: dict,
+    detail_limit: int | None = None,
+) -> str:
+    """Machine-readable form of the same findings.
+
+    Applies the SAME ``detail_limit`` the text report uses so the two never disagree on how
+    many paths are shown; ``paths_total`` / ``paths_shown`` make the cap explicit for
+    machine consumers (raise --max-paths to get more)."""
+    total = len(paths)
+    shown = paths if detail_limit is None else paths[: max(0, int(detail_limit))]
     entries = []
-    for path in paths:
+    for path in shown:
         hops = collapse_path(graph, path)
         steps, _terminal = _attack_hops(hops)
         entries.append(
@@ -476,4 +491,15 @@ def paths_to_json(graph: AttackGraph, paths: list[RawPath], *, config: dict, que
                 "hops": [asdict(hop) for hop in hops],
             }
         )
-    return json.dumps({"config": config, "query": query, "paths": entries}, indent=2, ensure_ascii=False)
+    return json.dumps(
+        {
+            "config": config,
+            "query": query,
+            "paths_total": total,
+            "paths_shown": len(entries),
+            "paths_truncated": len(entries) < total,
+            "paths": entries,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
