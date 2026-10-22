@@ -65,10 +65,35 @@ def save_cai_tables(session, tables: dict[str, list[dict[str, Any]]]) -> dict[st
     return saved
 
 
-def enumerate_asset_inventory(session, *, scope: str, asset_types: list[str] | None = None) -> dict[str, int]:
-    """Fetch CAI at scope, map to gcpwn tables, persist; return per-table saved counts."""
+def write_cai_records_file(records: list[dict[str, Any]], output_file: str) -> int:
+    """Write fetched CAI records to a portable JSON file usable with ``process_og --cai-file``.
+
+    Writes a JSON array (the shape ``load_cai_records`` accepts) so the same scan that
+    populates the workspace can also be handed off / built offline with no credentials.
+    Returns the number of records written."""
+    import json
+    from pathlib import Path
+
+    path = Path(str(output_file)).expanduser()
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(list(records or []), handle, ensure_ascii=False)
+    return len(records or [])
+
+
+def enumerate_asset_inventory(
+    session, *, scope: str, asset_types: list[str] | None = None, output_file: str | None = None
+) -> dict[str, int]:
+    """Fetch CAI at scope, map to gcpwn tables, persist; return per-table saved counts.
+
+    When ``output_file`` is given, the raw fetched records are ALSO written there as a
+    portable CAI export (``process_og --cai-file``-ready) before mapping/persisting."""
     records = fetch_cai_records(session, scope=scope, asset_types=asset_types)
     if not records:
         return {}
+    if output_file:
+        count = write_cai_records_file(records, output_file)
+        print(f"[*] Wrote {count} CAI records to {output_file} (use: process_og_gcpwn_data --cai-file {output_file}).")
     tables = cai_records_to_tables(records)
     return save_cai_tables(session, tables)

@@ -68,7 +68,11 @@ def _get_iam_policy_generic(
         print(f"[DEBUG] Getting IAM bindings for {resource_name} ...")
 
     try:
+        # requested_policy_version=3 ensures conditional role bindings and their CEL
+        # expressions are returned (the v1 default omits them); safe for resources that
+        # don't support conditions.
         request = iam_policy_pb2.GetIamPolicyRequest(resource=str(resource_name or "").strip())
+        request.options.requested_policy_version = 3
         result = iam_client.get_iam_policy(request=request)
         if debug_label:
             print(f"[DEBUG] Successfully completed {debug_label} getIamPolicy ..")

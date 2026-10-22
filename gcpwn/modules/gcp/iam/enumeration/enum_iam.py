@@ -185,17 +185,27 @@ def _coerce_included_permissions(raw_permissions):
 
 
 _STAGE_LABELS = {0: "ALPHA", 1: "BETA", 2: "GA", 3: "DEPRECATED", 4: "DISABLED", 5: "EAP"}
+_STAGE_LABEL_SET = set(_STAGE_LABELS.values())
 
 
 def _coerce_custom_role_stage(raw_stage):
+    """Return a display-friendly stage string, or the raw integer for unknown stages.
+
+    When the result will be assigned back to a proto-plus enum field, an unknown
+    numeric value must stay as an int (proto-plus accepts unknown integer enum values
+    silently).  Returning a bare digit string like '6' triggers a KeyError inside
+    proto-plus's enum name-lookup machinery.
+    """
     if raw_stage is None:
         return ""
     if isinstance(raw_stage, int):
-        return _STAGE_LABELS.get(raw_stage, str(raw_stage))
+        return _STAGE_LABELS.get(raw_stage, raw_stage)  # keep int for unknowns
     stage = str(raw_stage).strip()
     if stage.isdigit():
-        return _STAGE_LABELS.get(int(stage), stage)
-    return stage.upper() if stage.upper() in set(_STAGE_LABELS.values()) else stage
+        n = int(stage)
+        return _STAGE_LABELS.get(n, n)  # keep int for unknowns
+    upper = stage.upper()
+    return upper if upper in _STAGE_LABEL_SET else stage
 
 
 def _hydrate_cached_custom_role(row):

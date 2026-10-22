@@ -852,7 +852,12 @@ class IAMPolicyBindingsResource:
         if client is None or not resource_name:
             return None
         try:
+            # requested_policy_version=3 is REQUIRED to receive conditional role bindings
+            # (and their CEL expressions); the default (v1) silently omits them, which would
+            # hide every condition-scoped grant from the graph. v3 is safe for resources that
+            # don't support conditions -- they return their policy unchanged.
             request = iam_policy_pb2.GetIamPolicyRequest(resource=resource_name)
+            request.options.requested_policy_version = 3
             return client.get_iam_policy(request=request)
         except NotFound:
             UtilityTools.print_404_resource(resource_name)

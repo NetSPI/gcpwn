@@ -219,4 +219,34 @@ def cai_records_to_tables(records: Iterable[dict]) -> dict[str, list[dict]]:
                 "name": name, "pool_name": pool_name, "provider_id": provider_id, "project_id": project_id,
             })
 
+    # Synthesize folder/org hierarchy nodes from `ancestors` chains. A project-scoped CAI
+    # export (the common case a client hands over) carries the project's ancestors
+    # (folders/.. -> organizations/..) on each asset but NO separate Folder/Org resource
+    # records, so without this the hierarchy would stop at the project and inheritance /
+    # containment above it would be missing. Each ancestry list is ordered
+    # [self, parent, grandparent, ...], so an ancestor's parent is simply the next entry.
+    existing_hier = {str(row.get("name") or "") for row in out["abstract_tree_hierarchy"]}
+    synthesized: dict[str, str] = {}
+    for record in records:
+        ancestors = _first(record, "ancestors", default=[]) or []
+        if not isinstance(ancestors, list):
+            continue
+        chain = [_rewrite_project_number(_strip_host(str(a or "").strip()), num_to_id) for a in ancestors]
+        for idx, ancestor in enumerate(chain):
+            if not ancestor.startswith(("folders/", "organizations/")):
+                continue
+            if ancestor in existing_hier or ancestor in synthesized:
+                continue
+            # Organizations are top-level (no parent); a folder's parent is the next ancestor.
+            parent = "" if ancestor.startswith("organizations/") else (chain[idx + 1] if idx + 1 < len(chain) else "")
+            synthesized[ancestor] = parent
+    for ancestor_name, parent in synthesized.items():
+        out["abstract_tree_hierarchy"].append({
+            "name": ancestor_name,
+            "type": "organization" if ancestor_name.startswith("organizations/") else "folder",
+            "display_name": "",
+            "project_id": "",
+            "parent": parent,
+        })
+
     return out

@@ -22,6 +22,13 @@ def _parse_args(user_args):
         required=False,
         help="Optional comma-separated asset_type filter (e.g. compute.googleapis.com/Instance,iam.googleapis.com/ServiceAccount).",
     )
+    parser.add_argument(
+        "--output-file",
+        dest="output_file",
+        required=False,
+        help="Also write the raw CAI records to this JSON file, ready for "
+             "'process_og_gcpwn_data --cai-file <file>' (offline graphing / hand-off).",
+    )
     parser.add_argument("-v", "--debug", action="store_true", help="Verbose output")
     return parser.parse_args(user_args)
 
@@ -39,8 +46,9 @@ def run_module(user_args, session):
     scope = str(args.scope or "").strip() or f"projects/{session.project_id}"
     asset_types = parse_csv_arg(args.asset_types) or None
 
+    output_file = str(getattr(args, "output_file", "") or "").strip() or None
     print(f"[*] Cloud Asset Inventory: scanning {scope} (this can take a while on large orgs)...")
-    saved = enumerate_asset_inventory(session, scope=scope, asset_types=asset_types)
+    saved = enumerate_asset_inventory(session, scope=scope, asset_types=asset_types, output_file=output_file)
     if not saved:
         print(f"[*] No assets returned from Cloud Asset Inventory for {scope} (API disabled, denied, or empty).")
         return 1
