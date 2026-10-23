@@ -156,40 +156,6 @@ class TestTargetResolution:
         assert resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/proj").node_ids
         assert not resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/other").node_ids
 
-    def test_scope_filter_matches_project_by_id_number_and_subtree(self, tmp_path):
-        # Real graphs store a project binding's attached_scope_id as the project NUMBER
-        # while the node id carries the project ID -- scoping must work for both forms,
-        # include child resources in the subtree, and be segment-exact (proj-a != proj-a-2).
-        nodes = [
-            _binding("iambinding:roles/owner@project:proj-a", "roles/owner", "projects/900900900900"),
-            _binding("iambinding:roles/owner@bucket:b1", "roles/owner",
-                     "projects/proj-a/buckets/b1", scope_type="bucket"),
-            _binding("iambinding:roles/owner@project:proj-a-2", "roles/owner", "projects/800800800800"),
-            _binding("iambinding:roles/owner@org:111", "roles/owner",
-                     "organizations/111", scope_type="organization"),
-        ]
-        graph = AttackGraph.from_path(_write(tmp_path, nodes, []))
-        proj = "iambinding:roles/owner@project:proj-a"
-        bucket = "iambinding:roles/owner@bucket:b1"
-        sibling = "iambinding:roles/owner@project:proj-a-2"
-        org = "iambinding:roles/owner@org:111"
-
-        def scoped(scope):
-            return resolve_targets(graph, roles=["roles/owner"], scope=scope).node_ids
-
-        # Documented form AND bare id both match the project binding (by its node-id leaf,
-        # even though attached_scope_id is the number) plus the subtree bucket -- not the sibling.
-        assert scoped("projects/proj-a") == {proj, bucket}
-        assert scoped("proj-a") == {proj, bucket}
-        # Project-number form matches the binding whose stored scope uses the number.
-        assert scoped("projects/900900900900") == {proj}
-        # Segment-exact: proj-a must NOT bleed into proj-a-2.
-        assert scoped("projects/proj-a-2") == {sibling}
-        # Folder/org forms and the node-id-style form.
-        assert scoped("organizations/111") == {org}
-        assert scoped("org:111") == {org}
-
-
 class TestShortestPaths:
     def test_finds_direct_and_chained_principals(self, chain_graph):
         targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids

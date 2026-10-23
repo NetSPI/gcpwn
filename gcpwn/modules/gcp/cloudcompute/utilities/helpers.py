@@ -436,6 +436,30 @@ def _aggregated_items(aggregated: Any, field_name: str) -> list[Any]:
     return rows
 
 
+def _aggregated_list_request(request_cls: Any, **base: Any) -> Any:
+    """Build a compute ``AggregatedList*Request``, setting ``return_partial_success``
+    only when the installed google-cloud-compute version's request type declares it.
+
+    google-cloud-compute 1.55.0 removed ``return_partial_success`` from the compute
+    aggregated-list request messages; constructing one with it on 1.55+ raises
+    ``ValueError: Unknown field for <Request>: return_partial_success``. On versions
+    that still define it (<=1.48) we set it so a single aggregated call keeps sweeping
+    every zone/region even when some scopes are unreachable. We check the request's own
+    proto fields rather than catching the construction error, so the field is sent iff
+    the API actually supports it."""
+    if "return_partial_success" in request_cls.meta.fields:
+        base["return_partial_success"] = True
+    return request_cls(**base)
+
+
+def _aggregated_request_cls_for(client_attr: str) -> Any:
+    """Map a compute client attr (e.g. ``NetworkAttachmentsClient``) to its aggregated
+    request class (``AggregatedListNetworkAttachmentsRequest``), or None if absent."""
+    if client_attr.endswith("Client"):
+        return getattr(compute_v1, f"AggregatedList{client_attr[:-len('Client')]}Request", None)
+    return None
+
+
 def _reservation_block_extra_builder(_obj: Any, raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "zone": _normalized_zone_from_raw(raw),
@@ -1085,8 +1109,14 @@ class CloudComputeGapicResource:
                 aggregated = getattr(self.client, "aggregated_list", None)
                 if aggregated is None:
                     return []
+                agg_cls = _aggregated_request_cls_for(self.spec.client_attr)
+                request = (
+                    _aggregated_list_request(agg_cls, project=project_id)
+                    if agg_cls is not None
+                    else {"project": project_id}
+                )
                 rows = _aggregated_items(
-                    aggregated(request={"project": project_id, "return_partial_success": True}),
+                    aggregated(request=request),
                     self.spec.component_key,
                 )
             else:
@@ -2354,10 +2384,7 @@ class CloudComputeInstanceTemplatesResource:
 
     def list(self, *, project_id: str, action_dict=None):
         try:
-            req = compute_v1.AggregatedListInstanceTemplatesRequest(
-                project=project_id,
-                return_partial_success=True,
-            )
+            req = _aggregated_list_request(compute_v1.AggregatedListInstanceTemplatesRequest, project=project_id)
             aggregated = self.client.aggregated_list(request=req)
             rows = []
             for _scope, scoped_list in aggregated:
@@ -2535,7 +2562,7 @@ class _DualScopeInstanceGroupResource:
             if not zones and not regions:
                 out = _aggregated_items(
                     self.zonal.aggregated_list(
-                        request=getattr(compute_v1, self._AGG_REQUEST)(project=project_id, return_partial_success=True)
+                        request=_aggregated_list_request(getattr(compute_v1, self._AGG_REQUEST), project=project_id)
                     ),
                     self._AGG_ATTR,
                 )

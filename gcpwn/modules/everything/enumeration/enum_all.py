@@ -368,7 +368,8 @@ def _print_module_tokens() -> None:
         names = [key.replace("_", "-")] + sorted(aliases_by_key.get(key, []))
         extra = f"  (aliases: {', '.join(names[1:])})" if len(names) > 1 else ""
         print(f"    {names[0]:28} {_module_display_name(key)}{extra}")
-    print(f"\n    Example:  {UtilityTools.BOLD}modules run enum_gcp --modules storage,iam gke{UtilityTools.RESET}")
+    print(f"\n    Example (only these):  {UtilityTools.BOLD}modules run enum_gcp --modules storage,iam gke{UtilityTools.RESET}")
+    print(f"    Example (all but these):  {UtilityTools.BOLD}modules run enum_gcp --dont-modules storage,gke{UtilityTools.RESET}")
 
 
 @dataclass(frozen=True)
@@ -522,7 +523,14 @@ def _service_selected(spec: "ServiceSpec", args, every_flag_missing: bool) -> bo
     Opt-in services (e.g. Cloud Asset Inventory) are EXCLUDED from the every_flag_missing
     'run all' default and only run when their gate flag is explicitly passed; since their
     flags are also excluded from the every_flag_missing computation, passing one is additive
-    (it does not suppress the other services)."""
+    (it does not suppress the other services).
+
+    --dont-modules wins: a service whose gate key (or shared umbrella key, e.g.
+    cloud_compute) is in args.dont_modules_keys never runs, even under every_flag_missing
+    or an explicit --modules selection."""
+    excluded = getattr(args, "dont_modules_keys", None) or frozenset()
+    if excluded and any(flag in excluded for flag in spec.gate_flags):
+        return False
     gate_set = any(getattr(args, flag, False) for flag in spec.gate_flags)
     if spec.opt_in:
         return gate_set
@@ -890,8 +898,9 @@ def _count_non_rm_service_plan(args, *, every_flag_missing: bool, first_run: boo
                                enabled_keys: "set[str] | None" = None) -> int:
     def _api_ok(spec: "ServiceSpec") -> bool:
         return enabled_keys is None or any(gate in enabled_keys for gate in spec.gate_flags)
+    excluded = getattr(args, "dont_modules_keys", None) or frozenset()
     count = sum(1 for spec in _SERVICES if _service_selected(spec, args, every_flag_missing) and _api_ok(spec))
-    count += int(first_run and args.workspace_identity)
+    count += int(first_run and args.workspace_identity and "workspace_identity" not in excluded)
     count += int(last_run and not more)
     return count
 
@@ -946,12 +955,14 @@ def _enabled_parallel_services(user_args) -> list[tuple[str, str]]:
     p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     p.set_defaults(**{key: False for key in _ALL_GATE_KEYS})
     p.add_argument("--modules", action="append", nargs="+")
+    p.add_argument("--dont-modules", "--exclude-modules", dest="dont_modules", action="append", nargs="+")
     g, _ = p.parse_known_args(list(user_args or []))
 
     # Services are chosen via --modules only; resolve tokens to gate keys.
     module_keys, _unknown = _resolve_module_tokens(getattr(g, "modules", None))
     for key in module_keys:
         setattr(g, key, True)
+    excluded_keys, _exc_unknown = _resolve_module_tokens(getattr(g, "dont_modules", None))
 
     selected = {key for key, _ in _PARALLEL_SERVICES if getattr(g, key, False)}
     if getattr(g, "cloud_compute", False):
@@ -967,6 +978,13 @@ def _enabled_parallel_services(user_args) -> list[tuple[str, str]]:
     if not any_service_flag:
         non_opt_in_selected = {key for key, _ in _PARALLEL_SERVICES if key not in opt_in_gates}
     final = non_opt_in_selected | (selected & opt_in_gates)
+    # --dont-modules removes services from the parallel plan. The cloud_compute umbrella
+    # token covers its three sub-services, mirroring _service_selected (where cloud_compute
+    # is a shared gate_flag on each compute spec).
+    if excluded_keys:
+        final -= excluded_keys
+        if "cloud_compute" in excluded_keys:
+            final -= {"cloud_compute_resources", "cloud_compute_network", "cloud_compute_lb"}
     return [(key, flag) for key, flag in _PARALLEL_SERVICES if key in final]
 
 
@@ -1469,10 +1487,23 @@ def run_module(user_args, session):
         ),
     )
     selection_group.add_argument(
+        "--dont-modules",
+        "--exclude-modules",
+        dest="dont_modules",
+        action="append",
+        nargs="+",
+        metavar="SERVICE",
+        help=(
+            "Services to EXCLUDE, comma/space separated (e.g. --dont-modules storage,gke). "
+            "Same tokens as --modules. Use alone to run everything EXCEPT these; exclusion "
+            "wins if a service is named in both --modules and --dont-modules."
+        ),
+    )
+    selection_group.add_argument(
         "--list-modules",
         dest="list_modules",
         action="store_true",
-        help="List every --modules service token (with aliases) and exit.",
+        help="List every --modules / --dont-modules service token (with aliases) and exit.",
     )
     selection_group.add_argument(
         "--filter-enabled-services",
@@ -1701,6 +1732,21 @@ def run_module(user_args, session):
         for key in selected_keys:
             setattr(args, key, True)
 
+    # --dont-modules storage,gke -> exclude those services. Resolved to the same gate
+    # keys as --modules and stashed on args; _service_selected (and the RM/workspace
+    # gates) skip any service whose gate key is excluded. Used alone it means
+    # "run everything EXCEPT these"; exclusion wins over an overlapping --modules.
+    args.dont_modules_keys = frozenset()
+    if getattr(args, "dont_modules", None):
+        excluded_keys, excluded_unknown = _resolve_module_tokens(args.dont_modules)
+        if excluded_unknown:
+            UtilityTools.print_error(
+                f"Unknown --dont-modules token(s): {', '.join(excluded_unknown)}. "
+                f"Run 'modules run enum_gcp --list-modules' for valid tokens."
+            )
+            return -1
+        args.dont_modules_keys = frozenset(excluded_keys)
+
     # Standalone report: list resumable run tokens and exit (also handled in the
     # parallel dispatcher, but keep it here so the flag works on any code path).
     if getattr(args, "list_tokens", False):
@@ -1822,6 +1868,10 @@ def run_module(user_args, session):
     every_flag_missing = not any(
         getattr(args, key, False) for key in _ALL_GATE_KEYS if key not in _opt_in_keys
     )
+    # --dont-modules exclusions (resolved earlier onto args). _service_selected reads
+    # this directly for the per-service table; the foundational RM/workspace gates below
+    # consult it too so an excluded foundational token is honoured on every path.
+    excluded_keys = getattr(args, "dont_modules_keys", None) or frozenset()
 
     run_ctx = getattr(session, "_module_run_context", None) or {}
     run_index = int(run_ctx.get("index", 0) or 0)
@@ -1863,6 +1913,7 @@ def run_module(user_args, session):
     planned_services += int(
         do_rm
         and first_run
+        and "resource_manager" not in excluded_keys
         and (
             args.resource_manager
             or every_flag_missing
@@ -1873,7 +1924,7 @@ def run_module(user_args, session):
         1 for spec in _SERVICES
         if _service_selected(spec, args, every_flag_missing) and _service_api_enabled(spec)
     )
-    planned_services += int(first_run and args.workspace_identity)
+    planned_services += int(first_run and args.workspace_identity and "workspace_identity" not in excluded_keys)
     planned_services += int(last_run)
 
     if not suppress_progress:
@@ -1900,7 +1951,8 @@ def run_module(user_args, session):
 
     allowlist_active = allowlist_requested
 
-    if do_rm and first_run and (args.resource_manager or every_flag_missing or allowlist_active):
+    if (do_rm and first_run and "resource_manager" not in excluded_keys
+            and (args.resource_manager or every_flag_missing or allowlist_active)):
         original_project_count = len(session.global_project_list)
         module_args = ["-v"] if args.debug else []
         if args.iam:
@@ -1983,7 +2035,8 @@ def run_module(user_args, session):
     run_services = run_non_rm_for_project and do_services
     # Workspace is once-per-run (first_run). When --modules workspace is passed we want
     # the full suite (enum_google_workspace orchestrator), not just Cloud Identity alone.
-    if do_rm and run_non_rm_for_project and first_run and args.workspace_identity:
+    if (do_rm and run_non_rm_for_project and first_run and args.workspace_identity
+            and "workspace_identity" not in excluded_keys):
         module_args = ["-v"] if args.debug else []
         _run_other_module(session, module_args, "gcpwn.modules.everything.enumeration.enum_google_workspace")
 
