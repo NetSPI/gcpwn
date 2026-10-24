@@ -2415,54 +2415,6 @@ def _emit_iam_binding_edges_from_entries(
                 "If that org policy is disabled in this tenant, re-run with "
                 "--cross-sa-project-allowed <projects> to graph those paths.\n"
             )
-    dangerous_events = collect_rule_events(
-        entries=entries,
-        rules=rules,
-        matches_for_group=_matches_for_group,
-        normalize_binding_permission_map=_normalize_binding_permission_map,
-        normalized_token_list=normalized_token_list,
-        progress_callback=_print_rule_scan_progress,
-        group_progress_callback=_print_rule_group_scan_progress,
-        cross_project=_cross_project,
-    )
-    # Post-filter cross-project combo events when a specific SA-project allowlist is given.
-    # iam.disableCrossProjectServiceAccountUsage is a project-level policy on the SA's HOME
-    # project; only SA home-projects in the allowlist should yield cross-project edges.
-    if _cross_project and _cross_project_sa_projects:
-        filtered_events = []
-        for _ev in dangerous_events:
-            if _ev.get("emission_mode") != "combo":
-                filtered_events.append(_ev)
-                continue
-            _contribs = _ev.get("contributors") or []
-            _project_ids = {c.project_id for c in _contribs if getattr(c, "project_id", None)}
-            if len(_project_ids) <= 1:
-                # same-project combo event — always keep
-                filtered_events.append(_ev)
-                continue
-            # Cross-project combo: iam.disableCrossProjectServiceAccountUsage is a policy on
-            # the SERVICE ACCOUNT's home project, so only the SA-side contributor's project
-            # may gate the edge — never the actor/resource project. Isolate the actAs
-            # (service-account scoped) contributors and test only their home project(s).
-            _sa_projects = {
-                proj
-                for c in _contribs
-                if str(getattr(c, "attached_scope_type", "") or "") == "service-account"
-                and (proj := _sa_home_project(c))
-            }
-            if not _sa_projects:
-                # Can't identify an SA home project (unexpected for a cross-project combo);
-                # don't silently drop a real edge.
-                filtered_events.append(_ev)
-            elif _sa_projects & _cross_project_sa_projects:
-                filtered_events.append(_ev)
-        dangerous_events = filtered_events
-    if rules:
-        _finalize_inline_progress()
-    owner_baseline_events = collect_owner_baseline_events(
-        entries=entries,
-        collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
-    )
     # Emit events in a stable, total order. _emit_events is first-write-wins per combo-node
     # id / edge key, so when several events collapse onto one shared combo node (e.g. a
     # via=resource combo fanning to many targets), the event that lands first fixes the
@@ -2479,22 +2431,93 @@ def _emit_iam_binding_edges_from_entries(
             tuple(sorted(str(getattr(c, "principal_id", "") or "") for c in contributors)),
         )
 
-    # Compute this FIRST, from dangerous_events alone -- owner-baseline contributors are also
-    # BindingPlusScopeEntry, so merging them in before this would leak owner binding ids into
-    # the dangerous set.
-    bindings_with_dangerous_edges: set[str] = {
-        contributor.binding_composite_id
-        for event in dangerous_events
-        for contributor in (event.get("contributors") or [])
-        if isinstance(contributor, BindingPlusScopeEntry)
-    }
-    # Merge owner-baseline events IN PLACE and sort in place: avoids the two list() copies plus
-    # the sorted() copy of the whole event set, which otherwise all coexist at the build peak.
-    # (list.sort is the same stable Timsort with the same key, so the order is identical.)
-    all_events = dangerous_events
-    all_events.extend(owner_baseline_events)
-    owner_baseline_events = None
-    all_events.sort(key=_event_sort_key)
+    def _filter_cross_project_events(evs):
+        # Post-filter cross-project combo events when a specific SA-project allowlist is given.
+        # iam.disableCrossProjectServiceAccountUsage is a project-level policy on the SA's HOME
+        # project; only SA home-projects in the allowlist should yield cross-project edges.
+        if not (_cross_project and _cross_project_sa_projects):
+            return evs
+        filtered_events = []
+        for _ev in evs:
+            if _ev.get("emission_mode") != "combo":
+                filtered_events.append(_ev)
+                continue
+            _contribs = _ev.get("contributors") or []
+            _project_ids = {c.project_id for c in _contribs if getattr(c, "project_id", None)}
+            if len(_project_ids) <= 1:
+                filtered_events.append(_ev)
+                continue
+            _sa_projects = {
+                proj
+                for c in _contribs
+                if str(getattr(c, "attached_scope_type", "") or "") == "service-account"
+                and (proj := _sa_home_project(c))
+            }
+            if not _sa_projects:
+                filtered_events.append(_ev)
+            elif _sa_projects & _cross_project_sa_projects:
+                filtered_events.append(_ev)
+        return filtered_events
+
+    _grouped_cache: dict = {}
+
+    def _collect_filtered(rule_subset):
+        return _filter_cross_project_events(collect_rule_events(
+            entries=entries,
+            rules=rule_subset,
+            matches_for_group=_matches_for_group,
+            normalize_binding_permission_map=_normalize_binding_permission_map,
+            normalized_token_list=normalized_token_list,
+            progress_callback=_print_rule_scan_progress,
+            group_progress_callback=_print_rule_group_scan_progress,
+            cross_project=_cross_project,
+            grouped_cache=_grouped_cache,
+        ))
+
+    owner_baseline_events = collect_owner_baseline_events(
+        entries=entries,
+        collapsed_dangerous_role_rules=_COLLAPSED_DANGEROUS_ROLE_EDGE_RULES,
+    )
+
+    # --low-memory: stream the (heavy) combo pass rule-by-rule so the full combo-event set is
+    # never resident at once. A cheap prepass first computes the COMPLETE dangerous-binding id
+    # set (the binding-node loop + _emit_events read it up front); then the per-rule events are
+    # re-collected, emitted and discarded one rule at a time in the emission phase below. Output
+    # is byte-identical: combo/capability node ids are rule-scoped (no cross-rule node sharing),
+    # so cross-rule emission order is irrelevant, and the export re-sorts everything.
+    _stream_combo = (
+        bool(getattr(getattr(context, "options", None), "low_memory", False))
+        and dangerous_rule_mode == "advanced"
+    )
+    all_events = None
+    if _stream_combo:
+        bindings_with_dangerous_edges = set()
+        for _r in rules:
+            _pre = _collect_filtered([_r])
+            for _ev in _pre:
+                for _c in (_ev.get("contributors") or []):
+                    if isinstance(_c, BindingPlusScopeEntry):
+                        bindings_with_dangerous_edges.add(_c.binding_composite_id)
+            del _pre
+        if rules:
+            _finalize_inline_progress()
+    else:
+        dangerous_events = _collect_filtered(rules)
+        if rules:
+            _finalize_inline_progress()
+        # Compute this FIRST, from dangerous_events alone -- owner-baseline contributors are also
+        # BindingPlusScopeEntry, so merging them in before this would leak owner binding ids in.
+        bindings_with_dangerous_edges = {
+            contributor.binding_composite_id
+            for event in dangerous_events
+            for contributor in (event.get("contributors") or [])
+            if isinstance(contributor, BindingPlusScopeEntry)
+        }
+        # Merge owner-baseline IN PLACE + sort in place (avoids list()/sorted() copies).
+        all_events = dangerous_events
+        all_events.extend(owner_baseline_events)
+        owner_baseline_events = None
+        all_events.sort(key=_event_sort_key)
     owner_grants: set[str] = {
         entry.binding_composite_id for entry in entries if str(entry.role_name or "").strip() == "roles/owner"
     }
@@ -3549,7 +3572,22 @@ def _emit_iam_binding_edges_from_entries(
                         emitted_dangerous += emitted_count
         return emitted_dangerous
 
-    dangerous_edges_emitted = _emit_events(all_events)
+    if _stream_combo:
+        # Re-collect and emit one rule at a time, discarding each rule's events immediately, so
+        # the full combo-event set never co-exists. bindings_to_emit was already computed from the
+        # complete prepass set above, so _emit_events sees the final value. Owner-baseline events
+        # are emitted last (their edges never share keys with combo edges, and the export re-sorts).
+        dangerous_edges_emitted = 0
+        for _r in rules:
+            _evs = _collect_filtered([_r])
+            _evs.sort(key=_event_sort_key)
+            dangerous_edges_emitted += _emit_events(_evs)
+            del _evs
+        if owner_baseline_events:
+            owner_baseline_events.sort(key=_event_sort_key)
+            dangerous_edges_emitted += _emit_events(owner_baseline_events)
+    else:
+        dangerous_edges_emitted = _emit_events(all_events)
     _finalize_inline_progress()
     combo_bindings_emitted = len(emitted_combo_bindings)
 

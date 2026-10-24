@@ -35,6 +35,10 @@ class OpenGraphBuildOptions:
     # (sa_token_theft_without_actas=false/"partial") are hidden.  Pass True or
     # use --include-resource-iam to see all setIamPolicy edges.
     include_resource_iam: bool = False
+    # Opt-in: stream the multi-permission (combo) edge pass rule-by-rule instead of
+    # materializing every combo event at once. Bounds the peak memory of the combo build
+    # (where big graphs OOM) at the cost of a second rule-matching pass. Byte-identical output.
+    low_memory: bool = False
 
 
 def _build_hierarchy_data(

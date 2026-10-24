@@ -1096,6 +1096,18 @@ def _parse_args(user_args):
         ),
     )
     parser.add_argument(
+        "--low-memory",
+        dest="low_memory",
+        action="store_true",
+        default=False,
+        help=(
+            "Stream the multi-permission (combo) edge pass rule-by-rule instead of building "
+            "every combo event at once. Lowers the peak memory of the combo build (where very "
+            "large graphs OOM) at the cost of a second rule-matching pass (slower). Output is "
+            "identical to a normal run."
+        ),
+    )
+    parser.add_argument(
         "--include-resource-iam",
         dest="include_resource_iam",
         action="store_true",
@@ -1465,6 +1477,7 @@ def run_module(user_args, session):
                 cross_project_sa_projects=_cross_project_sa_projects,
                 edge_categories=_edge_categories,
                 include_resource_iam=bool(getattr(args, "include_resource_iam", False)),
+                low_memory=bool(getattr(args, "low_memory", False)),
             ),
         )
 

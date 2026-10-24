@@ -14,11 +14,18 @@ def collect_rule_events(
     progress_callback: Callable[[int, int, int], None] | None = None,
     group_progress_callback: Callable[[int, int, int, int, int, str], None] | None = None,
     cross_project: bool = False,
+    grouped_cache: dict[tuple[bool, bool], list[list[Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     total_rules = len(rules or [])
     matched_events = 0
-    grouped_entries_by_rule_shape: dict[tuple[bool, bool], list[list[Any]]] = {}
+    # The entry-grouping depends only on the (same_scope_required, same_project_required) shape,
+    # not the individual rule. A caller that invokes this per-rule (e.g. --low-memory streaming)
+    # passes a shared `grouped_cache` so the grouping is computed once across all those calls
+    # instead of rebuilt every call; by default it is per-call local.
+    grouped_entries_by_rule_shape: dict[tuple[bool, bool], list[list[Any]]] = (
+        grouped_cache if grouped_cache is not None else {}
+    )
     for rule_index, rule in enumerate(rules, start=1):
         same_scope_required = bool(rule.get("same_scope_required", True))
         # cross_project=True disables same-project partitioning so actors with
@@ -40,6 +47,24 @@ def collect_rule_events(
                 ].append(entry)
             grouped_entries = list(groups.values())
             grouped_entries_by_rule_shape[group_key] = grouped_entries
+
+        # Compute the RULE-LEVEL event fields ONCE per rule and share the (immutable, read-only
+        # downstream -- _emit_events copies them into locals) objects across every event this rule
+        # emits. Previously each event re-ran str()/.strip()/list()/set() on the same rule data,
+        # so a rule with M matches allocated M copies of these -- the bulk of dangerous_events's
+        # memory on broad rules, which is exactly where the combo pass OOMs. Byte-identical: same
+        # values, just not duplicated.
+        _ev_rule_name = str(rule.get("name") or "")
+        _ev_rule_description = str(rule.get("description") or "").strip()
+        _ev_example_command = str(rule.get("example_command") or "").strip()
+        _ev_edge_type = str(rule.get("edge_type") or "HAS_IAM_BINDING")
+        _ev_target_selector = rule.get("target_selector") or {}
+        _ev_requires_groups = list(rule.get("requires_groups") or [])
+        _ev_multi_permission_type = str(rule.get("multi_permission_type") or "simple").strip().lower() or "simple"
+        _ev_combo_hop = rule.get("combo_hop") or {}
+        _ev_targets_from_permissions = set(rule.get("targets_from_permissions") or ())
+        _ev_target_requires_permissions = set(rule.get("target_requires_permissions") or ())
+        _ev_status = str(rule.get("status") or "").strip()
 
         total_groups = len(grouped_entries)
         for group_index, group_entries in enumerate(grouped_entries, start=1):
@@ -76,11 +101,11 @@ def collect_rule_events(
 
                 events.append(
                     {
-                        "rule_name": str(rule.get("name") or ""),
-                        "rule_description": str(rule.get("description") or "").strip(),
-                        "example_command": str(rule.get("example_command") or "").strip(),
-                        "edge_type": str(rule.get("edge_type") or "HAS_IAM_BINDING"),
-                        "target_selector": rule.get("target_selector") or {},
+                        "rule_name": _ev_rule_name,
+                        "rule_description": _ev_rule_description,
+                        "example_command": _ev_example_command,
+                        "edge_type": _ev_edge_type,
+                        "target_selector": _ev_target_selector,
                         "contributors": contributors,
                         "matched_permissions": matched_permissions,
                         "matched_roles": matched_roles,
@@ -96,10 +121,8 @@ def collect_rule_events(
                                 else ()
                             )
                         },
-                        "requires_groups": list(rule.get("requires_groups") or []),
-                        "multi_permission_type": str(rule.get("multi_permission_type") or "simple").strip().lower() or "simple",
-                        "combo_hop": rule.get("combo_hop") or {},
-                        "targets_from_permissions": set(rule.get("targets_from_permissions") or ()),
+                        "requires_groups": _ev_requires_groups,
+                        "multi_permission_type": _ev_multi_permission_type,
                         # target_requires_permissions gates a combo edge on the TARGET SA actually
                         # holding a precondition permission (e.g. CREATE_VERTEX_KFP_JOB_AS_SA requires
                         # aiplatform.metadataStores.get). _filter_targets_requiring_perms checks the
@@ -107,8 +130,10 @@ def collect_rule_events(
                         # recognizes permissions present as keys in og_permission_to_roles_map.json;
                         # the precondition perms are now in that map, so this no longer drops
                         # legitimate targets (holders via owner/editor/aiplatform.* roles).
-                        "target_requires_permissions": set(rule.get("target_requires_permissions") or ()),
-                        "status": str(rule.get("status") or "").strip(),
+                        "combo_hop": _ev_combo_hop,
+                        "targets_from_permissions": _ev_targets_from_permissions,
+                        "target_requires_permissions": _ev_target_requires_permissions,
+                        "status": _ev_status,
                         "privilege_escalation": True,
                     }
                 )
