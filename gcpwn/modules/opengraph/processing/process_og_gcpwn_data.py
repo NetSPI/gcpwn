@@ -1059,10 +1059,11 @@ def _parse_args(user_args):
         default=None,
         help=(
             "Comma-separated edge categories to include from og_defined_edges.json "
-            "(default: priv_escalation,sensitive_resource_access). "
-            "Categories: priv_escalation (PE paths), sensitive_resource_access (secret read), "
-            "storage_read_access (CAN_READ_STORAGE_OBJECT — opt-in, adds significant edge volume). "
-            "Pass 'all' to include every category. "
+            "(default: priv_escalation; plus CAN_READ_SECRET_DATA, which is always on). "
+            "Categories: priv_escalation (PE paths — default), sensitive_resource_access "
+            "(other sensitive reads: KMS decrypt/sign, BigQuery exfil, Cloud SQL, API keys, "
+            "Workstations, DeveloperConnect — opt-in), storage_read_access (CAN_READ_STORAGE_OBJECT "
+            "— opt-in, adds significant edge volume). Pass 'all' to include every category. "
             "Example: --edge-categories priv_escalation,sensitive_resource_access,storage_read_access"
         ),
     )
@@ -1225,6 +1226,49 @@ def _emit_binding_coverage_warnings(context) -> None:
         missing = [str(permission or "").strip() for permission in (record.get("missing_permissions") or []) if str(permission or "").strip()]
         label = f"{rule_name} ({rule_variant})" if rule_variant else rule_name
         print(f"    Skipping rule {label}: unmapped permissions -> {', '.join(missing)}")
+
+
+# Destination node types that keep a ROLE_OWNER/ROLE_EDITOR edge in the default graph: the
+# service account (identity assumption) and the hierarchy scopes (self-grant any role = PE).
+_OWNER_EDITOR_PE_DESTINATION_TYPES = frozenset(
+    {"GCPServiceAccount", "GCPOrganization", "GCPFolder", "GCPProject"}
+)
+_OWNER_EDITOR_EDGE_KINDS = frozenset({"ROLE_OWNER", "ROLE_EDITOR"})
+
+
+def _filter_resource_only_edges(builder) -> int:
+    """Remove edges that grant resource-level control but NOT privilege escalation on their own
+    (reaching the attached SA still needs actAs, which is captured elsewhere). Hidden by default;
+    shown with --include-resource-iam. Returns the number of edges removed.
+
+    Two classes:
+      (a) setIamPolicy edges on resources (sa_token_theft_without_actas=false/"partial":
+          bucket/compute/KMS/cloud-run), identified by edge KIND; and
+      (b) ROLE_OWNER/ROLE_EDITOR fan-out to NON-IDENTITY resources. owner/editor both hold
+          iam.serviceAccounts.actAs + serviceAccountKeys.create, so their real PE path is the
+          ROLE_OWNER/EDITOR -> service-account edge (kept) and self-grant at a scope
+          (ROLE_OWNER/EDITOR -> org/folder/project, kept). Their edges to VMs/buckets/KMS/etc.
+          are pure resource control -> hidden by default.
+
+    Resource nodes (resource:<name>) are structurally dead ends — RunsAs edges live on
+    cap:UPDATE:<name> clones — so no RunsAs cleanup pass is needed here.
+    """
+    from gcpwn.modules.opengraph.utilities.helpers.graph.constants import load_resource_iam_edge_types
+
+    resource_iam_edge_types = load_resource_iam_edge_types()
+    removed: list[tuple[str, str, str]] = []
+    for key in list(builder.edge_map):
+        _src, kind, dst = key
+        if kind in resource_iam_edge_types:
+            removed.append(key)
+        elif kind in _OWNER_EDITOR_EDGE_KINDS:
+            dst_node = builder.node_map.get(dst)
+            dst_type = getattr(dst_node, "node_type", "") if dst_node else ""
+            if dst_type not in _OWNER_EDITOR_PE_DESTINATION_TYPES:
+                removed.append(key)
+    for key in removed:
+        del builder.edge_map[key]
+    return len(removed)
 
 
 def _run_iam_bindings_stage(context) -> dict[str, object]:
@@ -1460,7 +1504,9 @@ def run_module(user_args, session):
                 )
         _raw_cats = getattr(args, "edge_categories", None)
         if not _raw_cats:
-            _edge_categories: frozenset[str] = frozenset({"priv_escalation", "sensitive_resource_access"})
+            # Default: priv_escalation only. CAN_READ_SECRET_DATA still loads via its
+            # default_include flag (the single resource-access edge in the default graph).
+            _edge_categories: frozenset[str] = frozenset({"priv_escalation"})
         elif _raw_cats.strip().lower() == "all":
             _edge_categories = frozenset()  # empty = all categories
         else:
@@ -1535,23 +1581,15 @@ def run_module(user_args, session):
             )
             UtilityTools.dlog(args.debug, "opengraph step stats", step=step, stats=step_stats)
 
-        # Phase 3.4: resource-only setIamPolicy edge filter.
-        # ROLE_OWNER/ROLE_EDITOR collapsed edges that arise from roles/owner or roles/editor
-        # are unaffected (different edge type, never in _resource_iam_edge_types).
-        # Resource nodes (resource:<name>) are structurally dead ends — RunsAs edges live on
-        # cap:UPDATE:<name> clones — so no RunsAs cleanup pass is needed here.
-        from gcpwn.modules.opengraph.utilities.helpers.graph.constants import load_resource_iam_edge_types
-        _resource_iam_edge_types = load_resource_iam_edge_types()
-        if _resource_iam_edge_types:
-            if not bool(getattr(args, "include_resource_iam", False)):
-                _resource_iam_removed = [k for k in list(context.builder.edge_map) if k[1] in _resource_iam_edge_types]
-                for _k in _resource_iam_removed:
-                    del context.builder.edge_map[_k]
-                if _resource_iam_removed:
-                    print(
-                        f"[*] Resource IAM filter: removed {len(_resource_iam_removed)} resource-only setIamPolicy "
-                        f"edge(s) (use --include-resource-iam to show all setIamPolicy edges)"
-                    )
+        # Phase 3.4: resource-only edge filter (hidden unless --include-resource-iam).
+        if not bool(getattr(args, "include_resource_iam", False)):
+            _removed_count = _filter_resource_only_edges(context.builder)
+            if _removed_count:
+                print(
+                    f"[*] Resource IAM filter: removed {_removed_count} resource-only edge(s) — "
+                    f"setIamPolicy on resources + owner/editor fan-out to non-identity resources "
+                    f"(use --include-resource-iam to show them)"
+                )
 
         # Phase 3.5: deny-policy FINAL filter (opt-in) -- rewrite allow graph to effective
         # access (allow minus deny) before it is snapshotted to node/edge lists.

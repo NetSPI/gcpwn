@@ -182,6 +182,13 @@ def _dangerous_rules_by_family(context) -> tuple[tuple[dict[str, Any], ...], tup
     if not include_all:
         single_rules = tuple(r for r in single_rules if not r.get("include_all_only"))
         multi_rules = tuple(r for r in multi_rules if not r.get("include_all_only"))
+    # NOTE: resource-level setIamPolicy edges (sa_token_theft_without_actas=false/"partial":
+    # bucket/compute/KMS/cloud-run) are NOT filtered here. They can't reach the attached SA
+    # without actAs so they are hidden from the default graph, but that filtering happens
+    # post-build by edge KIND (process_og, using load_resource_iam_edge_types). We must NOT
+    # drop the rules at the source: owner/editor ROLE_OWNER/ROLE_EDITOR fan-out to those same
+    # resources piggybacks on these rules' resource targeting, so dropping the rule would also
+    # drop legitimate owner/editor edges to those resources.
     rules = (single_rules, multi_rules)
     context.set_artifact(_DANGEROUS_RULES_BY_FAMILY_ARTIFACT, rules)
     return rules

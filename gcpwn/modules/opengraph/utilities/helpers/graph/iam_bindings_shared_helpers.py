@@ -2306,6 +2306,12 @@ def _emit_iam_binding_edges_from_entries(
     )
 
     role_subject_state: dict[str, dict[str, dict[str, Any]]] = {}
+    # The role/subject/destination aggregation below is reporting-only (no consumer reads it;
+    # iam_bindings_*_state is merely presence-checked) and is the dominant memory sink + a big
+    # slowdown in this pass. Skip building it unless explicitly requested. Guarded so the graph
+    # output is unchanged: edge/node emission and bindings_with_direct_dangerous_edges do not
+    # depend on role_subject_state / rule_match_records / combo_rule_match_records.
+    build_aggregation = bool(getattr(getattr(context, "options", None), "build_aggregation", False))
 
     if not entries:
         return {
@@ -2485,6 +2491,20 @@ def _emit_iam_binding_edges_from_entries(
     # re-collected, emitted and discarded one rule at a time in the emission phase below. Output
     # is byte-identical: combo/capability node ids are rule-scoped (no cross-rule node sharing),
     # so cross-rule emission order is irrelevant, and the export re-sorts everything.
+    #
+    # The base (single-permission) pass is deliberately NOT streamed. It is not emission-order
+    # independent, so per-rule streaming would diverge from a normal run (verified):
+    #   1. owner/editor collapse: a dangerous single-perm rule matching a roles/owner|editor
+    #      binding is rewritten to a ROLE_OWNER/ROLE_EDITOR edge (_emit_binding_target_edge). Two
+    #      different single-perm rules then collide on one (binding, ROLE_OWNER, target) key and
+    #      _merge_edge_properties keeps the FIRST writer's scalar props (status/example_command).
+    #      Non-stream sorts all events globally (_event_sort_key, rule_name-first) -> one winner;
+    #      per-rule streaming emits in rule-list order -> a different winner.
+    #   2. node-id collapse: resource target node ids are resource:<leaf>@<project>, so two
+    #      different-typed resources with the same leaf name in a project collide on one node id,
+    #      each created by a different rule's event -> first-writer (order-dependent) sets the type.
+    # The aggregation fix above already removed the dominant base-pass memory sink, so streaming
+    # the base pass is not worth a non-byte-identical graph.
     _stream_combo = (
         bool(getattr(getattr(context, "options", None), "low_memory", False))
         and dangerous_rule_mode == "advanced"
@@ -2555,12 +2575,13 @@ def _emit_iam_binding_edges_from_entries(
                 expanded_from_convenience_member=entry.expanded_from_convenience_member or None,
                 privilege_escalation=bool(pe_flag),
             )
-        subject_state = ensure_subject_state(role_subject_state, entry)
-        binding_state = subject_state["bindings"].get(entry.binding_composite_id)
-        if binding_state is not None:
-            binding_state["privilege_escalation"] = bool(
-                binding_state["privilege_escalation"] or pe_flag
-            )
+        if build_aggregation:
+            subject_state = ensure_subject_state(role_subject_state, entry)
+            binding_state = subject_state["bindings"].get(entry.binding_composite_id)
+            if binding_state is not None:
+                binding_state["privilege_escalation"] = bool(
+                    binding_state["privilege_escalation"] or pe_flag
+                )
         emitted_binding_nodes.add(entry.binding_composite_id)
 
     rule_match_records: list[dict[str, Any]] = []
@@ -2661,19 +2682,20 @@ def _emit_iam_binding_edges_from_entries(
                 )
                 if not target_id:
                     return 0
-                record_destination(
-                    role_subject_state=role_subject_state,
-                    entry=contributor,
-                    edge_type=emitted_edge_type or edge_type,
-                    rule_name=rule_name,
-                    rule_description=rule_description,
-                    matched_permissions=matched_permissions,
-                    evidence_bindings=evidence_bindings,
-                    target_id=target_id,
-                    target_name=target_name,
-                    target_type=str(target.get("resource_type") or "").strip(),
-                    privilege_escalation=privilege_escalation,
-                )
+                if build_aggregation:
+                    record_destination(
+                        role_subject_state=role_subject_state,
+                        entry=contributor,
+                        edge_type=emitted_edge_type or edge_type,
+                        rule_name=rule_name,
+                        rule_description=rule_description,
+                        matched_permissions=matched_permissions,
+                        evidence_bindings=evidence_bindings,
+                        target_id=target_id,
+                        target_name=target_name,
+                        target_type=str(target.get("resource_type") or "").strip(),
+                        privilege_escalation=privilege_escalation,
+                    )
                 resolved_edge_type = str(emitted_edge_type or edge_type).strip()
                 if privilege_escalation or resolved_edge_type in {"ROLE_OWNER", "ROLE_EDITOR"}:
                     bindings_with_direct_dangerous_edges.add(contributor.binding_composite_id)
@@ -2855,26 +2877,27 @@ def _emit_iam_binding_edges_from_entries(
                 if len(distinct_roles) <= 1:
                     emission_mode = "binding"
 
-            rule_match_records.append(
-                {
-                    "rule_name": rule_name,
-                    "rule_description": rule_description,
-                    "edge_type": edge_type,
-                    "target_selector": selector,
-                    "principal_ids": normalized_token_list(entry.principal_id for entry in contributors),
-                    "effective_scope_ids": normalized_token_list(entry.effective_scope_name for entry in contributors),
-                    "effective_scope_types": normalized_token_list(entry.effective_scope_type for entry in contributors),
-                    "matched_permissions": normalized_token_list(matched_permissions),
-                    "matched_roles": normalized_token_list(matched_roles),
-                    "evidence_bindings": normalized_token_list(evidence_bindings),
-                    "combine_across_bindings": combine_across_bindings,
-                    "emission_mode": emission_mode,
-                    "contributor_permission_map": contributor_permission_map,
-                    "matched_group_contributors": matched_group_contributors,
-                    "targets_from_permissions": normalized_token_list(targets_from_permissions),
-                    "privilege_escalation": privilege_escalation,
-                }
-            )
+            if build_aggregation:
+                rule_match_records.append(
+                    {
+                        "rule_name": rule_name,
+                        "rule_description": rule_description,
+                        "edge_type": edge_type,
+                        "target_selector": selector,
+                        "principal_ids": normalized_token_list(entry.principal_id for entry in contributors),
+                        "effective_scope_ids": normalized_token_list(entry.effective_scope_name for entry in contributors),
+                        "effective_scope_types": normalized_token_list(entry.effective_scope_type for entry in contributors),
+                        "matched_permissions": normalized_token_list(matched_permissions),
+                        "matched_roles": normalized_token_list(matched_roles),
+                        "evidence_bindings": normalized_token_list(evidence_bindings),
+                        "combine_across_bindings": combine_across_bindings,
+                        "emission_mode": emission_mode,
+                        "contributor_permission_map": contributor_permission_map,
+                        "matched_group_contributors": matched_group_contributors,
+                        "targets_from_permissions": normalized_token_list(targets_from_permissions),
+                        "privilege_escalation": privilege_escalation,
+                    }
+                )
 
             if emission_mode == "combo" and privilege_escalation:
                 if not contributors:
@@ -3227,9 +3250,10 @@ def _emit_iam_binding_edges_from_entries(
                     _rollback_graph_mutation_state(mutation_snapshot)
                     continue
 
-                for pending_record in pending_destination_records:
-                    record_destination(role_subject_state=role_subject_state, **pending_record)
-                combo_rule_match_records.extend(pending_combo_records)
+                if build_aggregation:
+                    for pending_record in pending_destination_records:
+                        record_destination(role_subject_state=role_subject_state, **pending_record)
+                    combo_rule_match_records.extend(pending_combo_records)
                 emitted_dangerous += combo_branch_emitted
                 continue
 
@@ -3429,8 +3453,9 @@ def _emit_iam_binding_edges_from_entries(
                         if not final_target_edge_seen:
                             _rollback_graph_mutation_state(mutation_snapshot)
                             continue
-                        for pending_record in pending_destination_records:
-                            record_destination(role_subject_state=role_subject_state, **pending_record)
+                        if build_aggregation:
+                            for pending_record in pending_destination_records:
+                                record_destination(role_subject_state=role_subject_state, **pending_record)
                         emitted_dangerous += binding_branch_emitted
                         continue
 
@@ -3548,8 +3573,9 @@ def _emit_iam_binding_edges_from_entries(
                     if not final_target_edge_seen:
                         _rollback_graph_mutation_state(mutation_snapshot)
                         continue
-                    for pending_record in pending_destination_records:
-                        record_destination(role_subject_state=role_subject_state, **pending_record)
+                    if build_aggregation:
+                        for pending_record in pending_destination_records:
+                            record_destination(role_subject_state=role_subject_state, **pending_record)
                     emitted_dangerous += binding_branch_emitted
                 continue
 

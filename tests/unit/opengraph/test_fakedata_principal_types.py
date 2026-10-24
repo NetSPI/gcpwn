@@ -30,11 +30,11 @@ _TABLE_KEYS = (
 _HIER = [{"name": "projects/proj-a", "type": "project", "display_name": "proj-a", "project_id": "proj-a", "parent": ""}]
 
 
-def _run(extra, *, stage4=False):
+def _run(extra, *, stage4=False, **options):
     tables = {k: [] for k in _TABLE_KEYS}
     tables["abstract_tree_hierarchy"] = _HIER
     tables.update(extra)
-    ctx = OpenGraphBuildContext(session=FakeSession(tables), options=OpenGraphBuildOptions(include_all=True))
+    ctx = OpenGraphBuildContext(session=FakeSession(tables), options=OpenGraphBuildOptions(include_all=True, **options))
     build_users_groups_graph(ctx)
     _run_iam_bindings_stage(ctx)
     if stage4:
@@ -79,7 +79,10 @@ def _privesc(permission, resource_type, resource_name):
 
 def test_cloudfunction_resource_node_type():
     fn = "projects/proj-a/locations/us-central1/functions/fn1"
-    nodes, edges = _run(_privesc("cloudfunctions.functions.setIamPolicy", "cloudfunction", fn))
+    # CAN_MODIFY_CLOUD_RUN_FUNCTION_IAM is a resource-level setIamPolicy edge (hidden by
+    # default — it can't reach the attached SA without actAs); enable it to exercise the
+    # GCPCloudFunction resource node type this test covers.
+    nodes, edges = _run(_privesc("cloudfunctions.functions.setIamPolicy", "cloudfunction", fn), include_resource_iam=True)
     # Resource node ids are now resource:<leaf>@<project-id>; function leaf "fn1" @ proj-a.
     fn_id = "resource:fn1@proj-a"
     assert nodes.get(fn_id) == "GCPCloudFunction"

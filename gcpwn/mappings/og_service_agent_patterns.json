@@ -1282,5 +1282,45 @@
   {
     "service_name": "Workstations VM Default Service Account",
     "pattern": "service-PROJECT_NUMBER@gcp-sa-workstationsvm.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "BigLake Identity Federation Service Agent",
+    "pattern": "service-org-ORGANIZATION_NUMBER@gcp-sa-biglakeidentityfed.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Infrastructure Manager Worker Service Account",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-config-worker.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Data Lineage Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-datalineage.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Database Insights Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-dbinsights.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Assured Workloads Monitoring Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-dbmonitoring.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Device Run Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-devicerun.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "FTP Service Agent",
+    "pattern": "p-PROJECT_NUMBER-IDENTIFIER@gcp-sa-ftp.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "GCS Malware Scanning Service Account",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-gcs-malware.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Memory Bank Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-vertex-memory.iam.gserviceaccount.com"
+  },
+  {
+    "service_name": "Vertex AI Session Service Agent",
+    "pattern": "service-PROJECT_NUMBER@gcp-sa-vertex-session.iam.gserviceaccount.com"
   }
 ]

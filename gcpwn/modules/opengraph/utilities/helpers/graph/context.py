@@ -28,9 +28,10 @@ class OpenGraphBuildOptions:
     cross_project_sa_projects: "frozenset[str]" = frozenset()
     # Edge categories to include from og_defined_edges.json.
     # Non-empty frozenset = only those categories; empty frozenset = all categories.
-    # Default includes priv_escalation + sensitive_resource_access (secret access edges).
-    # Empty frozenset = all categories. Non-empty = only those categories.
-    edge_categories: "frozenset[str]" = frozenset({"priv_escalation", "sensitive_resource_access"})
+    # Default = priv_escalation only. The one resource-access edge kept in the default graph
+    # (CAN_READ_SECRET_DATA) rides along via its `default_include` rule flag, not via its
+    # category, so the rest of sensitive_resource_access stays opt-in (--edge-categories).
+    edge_categories: "frozenset[str]" = frozenset({"priv_escalation"})
     # When False (default) setIamPolicy edges that only grant resource takeover
     # (sa_token_theft_without_actas=false/"partial") are hidden.  Pass True or
     # use --include-resource-iam to see all setIamPolicy edges.
@@ -38,7 +39,17 @@ class OpenGraphBuildOptions:
     # Opt-in: stream the multi-permission (combo) edge pass rule-by-rule instead of
     # materializing every combo event at once. Bounds the peak memory of the combo build
     # (where big graphs OOM) at the cost of a second rule-matching pass. Byte-identical output.
+    # (The base/single-permission pass is NOT streamed — it is not emission-order independent;
+    # see the note in iam_bindings_shared_helpers._emit_iam_binding_edges_from_entries.)
     low_memory: bool = False
+    # Build the per-pass role/subject/destination aggregation (role_subject_state,
+    # rule_match_records, combo_rule_match_records). This is a reporting-only structure that
+    # no current consumer reads (iam_bindings_*_state is only presence-checked), yet it is the
+    # single largest memory sink in stage 2 (~1.2 GB per ~50k edges: one ~24-key dict with many
+    # sets per emitted binding/destination) and scales linearly, so it is the dominant OOM cause
+    # on large graphs. Default False: the graph (nodes/edges/pe-flags) is byte-identical because
+    # edge/node emission and bindings_with_direct_dangerous_edges are computed independently.
+    build_aggregation: bool = False
 
 
 def _build_hierarchy_data(

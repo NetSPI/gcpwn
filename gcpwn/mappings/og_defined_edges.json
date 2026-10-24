@@ -1,15 +1,17 @@
 {
   "_schema": {
-    "version": "4",
+    "version": "5",
     "single_perm_fields": [
       "permissions",
       "on",
       "include_all_only",
+      "default_include",
       "require_node_sa",
       "description",
       "example_command"
     ],
     "require_node_sa": "Boolean (single-perm only). When true, the edge only fires against k8scluster resources that have at least one node pool with a non-default service account attached (config_service_account in gke_node_pools). Meaningless attack paths to clusters that run as Compute Engine default SA are suppressed.",
+    "default_include": "Boolean. When true, this rule is loaded in the DEFAULT edge set even though its category is not in the default category selection (priv_escalation). Used to keep a single high-value resource-access edge (CAN_READ_SECRET_DATA) on by default while the rest of sensitive_resource_access stays opt-in via --edge-categories. Rules flagged default_include always load unless a category filter would otherwise include them anyway.",
     "combo_fields": [
       "requires",
       "edge",
@@ -37,7 +39,7 @@
     "categories": {
       "description": "Top-level keys other than '_schema' and 'collapsed_role_edges' are edge categories. The pipeline loads 'priv_escalation' by default. Pass --edge-categories to override or add categories (e.g. --edge-categories priv_escalation,sensitive_resource_access, or 'all').",
       "priv_escalation": "Rules that yield direct SA identity assumption: token generation, key creation, IAM modification, code execution paths. Loaded by default.",
-      "sensitive_resource_access": "Rules that read sensitive resource data (e.g. Secret Manager payloads) without necessarily granting a new identity. Opt-in via --edge-categories."
+      "sensitive_resource_access": "Rules that read sensitive resource data without necessarily granting a new identity (KMS decrypt/sign, BigQuery exfil, Cloud SQL, API keys, Workstations, DeveloperConnect, and Secret Manager payloads). Opt-in via --edge-categories, EXCEPT CAN_READ_SECRET_DATA which is flagged default_include and loads by default (the one resource-access edge in the default graph)."
     },
     "service_groups": "priv_escalation and sensitive_resource_access now group edges under service sub-keys (e.g. \"compute\", \"gke\"). The parser flattens these transparently — service keys are invisible to rule matching."
   },
@@ -1976,6 +1978,7 @@
           "secretmanager.versions.access"
         ],
         "on": "secrets",
+        "default_include": true,
         "description": "Read the payload of a Secret Manager secret version — may contain API keys, service account keys, passwords, or other high-value credentials.",
         "example_command": "gcloud secrets versions access latest --secret={target_resource} --project={project_id}"
       }

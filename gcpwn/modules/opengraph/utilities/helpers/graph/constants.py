@@ -85,10 +85,17 @@ def load_privilege_escalation_rules(
         for key, val in payload.items():
             if key in _NON_CATEGORY_KEYS:
                 continue
-            if categories and key not in categories:
+            if not isinstance(val, dict):
                 continue
-            if isinstance(val, dict):
-                all_raw.update(_as_rule_mapping(val))
+            if categories and key not in categories:
+                # Category not selected, but a rule flagged `default_include` still loads
+                # (keeps CAN_READ_SECRET_DATA on in the default priv_escalation-only set
+                # while the rest of its category stays opt-in).
+                for rule_name, rule in _as_rule_mapping(val).items():
+                    if isinstance(rule, dict) and rule.get("default_include"):
+                        all_raw[rule_name] = rule
+                continue
+            all_raw.update(_as_rule_mapping(val))
 
     single_rules = {n: r for n, r in all_raw.items() if not r.get("requires") and not r.get("requires_groups")}
     multi_rules = {n: r for n, r in all_raw.items() if r.get("requires") or r.get("requires_groups")}
@@ -117,10 +124,13 @@ def load_resource_iam_edge_types() -> frozenset[str]:
     for key, val in payload.items():
         if key in _NON_CATEGORY_KEYS or not isinstance(val, dict):
             continue
-        for rule in _as_rule_mapping(val).values():
+        for rule_name, rule in _as_rule_mapping(val).items():
             v = rule.get("sa_token_theft_without_actas")
             if v is False or v == "partial":
-                et = str(rule.get("edge_type") or "").strip()
+                # Single-perm rules omit an explicit edge_type; it defaults to the rule NAME
+                # during normalization, so fall back to the name here (otherwise this set is
+                # empty and the resource-IAM filter silently never fires).
+                et = str(rule.get("edge_type") or rule_name or "").strip()
                 if et:
                     edge_types.add(et)
     return frozenset(edge_types)
