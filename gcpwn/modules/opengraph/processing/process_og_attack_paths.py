@@ -12,9 +12,18 @@ the graph, so the BloodHound output contract is untouched.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from gcpwn.core.console import UtilityTools
+
+
+def _progress(message: str, *, newline: bool = False) -> None:
+    """Write a status line to STDERR so it is visible during long runs without ever
+    corrupting --json stdout (which must stay a single parseable document). Inline by
+    default (\\r); pass newline=True to finish the line."""
+    sys.stderr.write(("\r" + message) if not newline else (message + "\n"))
+    sys.stderr.flush()
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.model import BASIC_ROLE_RANK, AttackGraph
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.render import (
     describe_target,
@@ -75,6 +84,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "for a focused query like 'all ways to reach roles/owner on projects/my-proj'."
         ),
     )
+    targets.add_argument(
+        "--exact-scope",
+        action="store_true",
+        help=(
+            "With --at-scope, match ONLY targets whose OWN scope is exactly that scope, not "
+            "grants/resources inherited into descendants. E.g. --to-role roles/owner "
+            "--at-scope organizations/456 --exact-scope finds owner ON the org itself, not owner "
+            "inherited down into its folders/projects. No effect without --at-scope."
+        ),
+    )
 
     sources = parser.add_argument_group("Source selection")
     sources.add_argument(
@@ -118,6 +137,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     search.add_argument(
+        "--exclude-node",
+        action="append",
+        help=(
+            "Exclude any path that contains a node whose id matches this substring (repeatable, "
+            "comma-separated; case-insensitive). The matched nodes are treated as absent from the "
+            "graph — no reported path starts at, ends at, or passes through them. Use it to drop a "
+            "noisy principal/SA (e.g. a break-glass account) or a known-benign pivot."
+        ),
+    )
+    search.add_argument(
         "--no-direct",
         action="store_true",
         help="Exclude paths where the principal directly holds the IAM binding (hop count == 0); show only privilege-escalation paths",
@@ -154,6 +183,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def run_module(user_args, session):
     args = _build_parser().parse_args(user_args)
 
+    _progress(f"[*] Loading graph from {args.graph_json} ...", newline=True)
     try:
         graph = AttackGraph.from_path(args.graph_json)
     except (FileNotFoundError, ValueError) as exc:
@@ -166,6 +196,11 @@ def run_module(user_args, session):
         return -1
 
     config = graph.config_summary()
+    _progress(
+        f"[*] Loaded graph: {config['nodes']:,} nodes, {config['edges']:,} edges"
+        f"{' (inheritance-expanded)' if config.get('inheritance_expanded') else ''}.",
+        newline=True,
+    )
 
     if args.stats:
         print(f"\nGraph: {args.graph_json}")
@@ -204,6 +239,7 @@ def run_module(user_args, session):
         kinds=kinds,
         node_ids=node_ids,
         scope=args.at_scope,
+        scope_exact=bool(getattr(args, "exact_scope", False)),
         to_any=to_any,
     )
 
@@ -241,9 +277,31 @@ def run_module(user_args, session):
             # other SA/binding nodes are still found normally.
             target_set.node_ids -= set(sources)
 
+    excluded_nodes: frozenset[str] = frozenset()
+    if args.exclude_node:
+        needles = [value.lower() for value in _split_csv(args.exclude_node)]
+        excluded_nodes = frozenset(
+            node_id for node_id in graph.nodes if any(needle in node_id.lower() for needle in needles)
+        )
+        _progress(
+            f"[*] Excluding {len(excluded_nodes):,} node(s) matching {needles} from all paths.",
+            newline=True,
+        )
+
     truncated = False
     if args.all_paths:
         max_depth = args.max_depth or 8
+        _progress(
+            f"[*] Enumerating all paths to {len(target_set.node_ids):,} target(s) "
+            f"(max_depth={max_depth}, max_paths={args.max_paths:,}, budget={args.max_expansions:,} expansions)...",
+            newline=True,
+        )
+
+        def _search_progress(expansions: int, budget: int, found: int) -> None:
+            _progress(
+                f"    searching: {expansions:,}/{budget:,} expansions, {found:,} path(s) found"
+            )
+
         paths, truncated = enumerate_paths(
             graph,
             target_set.node_ids,
@@ -254,7 +312,10 @@ def run_module(user_args, session):
             max_expansions=args.max_expansions,
             exclude_service_agents=args.exclude_service_agents,
             exclude_conditional=args.exclude_conditional,
+            excluded_nodes=excluded_nodes,
+            progress_callback=_search_progress,
         )
+        _progress(f"[*] Path search complete: {len(paths):,} raw path(s) found.", newline=True)
         # Raw walks differing only in which binding carried the same role at the
         # same scope are one finding to a human -- keep the first (shortest).
         seen: set[tuple] = set()
@@ -269,6 +330,11 @@ def run_module(user_args, session):
         mode = "all-paths"
     else:
         max_depth = args.max_depth or 12
+        _progress(
+            f"[*] Finding shortest path per principal to {len(target_set.node_ids):,} target(s) "
+            f"(max_depth={max_depth})...",
+            newline=True,
+        )
         paths = shortest_paths(
             graph,
             target_set.node_ids,
@@ -277,7 +343,9 @@ def run_module(user_args, session):
             max_depth=max_depth,
             exclude_service_agents=args.exclude_service_agents,
             exclude_conditional=args.exclude_conditional,
+            excluded_nodes=excluded_nodes,
         )
+        _progress(f"[*] Path search complete: {len(paths):,} path(s) found.", newline=True)
         mode = "shortest-path per principal"
 
     if args.no_direct:

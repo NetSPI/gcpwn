@@ -391,8 +391,14 @@ class AttackGraph:
 
     # ------------------------------------------------------------------ matching
 
-    def scope_matches(self, node_id: str, scope: str) -> bool:
+    def scope_matches(self, node_id: str, scope: str, *, exact: bool = False) -> bool:
         """True when a node sits at or under ``scope`` (a project/folder/org).
+
+        With ``exact=True``, match only nodes whose OWN scope is ``scope`` — not grants/resources
+        inherited into descendants. The node's own scope is the effective-scope leaf in its node id
+        (before any ``#src:`` inherited-source suffix), so an org's own binding
+        (``...@org:123``) matches ``organizations/123`` while that same grant inherited into a
+        project (``...@project:p1#src:org:123``) does not.
 
         Accepts any of the forms a user naturally types for the same scope:
         ``projects/my-proj`` (the documented form), the bare id ``my-proj``, the
@@ -416,17 +422,23 @@ class AttackGraph:
         if not want:
             return True
 
-        tokens: set[str] = set()
+        # own_tokens identify the node's OWN scope; ancestor_tokens add the scopes it sits UNDER
+        # (inherited-source ancestors, container project, etc.). Exact matching uses only own_tokens.
+        own_tokens: set[str] = set()
+        ancestor_tokens: set[str] = set()
         # The binding/resource node id carries its own scope as ``...@<type>:<leaf>``
         # (optionally ``#src:...`` for an inherited grant). The leaf is the scope id
         # (e.g. the project id), which is what a user types -- and is present even when
         # attached_scope_id stores the numeric form.
         lowered_id = node_id.lower()
         at_index = lowered_id.rfind("@")
+        inherited = False
         if at_index != -1:
-            tail = lowered_id[at_index + 1:].split("#", 1)[0]
+            tail_full = lowered_id[at_index + 1:]
+            inherited = "#" in tail_full
+            tail = tail_full.split("#", 1)[0]
             if ":" in tail:
-                tokens.add(tail.split(":", 1)[1])
+                own_tokens.add(tail.split(":", 1)[1])
         properties = self.props(node_id)
         for key in ("attached_scope_id", "effective_scope_id", "effective_scope_ids", "project_id", "name"):
             value = properties.get(key)
@@ -435,8 +447,16 @@ class AttackGraph:
                 if not item:
                     continue
                 for segment in str(item).lower().split("/"):
-                    if segment:
-                        tokens.add(segment)
+                    if not segment:
+                        continue
+                    # For a directly-attached grant (no inherited source), attached/effective
+                    # scope IS the node's own scope (covers the numeric form of the id). For an
+                    # inherited grant these keys point at ancestors/the source scope.
+                    if key in ("attached_scope_id", "effective_scope_id") and not inherited:
+                        own_tokens.add(segment)
+                    else:
+                        ancestor_tokens.add(segment)
+        tokens = own_tokens if exact else (own_tokens | ancestor_tokens)
         return want in tokens
 
     def basic_roles_held(self, node_id: str) -> frozenset[tuple[str, str | None]]:

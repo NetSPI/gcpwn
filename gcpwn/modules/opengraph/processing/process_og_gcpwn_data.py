@@ -1599,6 +1599,7 @@ def run_module(user_args, session):
             context.record_step("deny_policies", deny_stats)
 
         # Phase 3.7: deduplicate CAP nodes with identical outgoing edge sets.
+        print("[*] Deduplicating capability nodes...", flush=True)
         dedup_nodes_removed, dedup_edges_removed = context.builder.dedup_cap_nodes()
         if dedup_nodes_removed or dedup_edges_removed:
             print(
@@ -1607,6 +1608,7 @@ def run_module(user_args, session):
             )
 
         # Phase 4: apply default-mode trim passes.
+        print("[*] Finalizing graph: snapshotting nodes/edges and applying trim passes...", flush=True)
         nodes = list(context.builder.node_map.values())
         edges = list(context.builder.edge_map.values())
         # The builder's maps are not read again (trim / breakdown / persist / export all work
@@ -1649,6 +1651,7 @@ def run_module(user_args, session):
         if getattr(args, "cai_file", None):
             print("[*] CAI-file mode: skipping persist to workspace opengraph tables (export only).")
         else:
+            print(f"[*] Persisting graph to SQLite ({len(nodes)} nodes, {len(edges)} edges)...", flush=True)
             persist_opengraph(session, nodes, edges, clear_existing=args.reset)
     elif use_existing_opengraph_db:
         nodes, edges = _load_existing_opengraph_from_db(session)

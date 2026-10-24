@@ -16,7 +16,7 @@ from __future__ import annotations
 import heapq
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .model import BINDING_KINDS, AttackGraph
 
@@ -53,6 +53,7 @@ def resolve_targets(
     node_ids: Iterable[str] | None = None,
     kinds: Iterable[str] | None = None,
     scope: str | None = None,
+    scope_exact: bool = False,
     to_any: bool = False,
 ) -> TargetSet:
     """Turn CLI-style selectors into a concrete set of target node ids.
@@ -98,8 +99,8 @@ def resolve_targets(
             described.append(f"node={node_id}")
 
     if scope:
-        resolved = {node_id for node_id in resolved if graph.scope_matches(node_id, scope)}
-        described.append(f"scope~{scope}")
+        resolved = {node_id for node_id in resolved if graph.scope_matches(node_id, scope, exact=scope_exact)}
+        described.append(f"scope{'=' if scope_exact else '~'}{scope}")
 
     return TargetSet(node_ids=resolved, description=" ".join(described) or "(none)")
 
@@ -121,6 +122,7 @@ def reverse_distances(
     *,
     max_depth: int,
     exclude_conditional: bool = False,
+    excluded_nodes: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, int], dict[str, tuple[str, int]]]:
     """Multi-source BFS backwards from ``targets``.
 
@@ -128,8 +130,14 @@ def reverse_distances(
     to the nearest target and ``succ[n]`` is ``(next_node, edge_index)`` -- the
     first step of one such shortest path. Following ``succ`` forward from any
     node reconstructs a shortest path without a second search.
+
+    ``excluded_nodes`` are treated as if absent from the graph: no path may pass
+    through them (nor start/end on them), so any path that would contain one is
+    never discovered.
     """
-    dist: dict[str, int] = {target: 0 for target in targets if target in graph.nodes}
+    dist: dict[str, int] = {
+        target: 0 for target in targets if target in graph.nodes and target not in excluded_nodes
+    }
     succ: dict[str, tuple[str, int]] = {}
     queue = deque(dist)
 
@@ -139,6 +147,8 @@ def reverse_distances(
         if depth >= max_depth:
             continue
         for predecessor, edge_index in graph.radj.get(node, ()):
+            if predecessor in excluded_nodes:
+                continue
             if graph.edges[edge_index]["kind"] not in traversable:
                 continue
             if exclude_conditional and _edge_is_conditional(graph.edges[edge_index]):
@@ -179,14 +189,17 @@ def shortest_paths(
     max_depth: int = 12,
     exclude_service_agents: bool = False,
     exclude_conditional: bool = False,
+    excluded_nodes: frozenset[str] = frozenset(),
 ) -> list[RawPath]:
     """One shortest path per principal that can reach any target.
 
     Single reverse BFS over the whole target set -- the cheap default mode.
     """
     traversable = graph.traversable_kinds(include_containment=include_containment)
+    reachable_targets = targets - excluded_nodes
     dist, succ = reverse_distances(
-        graph, targets, traversable, max_depth=max_depth, exclude_conditional=exclude_conditional
+        graph, reachable_targets, traversable, max_depth=max_depth,
+        exclude_conditional=exclude_conditional, excluded_nodes=excluded_nodes,
     )
 
     candidates = (
@@ -196,9 +209,9 @@ def shortest_paths(
     )
     results: list[RawPath] = []
     for source in candidates:
-        if source in targets or source not in dist:
+        if source in reachable_targets or source not in dist or source in excluded_nodes:
             continue
-        path = _reconstruct(source, succ, targets)
+        path = _reconstruct(source, succ, reachable_targets)
         if path is not None:
             results.append(path)
 
@@ -217,6 +230,8 @@ def enumerate_paths(
     max_expansions: int = 400_000,
     exclude_service_agents: bool = False,
     exclude_conditional: bool = False,
+    excluded_nodes: frozenset[str] = frozenset(),
+    progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> tuple[list[RawPath], bool]:
     """Every simple path from ``sources`` to ``targets``, shortest first.
 
@@ -225,12 +240,16 @@ def enumerate_paths(
     in nondecreasing length, so results are already shortest-first and the search
     can stop the moment the budget is hit.
 
+    ``excluded_nodes`` are treated as absent: no reported path contains one.
+
     Returns ``(paths, truncated)``; ``truncated`` is True when a budget stopped the
     search before it was exhausted.
     """
     traversable = graph.traversable_kinds(include_containment=include_containment)
+    targets = targets - excluded_nodes
     dist, _ = reverse_distances(
-        graph, targets, traversable, max_depth=max_depth, exclude_conditional=exclude_conditional
+        graph, targets, traversable, max_depth=max_depth,
+        exclude_conditional=exclude_conditional, excluded_nodes=excluded_nodes,
     )
 
     candidates = [
@@ -240,7 +259,7 @@ def enumerate_paths(
             if sources is not None
             else graph.principals(exclude_service_agents=exclude_service_agents)
         )
-        if source in dist and source not in targets
+        if source in dist and source not in targets and source not in excluded_nodes
     ]
     if not candidates:
         return [], False
@@ -256,6 +275,7 @@ def enumerate_paths(
     found: list[RawPath] = []
     expansions = 0
     truncated = False
+    _PROGRESS_EVERY = 20_000
 
     while heap:
         if len(found) >= max_paths:
@@ -264,6 +284,8 @@ def enumerate_paths(
         if expansions >= max_expansions:
             truncated = True
             break
+        if progress_callback is not None and expansions % _PROGRESS_EVERY == 0 and expansions:
+            progress_callback(expansions, max_expansions, len(found))
 
         _, _, nodes, edge_indices = heapq.heappop(heap)
         current = nodes[-1]
@@ -278,7 +300,7 @@ def enumerate_paths(
         expansions += 1
         visited = set(nodes)
         for neighbour, edge_index in graph.adj.get(current, ()):
-            if neighbour in visited:
+            if neighbour in visited or neighbour in excluded_nodes:
                 continue
             if graph.edges[edge_index]["kind"] not in traversable:
                 continue

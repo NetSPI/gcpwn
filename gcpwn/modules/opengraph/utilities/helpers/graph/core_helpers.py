@@ -1305,6 +1305,12 @@ def edge_to_opengraph(edge: OpenGraphEdge) -> dict[str, Any]:
     }
 
 
+# persist_opengraph progress: only tick for graphs big enough that the insert loop is a
+# noticeable pause, and only every N rows so the ticks themselves are cheap.
+_PERSIST_PROGRESS_MIN = 5000
+_PERSIST_PROGRESS_EVERY = 2000
+
+
 def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraphEdge], *, clear_existing: bool = False) -> None:
     """
     Persist generated OpenGraph nodes/edges into the workspace's SQLite backing tables.
@@ -1335,7 +1341,21 @@ def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraph
         )
         session.data_master.conn.commit()
 
-    for node in nodes:
+    # Each insert_data is one DB op under the process-wide write lock, so on a large graph these
+    # loops are a multi-second (or longer) silent stretch. Emit an inline progress tick when the
+    # row count is big enough to matter; stay silent for small graphs to avoid noise.
+    def _persist_progress(label: str, done: int, total: int) -> None:
+        if total < _PERSIST_PROGRESS_MIN:
+            return
+        if done % _PERSIST_PROGRESS_EVERY == 0 or done == total:
+            sys.stdout.write(f"\r    persisting {label}: {done:,}/{total:,}")
+            sys.stdout.flush()
+            if done == total:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+
+    total_nodes = len(nodes)
+    for node_index, node in enumerate(nodes, 1):
         node_props = dict(node.properties or {})
         if not str(node_props.get("name") or "").strip():
             node_props["name"] = str(node_props.get("display_name") or node.node_id)
@@ -1352,8 +1372,10 @@ def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraph
             },
             if_column_matches=["node_id"],
         )
+        _persist_progress("nodes", node_index, total_nodes)
 
-    for edge in edges:
+    total_edges = len(edges)
+    for edge_index, edge in enumerate(edges, 1):
         session.insert_data(
             "opengraph_edges",
             {
@@ -1367,3 +1389,4 @@ def persist_opengraph(session, nodes: List[OpenGraphNode], edges: List[OpenGraph
             },
             if_column_matches=["source_id", "destination_id", "edge_type"],
         )
+        _persist_progress("edges", edge_index, total_edges)

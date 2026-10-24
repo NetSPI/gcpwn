@@ -156,6 +156,34 @@ class TestTargetResolution:
         assert resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/proj").node_ids
         assert not resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/other").node_ids
 
+    def test_exact_scope_matches_only_own_scope(self, tmp_path):
+        # An org-level owner binding, plus that same org grant inherited down into a project.
+        nodes = [
+            _node("user:a@x.com", "GoogleUser"),
+            _binding("iambinding:roles/owner@org:123", "roles/owner", "organizations/123",
+                     scope_type="organization"),
+            _binding("iambinding:roles/owner@project:p2#src:org:123", "roles/owner", "projects/p2",
+                     inherited=True, source_scope_id="organizations/123",
+                     effective_scope_ids=["projects/p2", "organizations/123"]),
+        ]
+        edges = [
+            _edge("user:a@x.com", "iambinding:roles/owner@org:123", "HAS_IAM_BINDING"),
+            _edge("user:a@x.com", "iambinding:roles/owner@project:p2#src:org:123", "HAS_IAM_BINDING"),
+        ]
+        graph = AttackGraph.from_path(_write(tmp_path, nodes, edges))
+        # default (at-or-under): the org's own binding AND the grant inherited into the project.
+        broad = resolve_targets(graph, roles=["roles/owner"], scope="organizations/123").node_ids
+        assert broad == {
+            "iambinding:roles/owner@org:123",
+            "iambinding:roles/owner@project:p2#src:org:123",
+        }
+        # --exact-scope: only the org's OWN binding, not the inherited-into-project one.
+        exact = resolve_targets(
+            graph, roles=["roles/owner"], scope="organizations/123", scope_exact=True
+        ).node_ids
+        assert exact == {"iambinding:roles/owner@org:123"}
+        assert exact <= broad  # exact never matches more than the broad set
+
 class TestShortestPaths:
     def test_finds_direct_and_chained_principals(self, chain_graph):
         targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids
@@ -473,3 +501,23 @@ class TestRender:
         report = self._report(chain_graph, shortest_paths(chain_graph, targets))
         assert "svc-a@proj" in report
         assert ".iam.gserviceaccount.com" not in report
+
+
+def test_exclude_node_drops_paths_through_it(chain_graph):
+    """--exclude-node removes any path that starts at, ends at, or passes through a matched node.
+    In chain_graph svc-a reaches roles/owner only via svc-b, so excluding svc-b drops svc-a's path
+    while alice's direct path is untouched."""
+    svc_a = "serviceAccount:svc-a@proj.iam.gserviceaccount.com"
+    svc_b = "serviceAccount:svc-b@proj.iam.gserviceaccount.com"
+    targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids
+
+    base = {p.source for p in shortest_paths(chain_graph, targets)}
+    assert svc_a in base and "user:alice@corp.com" in base
+
+    excl = frozenset({svc_b})
+    pruned = {p.source for p in shortest_paths(chain_graph, targets, excluded_nodes=excl)}
+    assert svc_a not in pruned          # its only route ran through svc-b
+    assert "user:alice@corp.com" in pruned  # direct path unaffected
+
+    found, _ = enumerate_paths(chain_graph, targets, excluded_nodes=excl)
+    assert all(svc_b not in p.nodes for p in found)

@@ -2389,9 +2389,28 @@ def _emit_iam_binding_edges_from_entries(
     # index, the cross-project scan and the first grouping all run over every grant,
     # which on a large graph is a multi-second gap before the first per-rule tick.
     # Without this, the advanced/combo pass looks hung right after the single pass.
+    # The count is rules EVALUATED, not edge kinds graphed: a few rules (resource-only
+    # setIamPolicy) are matched so owner/editor fan-out works, then their edges are
+    # trimmed from the default graph — call that out so the count is not mistaken for
+    # the number of edge kinds in the output.
+    _rules_note = ""
+    if dangerous_rule_mode == "base" and not bool(
+        getattr(getattr(context, "options", None), "include_resource_iam", False)
+    ):
+        from gcpwn.modules.opengraph.utilities.helpers.graph.constants import load_resource_iam_edge_types
+
+        _resource_only = load_resource_iam_edge_types()
+        _n_hidden = sum(
+            1 for _r in rules if str(_r.get("edge_type") or _r.get("name") or "") in _resource_only
+        )
+        if _n_hidden:
+            _rules_note = (
+                f" ({_n_hidden} resource-only setIamPolicy rule(s) matched but hidden from the "
+                f"default graph; --include-resource-iam to keep)"
+            )
     print(
         f"[*] Stage 2 {rule_progress_label.replace(' checked', '')}: "
-        f"{len(rules)} rules over {len(entries)} resolved grants..."
+        f"{len(rules)} rules over {len(entries)} resolved grants...{_rules_note}"
     )
 
     _opts = getattr(context, "options", None)
