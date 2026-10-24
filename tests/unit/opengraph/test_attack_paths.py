@@ -521,3 +521,26 @@ def test_exclude_node_drops_paths_through_it(chain_graph):
 
     found, _ = enumerate_paths(chain_graph, targets, excluded_nodes=excl)
     assert all(svc_b not in p.nodes for p in found)
+
+
+def test_iam_control_sources_includes_setiampolicy_excludes_editor(tmp_path):
+    """--to-role roles/owner must also find principals who can SET the scope's IAM (setIamPolicy /
+    policy-binding = can grant themselves owner), while excluding editor-only (can't grant owner)."""
+    nodes = [
+        _node("resource:111", "GCPOrganization", {"name": "111"}),
+        _binding("iambinding:roles/owner@org:111", "roles/owner", "organizations/111", scope_type="organization"),
+        _binding("iambinding:orgiam@org:111", "projects/p/roles/orgiam", "organizations/111", scope_type="organization"),
+        _binding("iambinding:roles/editor@org:111", "roles/editor", "organizations/111", scope_type="organization"),
+    ]
+    edges = [
+        _edge("iambinding:roles/owner@org:111", "resource:111", "ROLE_OWNER"),
+        _edge("iambinding:orgiam@org:111", "resource:111", "CAN_MODIFY_ORG_IAM"),
+        _edge("iambinding:roles/editor@org:111", "resource:111", "ROLE_EDITOR"),
+    ]
+    graph = AttackGraph.from_path(_write(tmp_path, nodes, edges))
+    sources = graph.iam_control_sources(scope="organizations/111")
+    assert "iambinding:orgiam@org:111" in sources        # setIamPolicy -> can grant owner
+    assert "iambinding:roles/owner@org:111" in sources    # ROLE_OWNER -> holds/grants owner
+    assert "iambinding:roles/editor@org:111" not in sources  # editor cannot grant owner
+    # scoped to a different org -> nothing
+    assert graph.iam_control_sources(scope="organizations/999") == set()

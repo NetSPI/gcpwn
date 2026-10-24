@@ -138,6 +138,17 @@ class UtilityTools:
         )
 
     @staticmethod
+    def print_401(resource_name, permission, error=None):
+        print(
+            f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 401 (UNAUTHENTICATED):{UtilityTools.RESET}"
+            f"{UtilityTools.RED} {permission} on {resource_name} was rejected — the credential is "
+            f"invalid, revoked, or expired. Re-add a current credential (creds add / --cred) and retry."
+            f"{UtilityTools.RESET}"
+        )
+        if error is not None:
+            print(str(error) + f"{UtilityTools.RESET}")
+
+    @staticmethod
     def print_500(resource_name, permission, error):
         print(
             f"{UtilityTools.RED}{UtilityTools.BOLD}[X] STATUS 500 (UNKNOWN):{UtilityTools.RESET}"

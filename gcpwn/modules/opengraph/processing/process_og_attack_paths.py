@@ -243,6 +243,27 @@ def run_module(user_args, session):
         to_any=to_any,
     )
 
+    # Targeting a BASIC role (owner/editor/viewer) at a scope: also include principals who can
+    # SET that scope's IAM (setIamPolicy / policy-binding) and so grant themselves the role --
+    # otherwise --to-role roles/owner only finds DIRECT owner holders, missing the setIamPolicy
+    # route to effectively becoming owner. (ROLE_EDITOR is excluded: editor cannot grant owner.)
+    if roles and any(
+        (r.strip().lower() in BASIC_ROLE_RANK) or (("roles/" + r.strip().lower().rsplit("/", 1)[-1]) in BASIC_ROLE_RANK)
+        for r in roles
+    ):
+        _iam_control = graph.iam_control_sources(
+            scope=args.at_scope, exact=bool(getattr(args, "exact_scope", False))
+        )
+        _added = _iam_control - target_set.node_ids
+        if _added:
+            target_set.node_ids |= _added
+            target_set.description += " +iam-control"
+            _progress(
+                f"[*] --to-role (basic role): also targeting {len(_added):,} binding(s) that can set "
+                f"the scope's IAM (setIamPolicy / policy-binding = can grant the role).",
+                newline=True,
+            )
+
     if args.list_targets:
         print(f"\n[*] Target selector: {target_set.description}")
         print(f"[*] Matched {len(target_set.node_ids)} node(s):\n")

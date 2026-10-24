@@ -47,6 +47,22 @@ BASIC_ROLE_RANK: dict[str, int] = {"roles/owner": 3, "roles/editor": 2, "roles/v
 # multiplies path counts enormously, so traversal skips it unless asked.
 CONTAINMENT_EDGE_KINDS = frozenset({"ExistsInProject"})
 
+# Scope (hierarchy) resource node kinds.
+SCOPE_RESOURCE_KINDS = frozenset({"GCPOrganization", "GCPFolder", "GCPProject"})
+
+# Edges INTO a scope resource node that let the source set that scope's IAM -- i.e. grant
+# itself (or anyone) ANY role at that scope. A principal reaching a binding with one of these
+# is "effectively owner" of the scope even without a direct roles/owner binding.
+# ROLE_EDITOR is deliberately NOT here: editor cannot setIamPolicy, so it cannot grant owner.
+IAM_CONTROL_EDGE_KINDS = frozenset({
+    "ROLE_OWNER",
+    "CAN_MODIFY_ORG_IAM", "CAN_MODIFY_FOLDER_IAM", "CAN_MODIFY_PROJECT_IAM",
+    "CAN_CREATE_ACCESS_POLICY_BINDING_ORG", "CAN_CREATE_ACCESS_POLICY_BINDING_FOLDER",
+    "CAN_CREATE_ACCESS_POLICY_BINDING_PROJECT",
+    "CAN_UPDATE_ACCESS_POLICY_BINDING_ORG", "CAN_UPDATE_ACCESS_POLICY_BINDING_FOLDER",
+    "CAN_UPDATE_ACCESS_POLICY_BINDING_PROJECT",
+})
+
 # Node kinds that can start a path.
 PRINCIPAL_KINDS = frozenset(
     {
@@ -488,3 +504,23 @@ class AttackGraph:
             if any(role == want or short == want.rsplit("/", 1)[-1] for want in wanted):
                 matches.append(node_id)
         return matches
+
+    def iam_control_sources(self, *, scope: str | None = None, exact: bool = False) -> set[str]:
+        """Binding nodes that can SET a scope's IAM (and so grant themselves any role there).
+
+        Returns the source node of every ``IAM_CONTROL_EDGE_KINDS`` edge pointing at a scope
+        (org/folder/project) resource node, optionally restricted to ``scope`` (and ``exact``).
+        Used so a ``--to-role roles/owner`` query also surfaces principals who reach the role
+        indirectly via setIamPolicy / policy-binding, not only direct holders. ROLE_EDITOR is not
+        an IAM-control edge, so editor-only holders are excluded.
+        """
+        sources: set[str] = set()
+        for node_id in self.nodes:
+            if self.kind_of(node_id) not in SCOPE_RESOURCE_KINDS:
+                continue
+            if scope and not self.scope_matches(node_id, scope, exact=exact):
+                continue
+            for predecessor, edge_index in self.radj.get(node_id, ()):
+                if self.edges[edge_index]["kind"] in IAM_CONTROL_EDGE_KINDS:
+                    sources.add(predecessor)
+        return sources

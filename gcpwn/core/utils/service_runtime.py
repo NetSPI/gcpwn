@@ -86,15 +86,35 @@ def stop_on_denied() -> bool:
     return _STOP_ON_DENIED.is_set()
 
 try:  # pragma: no cover
-    from google.api_core.exceptions import BadRequest as _BadRequest, Forbidden as _Forbidden, NotFound as _NotFound
+    from google.api_core.exceptions import (
+        BadRequest as _BadRequest,
+        Forbidden as _Forbidden,
+        NotFound as _NotFound,
+        Unauthenticated as _Unauthenticated,
+    )
 
     _FORBIDDEN_EXCEPTIONS = (_Forbidden,)
     _NOTFOUND_EXCEPTIONS = (_NotFound,)
     _BAD_REQUEST_EXCEPTIONS = (_BadRequest,)
+    _UNAUTHENTICATED_EXCEPTIONS = (_Unauthenticated,)
 except Exception:  # pragma: no cover
     _FORBIDDEN_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _NOTFOUND_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _BAD_REQUEST_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+    _UNAUTHENTICATED_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+
+
+def _is_unauthenticated_error(exc: Exception) -> bool:
+    """A 401 can arrive as google.api_core Unauthenticated, or wrapped so the type is lost.
+    Fall back to the message so an auth failure is never mislabeled as a 500."""
+    if _UNAUTHENTICATED_EXCEPTIONS and isinstance(exc, _UNAUTHENTICATED_EXCEPTIONS):
+        return True
+    message = str(exc).lower()
+    return (
+        "unauthenticated" in message
+        or "invalid authentication credentials" in message
+        or "request had invalid authentication" in message
+    )
 
 _BILLING_DISABLED_SUBSTRINGS = (
     "Billing is disabled",
@@ -200,6 +220,11 @@ def handle_service_error(
             return "Not Enabled" if return_not_enabled else None
         if any(s.lower() in msg for s in _INVALID_LOCATION_SUBSTRINGS):
             return None  # silently skip; multi-region location not supported by this resource type
+    # A 401 is an authentication failure (bad/revoked/expired credential), not a server error --
+    # classify it as such instead of letting it fall through to the generic "STATUS 500 (UNKNOWN)".
+    if _is_unauthenticated_error(exc):
+        UtilityTools.print_401(resource_name, api_name, exc)
+        return None
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
 
@@ -456,6 +481,11 @@ def handle_discovery_error(
             return "Not Enabled"
         if any(s.lower() in msg for s in _INVALID_LOCATION_SUBSTRINGS):
             return None  # silently skip; multi-region location not supported by this resource type
+    # A 401 is an authentication failure (bad/revoked/expired credential), not a server error --
+    # classify it as such instead of letting it fall through to the generic "STATUS 500 (UNKNOWN)".
+    if _is_unauthenticated_error(exc):
+        UtilityTools.print_401(resource_name, api_name, exc)
+        return None
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
 

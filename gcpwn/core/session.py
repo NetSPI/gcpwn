@@ -432,9 +432,22 @@ class SessionUtility:
                 print(f"{UtilityTools.GREEN}{UtilityTools.BOLD}[*] Loaded credentials {credname}{UtilityTools.RESET}")
             return 1
 
-        except Exception:
-            print(f"[X] Credentials {credname} could not be assumed.")
-            print(traceback.format_exc())
+        except Exception as exc:
+            print(
+                f"{UtilityTools.RED}{UtilityTools.BOLD}[X] Credential '{credname}' could not be loaded: "
+                f"{type(exc).__name__}: {exc}{UtilityTools.RESET}"
+            )
+            _msg = str(exc).lower()
+            if any(s in _msg for s in ("deserialize", "asn.1", "private_key", "pem", "json")):
+                print(
+                    f"{UtilityTools.YELLOW}[!] This usually means the service-account key file is "
+                    f"corrupted, incomplete, or not the original JSON key downloaded from GCP. "
+                    f"Re-download the key and re-add it.{UtilityTools.RESET}"
+                )
+            # Full traceback only when debugging; a raw dump is noise for the common bad-key case.
+            if getattr(self, "debug", False):
+                print(traceback.format_exc())
+            return -1
 
     @staticmethod
     def apply_delegation_chain(credentials, delegates_raw, *, identity_label: str):
