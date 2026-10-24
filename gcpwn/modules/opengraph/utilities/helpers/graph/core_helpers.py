@@ -1,10 +1,42 @@
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Tuple
+
+# Property keys whose string VALUES repeat across huge numbers of edges/nodes (per-rule
+# or per-kind constants: the same rule description/example command/role on every edge a
+# rule emits). Interning only these collapses the duplicates to one shared object without
+# polluting the intern table with unique ids (node_id / scope names, which never repeat).
+_INTERN_PROP_KEYS: frozenset[str] = frozenset({
+    "rule_description",
+    "example_command",
+    "rule_name",
+    "status",
+    "source",
+    "role_name",
+    "edge_type",
+    "binding_origin",
+    "attached_scope_type",
+    "source_scope_type",
+    "description",
+})
+
+
+def _intern_repeated_props(properties: Dict[str, Any]) -> Dict[str, Any]:
+    """Intern the string values of known-repeated property keys in place.
+
+    No-op for every other key, so unique ids are never interned. Returns the same
+    dict for convenient chaining.
+    """
+    for key in _INTERN_PROP_KEYS:
+        value = properties.get(key)
+        if type(value) is str:
+            properties[key] = sys.intern(value)
+    return properties
 
 from gcpwn.core.utils.iam_principals import canonical_iam_member
 from gcpwn.core.utils.module_helpers import extract_path_tail, load_mapping_data, parse_json_value, split_path_tokens
@@ -17,7 +49,11 @@ from gcpwn.modules.opengraph.utilities.helpers.graph.normalization import (
 RESOURCE_DERIVED_EXPORT_STRING_LIMIT = 100
 RESOURCE_DERIVED_EXPORT_TRUNCATION_SUFFIX = "[TRUNCATED]"
 
-@dataclass(frozen=True)
+# slots=True drops the per-instance __dict__ (~a third of the object overhead). On a
+# large graph the node_map/edge_map hold millions of these, so it is a direct, no-output
+# memory saving. Export reads the fields directly (node.node_id / edge.properties / ...),
+# so no __dict__/vars() consumer breaks.
+@dataclass(frozen=True, slots=True)
 class OpenGraphNode:
     """In-memory OpenGraph node model used during pipeline assembly."""
     node_id: str
@@ -25,7 +61,7 @@ class OpenGraphNode:
     properties: Dict[str, Any]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OpenGraphEdge:
     """In-memory OpenGraph edge model used during pipeline assembly."""
     source_id: str
@@ -444,13 +480,20 @@ class OpenGraphBuilder:
         _prefer_node_type. This is why a principal first seen as GCPPrincipal can later
         become GoogleUser without losing properties.
         """
+        node_type = sys.intern(node_type) if type(node_type) is str else node_type
+        # Drop None-valued properties at store time: the exporter strips every None property
+        # (edge_to_opengraph/node_to_opengraph: `{k:v ... if v is not None}`) and the merge
+        # below already skips None, so storing them is pure waste -- byte-identical to keep them
+        # out, and it shrinks the per-object properties dict (the dominant builder-floor cost).
+        if any(v is None for v in properties.values()):
+            properties = {k: v for k, v in properties.items() if v is not None}
         if node_id in self.node_map:
             existing = self.node_map[node_id]
             merged = self._merge_nested_dict_missing(existing.properties, properties)
             chosen_type = self._prefer_node_type(existing.node_type, node_type)
-            self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=chosen_type, properties=merged)
+            self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=chosen_type, properties=_intern_repeated_props(merged))
             return
-        self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=node_type, properties=properties)
+        self.node_map[node_id] = OpenGraphNode(node_id=node_id, node_type=node_type, properties=_intern_repeated_props(properties))
 
     def add_edge(self, source_id: str, destination_id: str, edge_type: str, **properties: Any) -> None:
         """
@@ -462,14 +505,21 @@ class OpenGraphBuilder:
         the binding emitters) must read builder.edge_map and rewrite the entry directly
         rather than relying on add_edge.
         """
+        edge_type = sys.intern(edge_type) if type(edge_type) is str else edge_type
         key = (source_id, edge_type, destination_id)
         if key in self.edge_map:
             return
+        # Drop None-valued properties: the exporter strips them anyway (edge_to_opengraph:
+        # `{k:v ... if v is not None}`), and add_edge is first-write-wins (no merge), so this
+        # is byte-identical and trims the per-edge properties dict -- the dominant memory held
+        # in edge_map for a large combo graph.
+        if any(v is None for v in properties.values()):
+            properties = {k: v for k, v in properties.items() if v is not None}
         self.edge_map[key] = OpenGraphEdge(
             source_id=source_id,
             destination_id=destination_id,
             edge_type=edge_type,
-            properties=properties,
+            properties=_intern_repeated_props(properties),
         )
 
     def _dedup_nodes_by_fingerprint(

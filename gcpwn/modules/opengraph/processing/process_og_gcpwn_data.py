@@ -21,6 +21,7 @@ import argparse
 import json
 import re
 import time
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, TypedDict
@@ -272,6 +273,86 @@ def _write_graph_json_with_progress(output_path: str, payload: dict[str, Any]) -
         handle.write("  },\n")
         handle.write('  "summary": ')
         json.dump(summary, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n}\n")
+
+
+def _stream_export_graph_json(output_path, node_objs, edge_objs, *, debug: bool = False) -> None:
+    """Convert + sort + write the single-file OpenGraph JSON one SECTION at a time.
+
+    Byte-for-byte identical to ``export_opengraph_json`` followed by
+    ``_write_graph_json_with_progress``, but it converts and sorts the NODES, writes them, and
+    frees that converted list BEFORE converting the EDGES -- so the two per-section converted
+    lists never coexist. In combo-heavy graphs each section is ~the size of the whole graph, so
+    this roughly halves the export-phase peak versus building the full payload first. Inputs are
+    consumed (popped) so the original node/edge objects free as their converted dicts build.
+    """
+    UtilityTools.dlog(
+        debug, "stream-export: loaded graph objects",
+        nodes=len(node_objs or []), edges=len(edge_objs or []),
+    )
+    if isinstance(node_objs, list):
+        nodes = []
+        while node_objs:
+            nodes.append(node_to_opengraph(node_objs.pop()))
+    else:
+        nodes = [node_to_opengraph(r) for r in (node_objs or [])]
+    nodes.sort(key=lambda n: str(n["id"] or ""))
+    node_count = len(nodes)
+    print(f"[*] Streaming JSON write: {node_count} nodes, then edges...")
+
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write("{\n")
+        handle.write('  "metadata": ')
+        json.dump({"source_kind": "GCPBase"}, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write(",\n")
+        handle.write('  "graph": {\n')
+        handle.write('    "nodes": [')
+        for index, node in enumerate(nodes, start=1):
+            if index > 1:
+                handle.write(",")
+            json.dump(node, handle, ensure_ascii=False, separators=(",", ":"))
+            _print_inline_progress("Main JSON write (nodes)", index, node_count)
+        _print_inline_progress("Main JSON write (nodes)", node_count, node_count, force=True)
+        del nodes  # free converted nodes before building converted edges (the whole point)
+        handle.write("],\n")
+        handle.write('    "edges": [')
+
+        if isinstance(edge_objs, list):
+            edges = []
+            while edge_objs:
+                edges.append(edge_to_opengraph(edge_objs.pop()))
+        else:
+            edges = [edge_to_opengraph(r) for r in (edge_objs or [])]
+        # Same two-stage sort as export_opengraph_json (cheap triple sort, json tiebreak only
+        # on collision runs) -- byte-identical order, no ~1GB of json key strings.
+        def _edge_triple(e):
+            return (str(e["start"]["value"] or ""), str(e["end"]["value"] or ""), str(e["kind"] or ""))
+
+        edges.sort(key=_edge_triple)
+        i, m = 0, len(edges)
+        while i < m:
+            j = i + 1
+            while j < m and _edge_triple(edges[j]) == _edge_triple(edges[i]):
+                j += 1
+            if j - i > 1:
+                edges[i:j] = sorted(
+                    edges[i:j],
+                    key=lambda e: json.dumps(e.get("properties") or {}, sort_keys=True, ensure_ascii=False),
+                )
+            i = j
+        edge_count = len(edges)
+        total = node_count + edge_count
+        for index, edge in enumerate(edges, start=1):
+            if index > 1:
+                handle.write(",")
+            json.dump(edge, handle, ensure_ascii=False, separators=(",", ":"))
+            _print_inline_progress("Main JSON write (overall)", node_count + index, total)
+        _print_inline_progress("Main JSON write (overall)", total, total, force=True)
+        del edges
+        handle.write("]\n")
+        handle.write("  },\n")
+        handle.write('  "summary": ')
+        json.dump({"nodes": node_count, "edges": edge_count}, handle, ensure_ascii=False, separators=(",", ":"))
         handle.write("\n}\n")
 
 
@@ -673,6 +754,66 @@ def _write_split_outputs(
     return written_files, str(manifest_path)
 
 
+_STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({
+    "HAS_IAM_BINDING", "HAS_COMBO_BINDING", "HasImpliedPermissions", "POLICY_BINDINGS",
+    "RunsAs", "ExistsInProject", "ServiceAccountKeyFor", "MemberOfPrincipalSet",
+    "IdentityProviderInPool", "FederatedPrincipalInPool", "CanFederateWith", "CanFederateAs",
+    "MemberOf", "InDomain", "CanImpersonate", "CanResetPassword", "DomainWideDelegateTo",
+    "DelegatesInto", "WorkspaceMember", "CanJoin", "CanRead",
+})
+_PRINCIPAL_NODE_KINDS: frozenset[str] = frozenset({
+    "GoogleUser", "GoogleGroup", "GCPServiceAccount", "GCPDomainPrincipal", "GCPAllUsers",
+    "GCPAllAuthenticatedUsers", "GCPPrincipalSet", "GCPPrincipal", "PrincipalsInOrg",
+    "GoogleWorkspaceTenant", "GCPExternalIdentitySource",
+})
+
+
+def _print_edge_breakdown(nodes, edges, *, top: int = 15) -> None:
+    """Print which edge kinds and which source principals dominate the graph.
+
+    Pure read over the finished in-memory graph (no mutation). On a graph that is
+    exploding during the combo pass, this is the fastest way to see WHAT is exploding
+    so the culprit rule/category can be excluded (``--edge-categories``) or capped.
+    ``edges``/``nodes`` are OpenGraphEdge/OpenGraphNode objects.
+    """
+    total_edges = len(edges or [])
+    if not total_edges:
+        return
+    kind_counts: Counter[str] = Counter(str(e.edge_type) for e in edges)
+
+    # Resolve each dangerous (rule-named, non-structural) edge back to the principal that
+    # owns its chain: principal -[HAS_*]-> binding/combo -[RULE]-> (capability) -[RULE]-> target.
+    node_kind = {n.node_id: n.node_type for n in (nodes or [])}
+    owner_of: dict[str, str] = {}  # binding/combo/capability node -> principal node id
+    for e in edges:
+        if e.edge_type in ("HAS_IAM_BINDING", "HAS_COMBO_BINDING", "HasImpliedPermissions"):
+            owner_of.setdefault(e.destination_id, e.source_id)
+    # capability nodes are reached from a combo node via a rule-named hop; inherit its owner
+    for e in edges:
+        if e.edge_type not in _STRUCTURAL_EDGE_KINDS and e.source_id in owner_of and e.destination_id not in owner_of:
+            if node_kind.get(e.destination_id) == "GCPIamCapability":
+                owner_of[e.destination_id] = owner_of[e.source_id]
+
+    principal_edge_counts: Counter[str] = Counter()
+    for e in edges:
+        if e.edge_type in _STRUCTURAL_EDGE_KINDS:
+            continue
+        actor = owner_of.get(e.source_id)
+        if actor is None and node_kind.get(e.source_id) in _PRINCIPAL_NODE_KINDS:
+            actor = e.source_id
+        if actor:
+            principal_edge_counts[actor] += 1
+
+    print(f"[*] Edge-kind breakdown ({total_edges:,} edges across {len(kind_counts)} kinds; top {top}):")
+    for kind, count in kind_counts.most_common(top):
+        marker = "" if kind in _STRUCTURAL_EDGE_KINDS else "  <- dangerous-rule edge"
+        print(f"      {count:>10,}  {kind}{marker}")
+    if principal_edge_counts:
+        print(f"[*] Top {top} principals by dangerous-rule edge fan-out (where the edges originate):")
+        for principal, count in principal_edge_counts.most_common(top):
+            print(f"      {count:>10,}  {principal}")
+
+
 def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = False):
     """
     Render in-memory nodes/edges into the single-file OpenGraph JSON payload.
@@ -690,23 +831,51 @@ def export_opengraph_json(nodes_in_memory, edges_in_memory, *, debug: bool = Fal
         edges=len(edges_in_memory or []),
     )
 
-    nodes = [node_to_opengraph(r) for r in (nodes_in_memory or [])]
-    edges = [edge_to_opengraph(r) for r in (edges_in_memory or [])]
+    # Convert while CONSUMING the input lists: pop each original node/edge object as it is
+    # converted so the in-memory OpenGraphNode/Edge objects free incrementally instead of
+    # co-existing with the full converted copy at peak. (Lists only; other iterables fall
+    # back to a plain comprehension.) Order is normalized by the sort below, so popping —
+    # which reverses input order — does not affect the byte-reproducible output.
+    if isinstance(nodes_in_memory, list):
+        nodes = []
+        while nodes_in_memory:
+            nodes.append(node_to_opengraph(nodes_in_memory.pop()))
+    else:
+        nodes = [node_to_opengraph(r) for r in (nodes_in_memory or [])]
+    if isinstance(edges_in_memory, list):
+        edges = []
+        while edges_in_memory:
+            edges.append(edge_to_opengraph(edges_in_memory.pop()))
+    else:
+        edges = [edge_to_opengraph(r) for r in (edges_in_memory or [])]
 
-    nodes = sorted(nodes, key=lambda n: str(n["id"] or ""))
+    # In-place sort avoids allocating a second full list (sorted() would), halving the
+    # transient peak of the sort step.
+    nodes.sort(key=lambda n: str(n["id"] or ""))
     # (start, end, kind) is not a total order: distinct raw edge_types can sanitize to the
     # same kind on the same endpoints, leaving ties broken by insertion order (run-to-run
-    # nondeterministic). Append a stable serialization of the properties so the sort is
-    # total and the exported JSON is byte-reproducible.
-    edges = sorted(
-        edges,
-        key=lambda e: (
-            str(e["start"]["value"] or ""),
-            str(e["end"]["value"] or ""),
-            str(e["kind"] or ""),
-            json.dumps(e.get("properties") or {}, sort_keys=True, ensure_ascii=False),
-        ),
-    )
+    # nondeterministic). A total order needs a stable serialization of the properties as the
+    # final tiebreak -- but using json.dumps(properties) as a 4th sort key materializes one
+    # ~1KB string PER EDGE for the whole sort (~1GB transient at 1M edges). Instead do it in
+    # two stages, which is PROVABLY the same ordering as the 4-key sort: (1) stable sort by
+    # the cheap (start,end,kind) triple, then (2) json-sub-sort ONLY the runs where that
+    # triple repeats (rare -- only distinct raw edge_types that sanitize to the same kind on
+    # the same endpoints). json is then built for the colliding subset, not all N edges.
+    def _edge_triple(e):
+        return (str(e["start"]["value"] or ""), str(e["end"]["value"] or ""), str(e["kind"] or ""))
+
+    edges.sort(key=_edge_triple)
+    i, n = 0, len(edges)
+    while i < n:
+        j = i + 1
+        while j < n and _edge_triple(edges[j]) == _edge_triple(edges[i]):
+            j += 1
+        if j - i > 1:  # a real collision run: resolve it with the exact legacy json tiebreak
+            edges[i:j] = sorted(
+                edges[i:j],
+                key=lambda e: json.dumps(e.get("properties") or {}, sort_keys=True, ensure_ascii=False),
+            )
+        i = j
 
     UtilityTools.dlog(debug, "export: final graph", unique_nodes=len(nodes), unique_edges=len(edges))
     payload = {
@@ -829,7 +998,16 @@ def _parse_args(user_args):
         action="store_true",
         help=(
             "Additionally write sectioned/chunked OpenGraph JSON files for easier BloodHound uploads. "
-            "Base single-file export is still written."
+            "Base single-file export is still written (unless --split-json-only)."
+        ),
+    )
+    parser.add_argument(
+        "--split-json-only",
+        action="store_true",
+        help=(
+            "With --split-json-output, skip writing the large combined single-file export and "
+            "write ONLY the split section/part files (+ manifest). Saves the disk space and the "
+            "extra serialization pass of the monolithic file."
         ),
     )
     parser.add_argument(
@@ -932,7 +1110,7 @@ def _parse_args(user_args):
     parser.add_argument(
         "--cond-eval",
         action="store_true",
-        help="Run IAM conditional workflow in pass-through mode (currently no-op filtering)",
+        help="Narrow conditioned IAM grants using recognised resource.name/resource.type CEL predicates (conservative; a condition it cannot fully account for is left un-narrowed, never dropped)",
     )
     parser.add_argument(
         "--deny-policies",
@@ -1230,7 +1408,7 @@ def run_module(user_args, session):
         # --resource-expansion alone means "run everything and include resource expansion".
         run_all_steps = not any([args.groups, args.iam_bindings, args.inferred_permissions])
         if args.cond_eval:
-            print("[*] --cond-eval enabled in pass-through mode; condition filters currently return input scopes unchanged.")
+            print("[*] --cond-eval enabled; narrowing conditioned grants by recognised resource.name/resource.type CEL predicates (a half-understood condition is left un-narrowed, never dropped).")
 
         raw_allow_bindings = data_source.get_data("iam_allow_policies") or []
         if args.iam_bindings and not raw_allow_bindings:
@@ -1380,6 +1558,24 @@ def run_module(user_args, session):
         # Phase 4: apply default-mode trim passes.
         nodes = list(context.builder.node_map.values())
         edges = list(context.builder.edge_map.values())
+        # The builder's maps are not read again (trim / breakdown / persist / export all work
+        # from the nodes/edges lists above). Drop them now so the builder stops pinning the
+        # whole in-memory graph: then export's consume-free conversion is the last reference
+        # to each node/edge object and can free it as it converts, instead of holding the
+        # originals + the converted copy together through the entire (large-graph) export.
+        context.builder.node_map.clear()
+        context.builder.edge_map.clear()
+        # Same reasoning for the context's own heavy caches/artifacts: every stage has run and
+        # nothing below (trim / breakdown / persist / export) reads them again. These hold the
+        # single largest combo-build transients -- the fanned-out resolved_bindings_composite
+        # entry list, the member_binding_index, the scope/resource indexes and the raw policy
+        # rows -- so releasing them here frees that memory BEFORE export's conversion transiently
+        # doubles the graph, instead of letting it coexist with the export peak.
+        context.artifacts.clear()
+        context._simplified_hierarchy_permissions_cache.clear()
+        context._scope_resource_indexes_cache = None
+        context._rows_cache.clear()
+        context._hierarchy_metadata = None
         if args.exclude_service_agents:
             nodes, edges, service_agent_exclusion_stats = _exclude_service_agent_nodes(nodes, edges)
             print(
@@ -1396,6 +1592,7 @@ def run_module(user_args, session):
         else:
             nodes, edges, trim_stats = apply_final_allowlist_trims(nodes, edges)
         _print_trim_summary(trim_stats)
+        _print_edge_breakdown(nodes, edges)
 
         # Phase 5: persist generated graph snapshot.
         if getattr(args, "cai_file", None):
@@ -1411,17 +1608,30 @@ def run_module(user_args, session):
         print(f"[*] Loaded existing OpenGraph graph from SQLite: {len(nodes)} nodes, {len(edges)} edges.")
 
     should_export_graph_json = bool(nodes or edges)
+    # Capture counts before export: export_opengraph_json consumes (empties) the input
+    # lists so the original node/edge objects free as the export dicts build, instead of
+    # both copies co-existing at peak.
+    graph_node_count = len(nodes)
+    graph_edge_count = len(edges)
     if should_export_graph_json:
         output_path, split_output_dir = _resolve_export_paths(session, args)
-        payload = export_opengraph_json(
-            nodes,
-            edges,
-            debug=args.debug,
-        )
-        _write_graph_json_with_progress(output_path, payload)
-        exported_path = output_path
+        if bool(getattr(args, "split_json_only", False)) and not bool(args.split_json_output):
+            print("[!] --split-json-only has no effect without --split-json-output; writing the combined file as usual.")
 
-        if args.split_json_output:
+        if not args.split_json_output:
+            # Common path: stream the single file per section (convert+sort+write nodes, free,
+            # then edges) so the two converted-section lists never coexist -- roughly halves the
+            # export peak on combo-heavy graphs. Byte-identical to export + write.
+            _stream_export_graph_json(output_path, nodes, edges, debug=args.debug)
+            exported_path = output_path
+        else:
+            # Split path needs the full in-memory payload to section it.
+            payload = export_opengraph_json(nodes, edges, debug=args.debug)
+            if bool(getattr(args, "split_json_only", False)):
+                print("[*] --split-json-only: skipping the combined single-file export; writing split files only.")
+            else:
+                _write_graph_json_with_progress(output_path, payload)
+                exported_path = output_path
             try:
                 selected_sections = _parse_split_sections(getattr(args, "split_json_sections", None))
                 max_split_size_mb = float(getattr(args, "split_json_max_size_mb", 50.0) or 50.0)
@@ -1453,7 +1663,7 @@ def run_module(user_args, session):
                 return -1
 
     if should_run_graph_build:
-        print(f"[*] OpenGraph generation complete. Nodes: {len(nodes)} | Edges: {len(edges)}")
+        print(f"[*] OpenGraph generation complete. Nodes: {graph_node_count} | Edges: {graph_edge_count}")
     if exported_path:
         print(f"[*] Saved graph JSON to {exported_path}")
     return 1

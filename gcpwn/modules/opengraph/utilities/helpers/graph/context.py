@@ -242,6 +242,14 @@ class OpenGraphBuildContext:
                 is_convenience_member=is_convenience_member,
                 session=self.session if include_inferred_permissions else None,
             )
+            if include_inferred_permissions:
+                # The only consumer of the with-inferred variant (stage_3) reads ONLY
+                # member_inferred_permissions_index. flattened_member_rows + member_binding_index
+                # are a full second copy of the (already-cached) base variant's heaviest
+                # structures that nothing reads here -- drop them so the inferred pass does not
+                # carry a redundant ~copy of the member binding index.
+                cached["flattened_member_rows"] = []
+                cached["member_binding_index"] = {}
             self._simplified_hierarchy_permissions_cache[cache_key] = cached
         return cached
 

@@ -111,7 +111,7 @@ for _role_name, _rule_data in dict(_collapsed_rules_raw or {}).items():
     }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BindingPlusScopeEntry:
     """
     One fully-resolved (principal, role, scope, condition) IAM grant -- the emitter's unit.
@@ -2379,6 +2379,15 @@ def _emit_iam_binding_edges_from_entries(
         )
         _write_inline_progress(message)
 
+    # Announce the phase before the (silent) setup below — sorting, the permission
+    # index, the cross-project scan and the first grouping all run over every grant,
+    # which on a large graph is a multi-second gap before the first per-rule tick.
+    # Without this, the advanced/combo pass looks hung right after the single pass.
+    print(
+        f"[*] Stage 2 {rule_progress_label.replace(' checked', '')}: "
+        f"{len(rules)} rules over {len(entries)} resolved grants..."
+    )
+
     _opts = getattr(context, "options", None)
     _cross_project = bool(getattr(_opts, "cross_project", False))
     _cross_project_sa_projects: frozenset[str] = getattr(_opts, "cross_project_sa_projects", frozenset()) or frozenset()
@@ -2470,14 +2479,22 @@ def _emit_iam_binding_edges_from_entries(
             tuple(sorted(str(getattr(c, "principal_id", "") or "") for c in contributors)),
         )
 
-    all_events = sorted(list(dangerous_events) + list(owner_baseline_events), key=_event_sort_key)
-
+    # Compute this FIRST, from dangerous_events alone -- owner-baseline contributors are also
+    # BindingPlusScopeEntry, so merging them in before this would leak owner binding ids into
+    # the dangerous set.
     bindings_with_dangerous_edges: set[str] = {
         contributor.binding_composite_id
         for event in dangerous_events
         for contributor in (event.get("contributors") or [])
         if isinstance(contributor, BindingPlusScopeEntry)
     }
+    # Merge owner-baseline events IN PLACE and sort in place: avoids the two list() copies plus
+    # the sorted() copy of the whole event set, which otherwise all coexist at the build peak.
+    # (list.sort is the same stable Timsort with the same key, so the order is identical.)
+    all_events = dangerous_events
+    all_events.extend(owner_baseline_events)
+    owner_baseline_events = None
+    all_events.sort(key=_event_sort_key)
     owner_grants: set[str] = {
         entry.binding_composite_id for entry in entries if str(entry.role_name or "").strip() == "roles/owner"
     }
@@ -2530,7 +2547,23 @@ def _emit_iam_binding_edges_from_entries(
     def _emit_events(events: list[dict[str, Any]]) -> int:
         emitted_dangerous = 0
         scope_ancestor_cache: dict[str, set[str]] = {}
-        for event in events:
+        _emit_total = len(events)
+        _emit_label = (
+            "multi-permission combo"
+            if dangerous_rule_mode == "advanced"
+            else "single-permission"
+            if dangerous_rule_mode == "base"
+            else "dangerous"
+        )
+        for _emit_index, event in enumerate(events, start=1):
+            # Emitting combo/capability fan-out over a large event set is the slow,
+            # otherwise-silent tail of the advanced pass; tick an inline counter so a
+            # big graph does not look hung between the rule scan and the final counts.
+            if _emit_total and (_emit_index % 200 == 0 or _emit_index == _emit_total):
+                _write_inline_progress(
+                    f"[*] Stage 2 emitting {_emit_label} edges: {_emit_index}/{_emit_total} "
+                    f"(edges={emitted_dangerous})"
+                )
             contributors = list(event.get("contributors") or [])
             matched_permissions = set(event.get("matched_permissions") or ())
             matched_roles = set(event.get("matched_roles") or ())
@@ -2562,6 +2595,12 @@ def _emit_iam_binding_edges_from_entries(
                 )
             }
             requires_groups = list(event.get("requires_groups") or [])
+            # Every field is now copied into locals above and `event` is not read again this
+            # iteration, so drop the list's reference to the dict -- it (and its sub-containers)
+            # can be freed as the loop advances instead of the whole event set surviving to the
+            # last iteration while the full graph is already built. (The `event` local still
+            # holds it for the rest of this iteration.)
+            events[_emit_index - 1] = None
             group_definitions_by_id: dict[str, dict[str, Any]] = {}
             for index, raw_group in enumerate(requires_groups):
                 if not isinstance(raw_group, dict):
@@ -3511,6 +3550,7 @@ def _emit_iam_binding_edges_from_entries(
         return emitted_dangerous
 
     dangerous_edges_emitted = _emit_events(all_events)
+    _finalize_inline_progress()
     combo_bindings_emitted = len(emitted_combo_bindings)
 
     # Mark simple binding nodes as privilege-escalation when they emit direct dangerous

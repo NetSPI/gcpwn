@@ -54,6 +54,7 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "artifactregistry_actions_allowed": "artifactregistry",
     "batch_actions_allowed": "batch",
     "bigquery_actions_allowed": "bigquery",
+    "bigqueryconnection_actions_allowed": "connections",
     "bigquerydatatransfer_actions_allowed": "bigquerydatatransfer",
     "bigtable_actions_allowed": "bigtable",
     # ── cloud* ────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "dataplex_actions_allowed": "dataplex",
     "dataproc_actions_allowed": "dataproc",
     "deploymentmanager_actions_allowed": "deploymentmanager",
+    "developerconnect_actions_allowed": "connections",
     # ── E-F ───────────────────────────────────────────────────────────────────
     "eventarc_actions_allowed": "eventarc",
     "firebaseapphosting_actions_allowed": "firebaseapphosting",
@@ -94,9 +96,11 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     "oracledatabase_actions_allowed": "oracledatabase",
     "orgpolicy_actions_allowed": "orgpolicy",
     "parametermanager_actions_allowed": "parametermanager",
+    "privateca_actions_allowed": "caPools",
     "pubsub_actions_allowed": "pubsub",
     # ── S ─────────────────────────────────────────────────────────────────────
     "secret_actions_allowed": "secrets",
+    "securesourcemanager_actions_allowed": "instances",
     "service_account_actions_allowed": "saaccounts",
     "servicedirectory_actions_allowed": "servicedirectory",
     "serviceusage_actions_allowed": "serviceusage",

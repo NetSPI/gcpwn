@@ -1043,6 +1043,14 @@ def _section_build_binding_entries(
     scope_type_by_name = hierarchy["scope_type_by_name"]
     scope_display_by_name = hierarchy["scope_display_by_name"]
     conditionals = StatementConditionalsEngine(enabled=conditional_evaluation)
+    # Memoize one frozenset per distinct role (role_to_permissions already merges predefined +
+    # custom roles upstream). Without this, every binding record allocates its OWN frozenset of
+    # the same permissions -- N_records copies collapse to <= number of distinct roles. The
+    # frozenset is immutable and read-only downstream, so sharing it is byte-identical.
+    _role_perms_fs: dict[str, frozenset[str]] = {
+        role: frozenset(perms) for role, perms in role_to_permissions.items()
+    }
+    _EMPTY_FS: frozenset[str] = frozenset()
     entries: list[BindingPlusScopeEntry] = []
     expansion = _ScopedExpansionContext(
         conditional_evaluation=conditional_evaluation,
@@ -1173,7 +1181,7 @@ def _section_build_binding_entries(
                     # str; IAM role bound on source scope, ex: "roles/storage.objectViewer"
                     "role_name": role_name,
                     # frozenset[str]; resolved role permissions, ex: {"storage.objects.get", ...}
-                    "permissions": frozenset(role_to_permissions.get(_perm_lookup_role, ())),
+                    "permissions": _role_perms_fs.get(_perm_lookup_role, _EMPTY_FS),
                 }
 
                 # Fan out into effective-scope rows.

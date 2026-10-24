@@ -51,12 +51,23 @@ class GkeClustersResource(GcpListResource):
         # list_clusters returns a response wrapper (.clusters) of Cluster objects
         # whose `name` is the bare cluster id -> rewrite to the full resource path.
         resp = self.client.list_clusters(parent=parent)
+        project = extract_project_id_from_resource(parent, fallback_project=self._fallback_project())
         rows = []
         for cluster in getattr(resp, "clusters", []):
             row = resource_to_dict(cluster)
             bare = str(row.get("name") or "").strip()
             if bare and not bare.startswith("projects/"):
-                row["name"] = f"{parent}/clusters/{bare}"
+                # Rewrite to the full resource path using the cluster's OWN location,
+                # not the request parent's location. list_clusters is called with the
+                # aggregating `locations/-` wildcard by default, so using `parent` here
+                # would bake a literal "-" into the path (projects/P/locations/-/clusters/C)
+                # and every downstream nodePools.list parent would 400 ("Location - does
+                # not exist"). The Cluster proto always carries its concrete location.
+                location = str(row.get("location") or "").strip()
+                if location and project:
+                    row["name"] = f"projects/{project}/locations/{location}/clusters/{bare}"
+                else:
+                    row["name"] = f"{parent}/clusters/{bare}"
             if row:
                 rows.append(row)
         return rows

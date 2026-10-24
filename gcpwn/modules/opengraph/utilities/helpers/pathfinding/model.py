@@ -27,6 +27,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+# Heavy edge/node properties the exporter stamps that NOTHING in the pathfinding/render
+# subsystem reads. Dropped from the retained in-memory attack graph (not from the exported
+# JSON) so text analysis of a large graph needs far less RAM. Keep this a denylist of
+# verified-unused HEAVY values only; traversal/display keys (inherited, conditional,
+# condition_expr_raw, role_name, project_id, *scope*, permission_source_summary, …) are kept.
+_UNUSED_HEAVY_PROPS = frozenset({"rule_description", "example_command", "permissions"})
+
 # Binding nodes are intermediates collapsed at render time.
 BINDING_KINDS = frozenset({"GCPIamSimpleBinding", "GCPIamMultiBinding"})
 
@@ -137,6 +144,20 @@ class AttackGraph:
         edge_keys: set[tuple[str, str, str]] = set()
         edges: list[dict] = []
 
+        # Pathfinding/rendering never reads these properties (verified across the whole
+        # pathfinding subsystem). They are the heaviest values the exporter stamps on every
+        # dangerous/combo edge+node (a full rule description, an example command, the permission
+        # list), so dropping them from the RETAINED in-memory graph cuts the text-analysis
+        # footprint by roughly the combined size of those strings -- without changing any path,
+        # edge, node, or displayed field. Split parts keep per-file json.load bounded; this keeps
+        # the merged graph small too.
+        drop = _UNUSED_HEAVY_PROPS
+
+        def _slim(props: dict) -> dict:
+            if not props:
+                return {}
+            return {k: v for k, v in props.items() if k not in drop}
+
         for file_path in files:
             with file_path.open(encoding="utf-8") as handle:
                 payload = json.load(handle)
@@ -151,7 +172,7 @@ class AttackGraph:
                     "id": node_id,
                     "kinds": kinds,
                     "kind": kinds[0] if kinds else "Unknown",
-                    "properties": node.get("properties") or {},
+                    "properties": _slim(node.get("properties") or {}),
                 }
 
             for edge in graph.get("edges") or []:
@@ -169,9 +190,11 @@ class AttackGraph:
                         "start": start,
                         "end": end,
                         "kind": kind,
-                        "properties": edge.get("properties") or {},
+                        "properties": _slim(edge.get("properties") or {}),
                     }
                 )
+            # Release this file's fully-parsed payload before the next part is read.
+            del payload, graph
 
         # Edges may reference nodes that were trimmed from the export; keep them
         # as placeholders so traversal does not have to special-case lookups.

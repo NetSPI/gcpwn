@@ -1105,7 +1105,7 @@ class CommandProcessor:
         if sub == "list":
             access_token_routes, impersonation_routes = delegation_get_all_routes(self.session)
             if not access_token_routes and not impersonation_routes:
-                print("[X] No delegation routes found. Run `modules run enum_iam --service-accounts --policy-bindings` first.")
+                print("[X] No delegation routes found. Run `modules run enum_gcp_policy_bindings` (or `enum_all`) first to populate the allow-policy bindings the routes are derived from.")
                 return
             if access_token_routes:
                 print(f"\n{UtilityTools.BOLD}[*] Access Token Routes:{UtilityTools.RESET}")
