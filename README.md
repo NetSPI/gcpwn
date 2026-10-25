@@ -705,6 +705,33 @@ modules run process_og_attack_paths --graph-json output.json --from serviceAccou
 modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --json --output paths.json
 ```
 
+Scope and filter a query (common workflows):
+
+```bash
+# everyone who can reach owner ON a specific project -- also surfaces principals who can
+# GRANT it via setIamPolicy (roles/owner, projectIamAdmin, organizationAdmin, custom roles)
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --at-scope projects/my-project
+
+# owner EXACTLY on the org itself, not grants inherited down into its folders/projects
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --at-scope organizations/123456789 --exact-scope
+
+# only privilege-escalation paths -- drop principals that already hold the target directly
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --no-direct
+
+# enumerate every path (not just the shortest per principal), summarized per target
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --all-paths --summary
+
+# exclude any path passing through a node/principal (e.g. a break-glass SA)
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --exclude-node break-glass-sa
+
+# skip Google-managed service agents as path sources (cuts expected-by-design noise)
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --exclude-service-agents
+```
+
+`--all-paths` enumerates **every** distinct route each principal has to a target. By default only the single shortest path per principal is shown, so a principal that can reach the target several different ways appears once (via its shortest route) and the other routes are hidden.
+
+`--at-scope` accepts the project/folder/org **id or number**, with or without the `projects/`/`folders/`/`organizations/` prefix (not the display name). When the target is a basic role (`roles/owner`/`editor`/`viewer`), the query also auto-includes bindings that can set that scope's IAM, since holding them is equivalent to granting yourself the role.
+
 ## Module/Data Output TLDR
 
 ### Module output format
