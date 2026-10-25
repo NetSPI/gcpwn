@@ -177,6 +177,28 @@ class TestTargetResolution:
         assert "inherited from organizations/123" in inherited
         assert "inherited" not in direct
 
+    def test_scope_matches_project_by_name_and_number_equivalently(self, tmp_path):
+        """A project's name and number are interchangeable: a query by either must return the
+        same targets, even for bindings that record only one form (e.g. an SA-scoped binding whose
+        path carries the project name, matched against a query by the project number)."""
+        nodes = [
+            _node("resource:999@999", "GCPProject", {"project_id": "my-proj"}),
+            # binding on a service account -- its attached scope path carries the project NAME only
+            _binding(
+                "iambinding:roles/iam.serviceAccountAdmin@service-account:sa@my-proj.iam.gserviceaccount.com",
+                "roles/iam.serviceAccountAdmin",
+                "projects/my-proj/serviceAccounts/sa@my-proj.iam.gserviceaccount.com",
+                scope_type="service-account",
+            ),
+        ]
+        graph = AttackGraph.from_path(_write(tmp_path, nodes, []))
+        b = "iambinding:roles/iam.serviceAccountAdmin@service-account:sa@my-proj.iam.gserviceaccount.com"
+        for exact in (False, True):
+            assert graph.scope_matches(b, "my-proj", exact=exact) == graph.scope_matches(b, "999", exact=exact)
+        # and it does match (by both forms)
+        assert graph.scope_matches(b, "my-proj")
+        assert graph.scope_matches(b, "999")
+
     def test_exact_scope_matches_project_resource_node_by_name(self, tmp_path):
         """--exact-scope on a project must match the project resource node by its id/name, not only
         its number -- otherwise iam_control_sources drops setIamPolicy bindings on it."""

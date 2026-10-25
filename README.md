@@ -732,6 +732,8 @@ modules run process_og_attack_paths --graph-json output.json --to-role roles/own
 
 `--at-scope` accepts the project/folder/org **id or number**, with or without the `projects/`/`folders/`/`organizations/` prefix (not the display name). When the target is a basic role (`roles/owner`/`editor`/`viewer`), the query also auto-includes bindings that can set that scope's IAM, since holding them is equivalent to granting yourself the role.
 
+`--exact-scope` (only with `--at-scope`): match **only** targets whose own scope is exactly the one you named — not grants inherited **down** into its descendants. Without it, `--at-scope` is broader and also matches grants that apply inside the scope by inheritance. For example, `--to-role roles/owner --at-scope organizations/123456789 --exact-scope` finds owner **on the organization itself**, whereas dropping `--exact-scope` also includes owner inherited down into the org's folders and projects.
+
 ## Module/Data Output TLDR
 
 ### Module output format

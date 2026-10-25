@@ -489,7 +489,37 @@ class AttackGraph:
                     else:
                         ancestor_tokens.add(segment)
         tokens = own_tokens if exact else (own_tokens | ancestor_tokens)
-        return want in tokens
+        # A project/folder/org has two interchangeable ids -- its name (project_id) and its
+        # number. Different node types record one or the other (a binding on an SA carries the
+        # project name in its resource path; a project resource node carries the number in its
+        # id), so a query by one form must also match tokens recorded in the other. Expand the
+        # wanted scope to both forms via the graph's name<->number map.
+        wants = {want} | self._scope_alias_map.get(want, frozenset())
+        return bool(wants & tokens)
+
+    @property
+    def _scope_alias_map(self) -> dict[str, frozenset[str]]:
+        """name <-> number aliases for every org/folder/project in the graph, so --at-scope by
+        name and by number are equivalent. Built once from the scope resource nodes."""
+        cached = getattr(self, "_scope_alias_cache", None)
+        if cached is not None:
+            return cached
+        aliases: dict[str, set[str]] = {}
+        for node_id, node in self.nodes.items():
+            if node["kind"] not in SCOPE_RESOURCE_KINDS:
+                continue
+            forms: set[str] = set()
+            if node_id.startswith("resource:"):
+                forms.add(node_id[len("resource:"):].split("@", 1)[0].lower())
+            for key in ("project_id", "attached_scope_id"):
+                value = node["properties"].get(key)
+                if value:
+                    forms.add(str(value).rsplit("/", 1)[-1].lower())
+            for form in forms:
+                aliases.setdefault(form, set()).update(forms - {form})
+        frozen = {k: frozenset(v) for k, v in aliases.items()}
+        self._scope_alias_cache = frozen
+        return frozen
 
     def basic_roles_held(self, node_id: str) -> frozenset[tuple[str, str | None]]:
         """(role, scope) pairs for basic roles node_id directly holds via IAM binding edges."""
