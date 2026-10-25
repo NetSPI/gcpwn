@@ -424,7 +424,7 @@ See the [Exploit Module Reference](https://github.com/NetSPI/gcpwn/wiki/Exploit-
 
 ## OpenGraph TLDR
 
-By default, OpenGraph only graphs edges and related resource edges tied to privilege escalation paths. The default OpenGraph escalation-rule allowlist lives in `gcpwn/mappings/og_privilege_escalation_paths.json`. Review the wiki for explanations of the available flags, but the best option is usually the following:
+By default, OpenGraph only graphs edges and related resource edges tied to privilege escalation paths. The default OpenGraph escalation-rule allowlist lives in `gcpwn/mappings/og_defined_edges.json`. Review the wiki for explanations of the available flags, but the best option is usually the following:
 ```bash
 modules run process_og_gcpwn_data --expand-inherited --reset --out Bloodhound_Output.json
 ```
@@ -517,7 +517,7 @@ Then import the JSON into [BloodHound CE](https://bloodhound.specterops.io/get-s
 
 ### Adding Your Own Edges TLDR
 
-If you want to add your own privilege-escalation edge (or any edge) to be called out by default, edit `og_privilege_escalation_paths.json` and add your rule. You need to know which permissions you want to flag. We cover adding a single-permission edge below, and the wiki covers multi-permission edge rules.
+If you want to add your own privilege-escalation edge (or any edge) to be called out by default, edit `og_defined_edges.json` and add your rule. You need to know which permissions you want to flag. We cover adding a single-permission edge below, and the wiki covers multi-permission edge rules.
 
 #### Add a Single-Permission Edge
 
@@ -527,7 +527,7 @@ Let's assume we want to call out `cloudkms.cryptoKeys.update` and add it to our 
    - If your target permission (i.e. `cloudkms.cryptoKeys.update`) is not already included, add the permission on a newline to `scripts/build_predfined_perm_to_role_input.txt`
    - With your own GCP creds (for example, a free GCP account) in your own private GCP environment, run `./scripts/build_predefined_perm_to_roles.sh scripts/build_predfined_perm_to_role_input.txt > perm_to_role_mappings.json` as an authenticated user. This script gets all permissions for all predefined roles in a GCP environment to show which roles map to your target permission. You can also add the mapping manually to `gcpwn/mappings/og_permission_to_roles_map.json` using https://docs.cloud.google.com/iam/docs/roles-permissions
    - You should see the permission --> role(s) mapping in `perm_to_role_mappings.json`. Replace `gcpwn/mappings/og_permission_to_roles_map.json` with content of `perm_to_role_mappings.json`
-2. Add a rule definition to `og_privilege_escalation_paths.json` (Note multi-permission rules are covered in the wiki). In our case, it might look like the entry below. Note `resource_scopes_possible` is where one might see a binding with those permissions, and `resource_types` are the actual resource nodes you will be drawing edges to. For example, you might see `cloudkms.cryptoKeys.update` attached to a project IAM binding or attached directly to a key IAM binding, but the final node in either case will be a key node and NOT a project per the reasoning stated above. If `cloudkms.cryptoKeys.update` is attached to a project IAm binding, gcpwn will fan out edges to key nodes discovered in that project rather than end at a project node.
+2. Add a rule definition to `og_defined_edges.json` (Note multi-permission rules are covered in the wiki). In our case, it might look like the entry below. Note `resource_scopes_possible` is where one might see a binding with those permissions, and `resource_types` are the actual resource nodes you will be drawing edges to. For example, you might see `cloudkms.cryptoKeys.update` attached to a project IAM binding or attached directly to a key IAM binding, but the final node in either case will be a key node and NOT a project per the reasoning stated above. If `cloudkms.cryptoKeys.update` is attached to a project IAm binding, gcpwn will fan out edges to key nodes discovered in that project rather than end at a project node.
 
 ```json
 "single_permission_rules": {
@@ -656,16 +656,22 @@ If BloodHound is unavailable or the graph is too large to navigate visually, `pr
 Find all principals that can reach `roles/owner`:
 
 ```bash
-# expanded (default) — every raw node and edge shown
+# collapsed (default) — one line per logical hop, roles shown inline via (via ...)
 modules run process_og_attack_paths --graph-json output.json --to-role roles/owner
 
-# --compact — collapses binding/CAP nodes, roles shown inline
-modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --compact
+# --expanded — every raw node and edge shown (IAM binding + capability nodes)
+modules run process_og_attack_paths --graph-json output.json --to-role roles/owner --expanded
 ```
 
-By default the output shows every raw graph node and edge, including IAM binding nodes and synthetic capability (CAP:) nodes, so you can see exactly what role or permission combination each hop requires.
+By default the output collapses binding and synthetic capability (CAP:) nodes into logical hops, with the role or permission combination each hop requires shown inline via `(via ...)`:
 
-Example expanded output (default):
+```text
+ [1 hop ] serviceAccount:gcpwn-poc-target@my-project
+        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> serviceAccount:test-gcpwn@my-project  (via roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
+        └─ holds roles/owner on organizations/123456789
+```
+
+Use `--expanded` to show every raw graph node and edge instead, including IAM binding nodes and synthetic capability (CAP:) nodes, so you can see exactly what each hop traverses:
 
 ```text
  [direct] serviceAccount:test-gcpwn@my-project
@@ -681,14 +687,6 @@ Example expanded output (default):
         └─[HAS_IAM_BINDING]─> roles/dataflow.serviceAgent@project:my-project  (role roles/dataflow.serviceAgent on projects/my-project)
         └─[CAN_CREATE_SA_ACCESS_TOKEN]─> serviceAccount:test-gcpwn@my-project
         └─[HAS_IAM_BINDING]─> roles/owner@org:123456789  (holds roles/owner on organizations/123456789)
-```
-
-Use `--compact` to collapse binding and CAP nodes into logical hops with roles shown inline via `(via ...)`:
-
-```text
- [1 hop ] serviceAccount:gcpwn-poc-target@my-project
-        └─[CREATE_VERTEX_CUSTOM_JOB_AS_SA]─> serviceAccount:test-gcpwn@my-project  (via roles/aiplatform.user@project:my-project + roles/iam.serviceAccountUser@service-account:test-gcpwn@my-project)
-        └─ holds roles/owner on organizations/123456789
 ```
 
 Other target selectors:

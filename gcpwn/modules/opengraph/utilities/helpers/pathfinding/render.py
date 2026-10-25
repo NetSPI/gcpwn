@@ -263,8 +263,8 @@ def render_path(
 ) -> list[str]:
     """Collapsed view: one line per logical hop, binding/CAP nodes folded in.
 
-    This is the ``--compact`` output.  For the default fully-expanded view that
-    shows every raw node and edge, use :func:`render_path_expanded`.
+    This is the DEFAULT output.  For the ``--expanded`` view that shows every raw
+    node and edge, use :func:`render_path_expanded`.
     """
     hops = collapse_path(graph, path)
     steps, terminal = _attack_hops(hops)
@@ -296,8 +296,8 @@ def render_path_expanded(
 ) -> list[str]:
     """Expanded view: every raw node and edge shown, including binding and CAP: nodes.
 
-    This is the default output.  Binding nodes show the role (or component roles
-    for combo bindings) that they carry.  CAP: nodes appear as-is.
+    This is the ``--expanded`` output.  Binding nodes show the role (or component
+    roles for combo bindings) that they carry.  CAP: nodes appear as-is.
     """
     hops = collapse_path(graph, path)
     steps, terminal = _attack_hops(hops)
