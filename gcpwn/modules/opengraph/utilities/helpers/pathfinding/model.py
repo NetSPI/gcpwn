@@ -428,7 +428,10 @@ class AttackGraph:
             return True
         want = scope.strip().lower()
         for prefix in (
-            "projects/", "folders/", "organizations/", "organization/",
+            # Accept both the plural ("projects/") and the easy-to-mistype singular
+            # ("project/") forms; the bare id and the node-id colon forms also work.
+            "projects/", "project/", "folders/", "folder/",
+            "organizations/", "organization/",
             "project:", "folder:", "org:", "organization:",
         ):
             if want.startswith(prefix):
@@ -461,6 +464,11 @@ class AttackGraph:
         # node ``resource:358690432006``), so --exact-scope would skip it.
         if lowered_id.startswith("resource:"):
             own_tokens.add(lowered_id[len("resource:"):].split("@", 1)[0])
+        # A scope RESOURCE node (org/folder/project) IS its own scope, so its id properties
+        # (project_id/name, which carry the human id alongside the numeric leaf in the node id)
+        # describe the node itself -- they belong in own_tokens so --exact-scope matches the
+        # project by name, not only by number.
+        is_scope_resource = lowered_id.startswith("resource:") or self.kind_of(node_id) in SCOPE_RESOURCE_KINDS
         properties = self.props(node_id)
         for key in ("attached_scope_id", "effective_scope_id", "effective_scope_ids", "project_id", "name"):
             value = properties.get(key)
@@ -474,7 +482,9 @@ class AttackGraph:
                     # For a directly-attached grant (no inherited source), attached/effective
                     # scope IS the node's own scope (covers the numeric form of the id). For an
                     # inherited grant these keys point at ancestors/the source scope.
-                    if key in ("attached_scope_id", "effective_scope_id") and not inherited:
+                    if is_scope_resource:
+                        own_tokens.add(segment)
+                    elif key in ("attached_scope_id", "effective_scope_id") and not inherited:
                         own_tokens.add(segment)
                     else:
                         ancestor_tokens.add(segment)

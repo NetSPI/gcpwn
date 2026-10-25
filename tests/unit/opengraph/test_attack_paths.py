@@ -15,6 +15,7 @@ import pytest
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.model import AttackGraph
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.render import (
     collapse_path,
+    describe_target,
     render_report,
 )
 from gcpwn.modules.opengraph.utilities.helpers.pathfinding.search import (
@@ -155,6 +156,43 @@ class TestTargetResolution:
     def test_scope_filter_narrows_targets(self, chain_graph):
         assert resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/proj").node_ids
         assert not resolve_targets(chain_graph, roles=["roles/owner"], scope="projects/other").node_ids
+
+    def test_scope_accepts_singular_project_prefix(self, chain_graph):
+        """The easy-to-mistype singular 'project/' prefix works like 'projects/' and bare id."""
+        for scope in ("projects/proj", "project/proj", "proj"):
+            assert resolve_targets(chain_graph, roles=["roles/owner"], scope=scope).node_ids, scope
+
+    def test_inherited_target_is_labeled_distinctly_from_direct(self, tmp_path):
+        """A direct grant and an org-inherited grant on the same project are different nodes;
+        the inherited one names its source so it isn't a confusing duplicate."""
+        nodes = [
+            _binding("iambinding:roles/owner@project:p1", "roles/owner", "projects/p1"),
+            _binding("iambinding:roles/owner@project:p1#src:org:123", "roles/owner", "projects/p1",
+                     inherited=True, source_scope_id="organizations/123"),
+        ]
+        graph = AttackGraph.from_path(_write(tmp_path, nodes, []))
+        direct = describe_target(graph, "iambinding:roles/owner@project:p1")
+        inherited = describe_target(graph, "iambinding:roles/owner@project:p1#src:org:123")
+        assert direct != inherited
+        assert "inherited from organizations/123" in inherited
+        assert "inherited" not in direct
+
+    def test_exact_scope_matches_project_resource_node_by_name(self, tmp_path):
+        """--exact-scope on a project must match the project resource node by its id/name, not only
+        its number -- otherwise iam_control_sources drops setIamPolicy bindings on it."""
+        nodes = [
+            _node("resource:12345@12345", "GCPProject", {"project_id": "my-proj-id"}),
+            _binding("iambinding:roles/resourcemanager.projectIamAdmin@project:my-proj-id",
+                     "roles/resourcemanager.projectIamAdmin", "projects/my-proj-id"),
+        ]
+        edges = [_edge("iambinding:roles/resourcemanager.projectIamAdmin@project:my-proj-id",
+                       "resource:12345@12345", "CAN_MODIFY_PROJECT_IAM")]
+        graph = AttackGraph.from_path(_write(tmp_path, nodes, edges))
+        # Project node matches by name and number under exact.
+        assert graph.scope_matches("resource:12345@12345", "my-proj-id", exact=True)
+        assert graph.scope_matches("resource:12345@12345", "12345", exact=True)
+        # So the setIamPolicy binding is surfaced under --exact-scope by name.
+        assert graph.iam_control_sources(scope="my-proj-id", exact=True)
 
     def test_exact_scope_matches_only_own_scope(self, tmp_path):
         # An org-level owner binding, plus that same org grant inherited down into a project.
@@ -448,7 +486,13 @@ class TestServiceAgents:
 
 
 class TestRender:
+    _RENDER_KWARGS = {
+        "compact", "expand", "truncated", "detail_limit", "summary_only",
+        "iam_control_targets", "iam_control_note",
+    }
+
     def _report(self, graph, paths, **overrides):
+        render_kwargs = {k: overrides.pop(k) for k in list(overrides) if k in self._RENDER_KWARGS}
         query = {
             "description": "role=roles/owner",
             "target_count": 1,
@@ -457,7 +501,7 @@ class TestRender:
             "include_containment": False,
             **overrides,
         }
-        return render_report(graph, paths, config=graph.config_summary(), query=query)
+        return render_report(graph, paths, config=graph.config_summary(), query=query, **render_kwargs)
 
     def test_report_contains_config_and_paths(self, chain_graph):
         targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids
@@ -496,11 +540,54 @@ class TestRender:
         assert "TARGET SUMMARY" in report
         assert "ACQUIRES" not in report
 
-    def test_service_account_suffix_is_trimmed_for_readability(self, chain_graph):
+    def test_short_id_shows_full_identifier(self):
+        """Identifiers are shown in full (only prefixes/SA suffix stripped), so a long
+        resource scope never loses its resource name."""
+        from gcpwn.modules.opengraph.utilities.helpers.pathfinding.render import (
+            _scope_label,
+            short_id,
+        )
+
+        long_binding = (
+            "iambinding:roles/secretmanager.secretAccessor@projects/"
+            "my-production-project/secrets/prod-database-master-credentials"
+        )
+        # Full id, prefix stripped, nothing truncated.
+        assert short_id(long_binding) == (
+            "roles/secretmanager.secretAccessor@projects/"
+            "my-production-project/secrets/prod-database-master-credentials"
+        )
+
+        gke = "projects/my-production-project/locations/us-central1/clusters/primary-gke-cluster-east"
+        assert _scope_label(gke, None) == gke
+
+        # An explicit limit still elides the MIDDLE (keeps both ends), never the tail.
+        out = short_id(long_binding, limit=60)
+        assert out.endswith("prod-database-master-credentials")
+        assert "…" in out
+
+        assert short_id("iambinding:roles/owner@org:123") == "roles/owner@org:123"
+
+    def test_iam_control_target_terminal_gets_equivalence_note(self, chain_graph):
+        """A path ending on an IAM-control binding (added for a basic-role query) spells out
+        that the holder can grant themselves the queried role."""
+        targets = resolve_targets(chain_graph, roles=["roles/owner"]).node_ids
+        paths = shortest_paths(chain_graph, targets)
+        terminals = frozenset(p.target for p in paths)
+        note = "can set this scope's IAM policy, thus able to grant themselves roles/owner (or any role)"
+
+        with_note = self._report(chain_graph, paths, iam_control_targets=terminals, iam_control_note=note)
+        assert note in with_note
+        # Without declaring the terminals as IAM-control targets, the note is absent.
+        without = self._report(chain_graph, paths)
+        assert note not in without
+
+    def test_service_account_email_is_shown_in_full(self, chain_graph):
+        """SA emails render with their full ...gserviceaccount.com domain, so every SA
+        (incl. @developer/@appspot legacy SAs) renders consistently."""
         targets = resolve_targets(chain_graph, service_accounts=["svc-b"]).node_ids
         report = self._report(chain_graph, shortest_paths(chain_graph, targets))
-        assert "svc-a@proj" in report
-        assert ".iam.gserviceaccount.com" not in report
+        assert "svc-a@proj.iam.gserviceaccount.com" in report
 
 
 def test_exclude_node_drops_paths_through_it(chain_graph):

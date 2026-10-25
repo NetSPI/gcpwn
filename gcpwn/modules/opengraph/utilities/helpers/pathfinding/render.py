@@ -16,10 +16,6 @@ from .search import RawPath
 
 _RULE = "-" * 78
 
-# Dropping this suffix keeps service-account emails readable ("svc@my-project")
-# without losing anything that identifies them.
-_SA_SUFFIX = ".iam.gserviceaccount.com"
-
 
 @dataclass
 class Hop:
@@ -129,18 +125,47 @@ def collapse_path(graph: AttackGraph, path: RawPath) -> list[Hop]:
     return hops
 
 
-def short_id(node_id: str, *, limit: int = 88) -> str:
-    """Shorten a node id for display without losing what identifies it."""
+def _elide_middle(text: str, limit: int) -> str:
+    """Shorten to ``limit`` chars by eliding the MIDDLE, keeping both ends.
+
+    A plain tail-truncation drops the end of the string -- but for a resource
+    scope like ``projects/p/.../secrets/MY-SECRET`` the end (the resource type and
+    name) is exactly what identifies it. Eliding the middle keeps the leading
+    context (project) and the trailing resource name; the tail gets the larger
+    share of the budget since the resource name matters most.
+    """
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return text[:limit]
+    budget = limit - 1  # one char for the ellipsis
+    tail = (budget * 2) // 3
+    head = budget - tail
+    return f"{text[:head]}…{text[-tail:]}" if head > 0 else f"…{text[-(limit - 1):]}"
+
+
+# Backstop so a single malformed/adversarial node id can't blow up a line; real GCP
+# resource ids are well under this, so identifiers are shown in full in practice.
+_SHORT_ID_HARD_CAP = 512
+
+
+def short_id(node_id: str, *, limit: int | None = None) -> str:
+    """Strip the display-only prefixes/suffix from a node id, keeping it otherwise intact.
+
+    Identifiers are shown in full by default -- for text attack-path analysis the whole
+    resource path is what matters, so nothing is truncated unless an explicit ``limit`` is
+    passed (or the id is pathologically long, in which case the middle is elided to keep
+    both ends). The only parts removed are the internal ``iambinding:``/``resource:``/
+    ``cap:new:`` prefixes; the service-account email (including its full
+    ``...gserviceaccount.com`` domain) is kept intact so every SA renders consistently.
+    """
     text = node_id
     for prefix in ("iambinding:", "resource:", "cap:new:"):
         if text.startswith(prefix):
             text = text[len(prefix) :]
             break
-    if text.endswith(_SA_SUFFIX):
-        text = text[: -len(_SA_SUFFIX)]
-    if len(text) > limit:
-        text = text[: limit - 1] + "…"
-    return text
+    cap = limit if limit is not None else _SHORT_ID_HARD_CAP
+    return _elide_middle(text, cap)
 
 
 def _scope_label(scope: str | None, display: str | None) -> str:
@@ -148,7 +173,7 @@ def _scope_label(scope: str | None, display: str | None) -> str:
         return "unspecified scope"
     if scope == "MULTI_SCOPE":
         return "multiple scopes"
-    label = short_id(scope, limit=60)
+    label = short_id(scope)
     if display and display.lower() not in scope.lower():
         return f"{label} ({display})"
     return label
@@ -159,7 +184,15 @@ def describe_target(graph: AttackGraph, node_id: str) -> str:
     if graph.is_binding(node_id):
         role = graph.role_of_binding(node_id) or "(unknown role)"
         properties = graph.props(node_id)
-        return f"{role} on {_scope_label(graph.scope_of_binding(node_id), properties.get('attached_scope_display'))}"
+        label = f"{role} on {_scope_label(graph.scope_of_binding(node_id), properties.get('attached_scope_display'))}"
+        # A grant inherited from an ancestor is a DIFFERENT node from a grant attached
+        # directly at this scope; without this they render identically and look like a
+        # duplicate target. Naming the source scope distinguishes the two.
+        if properties.get("inherited"):
+            source = properties.get("source_scope_id") or properties.get("source_scope_display")
+            if source:
+                label += f" (inherited from {short_id(str(source))})"
+        return label
     return f"{graph.kind_of(node_id)} {short_id(node_id)}"
 
 
@@ -169,7 +202,7 @@ def _notes_suffix(*, inherited_from: str | None, conditional: bool) -> str:
     is intentionally not folded in here."""
     notes = []
     if inherited_from:
-        notes.append(f"inherited from {short_id(inherited_from, limit=44)}")
+        notes.append(f"inherited from {short_id(inherited_from)}")
     if conditional:
         notes.append("conditional")
     return f"   [{'; '.join(notes)}]" if notes else ""
@@ -205,14 +238,29 @@ def hop_count(graph: AttackGraph, path: RawPath) -> int:
     return len(_attack_hops(collapse_path(graph, path))[0])
 
 
-def _terminal_annotation(terminal: Hop | None) -> str:
+def _terminal_annotation(
+    terminal: Hop | None,
+    iam_control_targets: frozenset[str] = frozenset(),
+    iam_control_note: str = "",
+) -> str:
     if terminal is None:
         return ""
     scope = _scope_label(terminal.scope, terminal.scope_display)
-    return f"  [holds {terminal.role or '?'} on {scope}]"
+    extra = (
+        f" -- {iam_control_note}"
+        if iam_control_note and terminal.dst in iam_control_targets
+        else ""
+    )
+    return f"  [holds {terminal.role or '?'} on {scope}{extra}]"
 
 
-def render_path(graph: AttackGraph, path: RawPath) -> list[str]:
+def render_path(
+    graph: AttackGraph,
+    path: RawPath,
+    *,
+    iam_control_targets: frozenset[str] = frozenset(),
+    iam_control_note: str = "",
+) -> list[str]:
     """Collapsed view: one line per logical hop, binding/CAP nodes folded in.
 
     This is the ``--compact`` output.  For the default fully-expanded view that
@@ -222,7 +270,7 @@ def render_path(graph: AttackGraph, path: RawPath) -> list[str]:
     steps, terminal = _attack_hops(hops)
     count = len(steps)
     label = "direct" if (count == 0 and terminal) else ("hop " if count == 1 else "hops")
-    annotation = _terminal_annotation(terminal)
+    annotation = _terminal_annotation(terminal, iam_control_targets, iam_control_note)
 
     count_label = label if count == 0 else f"{count} {label}"
     lines = [f" [{count_label}] {short_id(path.source)}{annotation if count == 0 else ''}"]
@@ -230,11 +278,22 @@ def render_path(graph: AttackGraph, path: RawPath) -> list[str]:
     if terminal and count > 0:
         scope = _scope_label(terminal.scope, terminal.scope_display)
         suffix = _notes_suffix(inherited_from=terminal.inherited_from, conditional=terminal.conditional)
-        lines.append(f"        └─ holds {terminal.role or '?'} on {scope}{suffix}")
+        note = (
+            f" -- {iam_control_note}"
+            if iam_control_note and terminal.dst in iam_control_targets
+            else ""
+        )
+        lines.append(f"        └─ holds {terminal.role or '?'} on {scope}{note}{suffix}")
     return lines
 
 
-def render_path_expanded(graph: AttackGraph, path: RawPath) -> list[str]:
+def render_path_expanded(
+    graph: AttackGraph,
+    path: RawPath,
+    *,
+    iam_control_targets: frozenset[str] = frozenset(),
+    iam_control_note: str = "",
+) -> list[str]:
     """Expanded view: every raw node and edge shown, including binding and CAP: nodes.
 
     This is the default output.  Binding nodes show the role (or component roles
@@ -269,13 +328,19 @@ def render_path_expanded(graph: AttackGraph, path: RawPath) -> list[str]:
                     graph.scope_of_binding(dst_node), props.get("attached_scope_display")
                 )
                 if role:
-                    verb = "holds" if i + 1 == last else "role"
-                    extra = f"  ({verb} {role} on {scope_val})"
+                    is_terminal = i + 1 == last
+                    verb = "holds" if is_terminal else "role"
+                    control = (
+                        f" -- {iam_control_note}"
+                        if is_terminal and iam_control_note and dst_node in iam_control_targets
+                        else ""
+                    )
+                    extra = f"  ({verb} {role} on {scope_val}{control})"
                     notes = []
                     if props.get("inherited"):
                         src = props.get("source_scope_id") or props.get("source_scope_display")
                         if src:
-                            notes.append(f"inherited from {short_id(str(src), limit=44)}")
+                            notes.append(f"inherited from {short_id(str(src))}")
                     if props.get("conditional") or props.get("condition_expr_raw"):
                         notes.append("conditional")
                     if notes:
@@ -370,8 +435,17 @@ def render_report(
     truncated: bool = False,
     detail_limit: int | None = None,
     summary_only: bool = False,
+    iam_control_targets: frozenset[str] = frozenset(),
+    iam_control_note: str = "",
 ) -> str:
-    """Full text report: config header, then targets ordered by how easily reached."""
+    """Full text report: config header, then targets ordered by how easily reached.
+
+    ``iam_control_targets`` are binding nodes that were added as targets because the
+    query asked for a basic role and these bindings can set the scope's IAM (so their
+    holder can grant themselves that role). When a path terminates on one of them,
+    ``iam_control_note`` is appended to the terminal "holds ... on ..." line to spell
+    out the equivalence.
+    """
     lines = render_config_header(config, query=query)
 
     if not paths:
@@ -444,9 +518,23 @@ def render_report(
             if detail_limit is not None and shown >= detail_limit:
                 break
             if expand:
-                lines.extend(render_path_expanded(graph, path))
+                lines.extend(
+                    render_path_expanded(
+                        graph,
+                        path,
+                        iam_control_targets=iam_control_targets,
+                        iam_control_note=iam_control_note,
+                    )
+                )
             else:
-                lines.extend(render_path(graph, path))
+                lines.extend(
+                    render_path(
+                        graph,
+                        path,
+                        iam_control_targets=iam_control_targets,
+                        iam_control_note=iam_control_note,
+                    )
+                )
             lines.append("")
             shown += 1
 

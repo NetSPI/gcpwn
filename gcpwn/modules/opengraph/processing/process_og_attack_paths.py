@@ -248,10 +248,16 @@ def run_module(user_args, session):
     # otherwise --to-role roles/owner only finds DIRECT owner holders, missing the setIamPolicy
     # route to effectively becoming owner. (ROLE_EDITOR is excluded: editor cannot grant owner.)
     iam_control_targets: set[str] = set()
-    if roles and any(
-        (r.strip().lower() in BASIC_ROLE_RANK) or (("roles/" + r.strip().lower().rsplit("/", 1)[-1]) in BASIC_ROLE_RANK)
-        for r in roles
-    ):
+    iam_control_note = ""
+
+    def _basic_norm(raw: str) -> str | None:
+        low = raw.strip().lower()
+        if low in BASIC_ROLE_RANK:
+            return low
+        guess = "roles/" + low.rsplit("/", 1)[-1]
+        return guess if guess in BASIC_ROLE_RANK else None
+
+    if roles and any(_basic_norm(r) for r in roles):
         _iam_control = graph.iam_control_sources(
             scope=args.at_scope, exact=bool(getattr(args, "exact_scope", False))
         )
@@ -259,6 +265,12 @@ def run_module(user_args, session):
         if _added:
             target_set.node_ids |= _added
             iam_control_targets = set(_added)
+            _basic_queried = [b for b in (_basic_norm(r) for r in roles) if b]
+            _role_phrase = " / ".join(dict.fromkeys(_basic_queried)) or "the queried role"
+            iam_control_note = (
+                f"can set this scope's IAM policy, thus able to grant themselves "
+                f"{_role_phrase} (or any role)"
+            )
             target_set.description += " +iam-control"
             _progress(
                 f"[*] --to-role (basic role): also targeting {len(_added):,} binding(s) that can set "
@@ -280,6 +292,13 @@ def run_module(user_args, session):
             f"({target_set.description}). Use --list-targets or --stats to explore the graph."
             f"{UtilityTools.RESET}"
         )
+        if args.at_scope:
+            print(
+                f"{UtilityTools.YELLOW}[!] --at-scope '{args.at_scope}' matched no scope. It must be the "
+                f"project/folder/org ID or NUMBER (e.g. 'my-proj', 'projects/my-proj', '123456789', "
+                f"'folders/123'), not the display name. Watch the spelling: 'projects/' is plural."
+                f"{UtilityTools.RESET}"
+            )
         return -1
 
     sources = None
@@ -448,6 +467,8 @@ def run_module(user_args, session):
             truncated=truncated,
             detail_limit=args.max_paths,
             summary_only=args.summary,
+            iam_control_targets=frozenset(iam_control_targets),
+            iam_control_note=iam_control_note,
         )
 
     if args.output:
