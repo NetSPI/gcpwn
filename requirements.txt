@@ -9,7 +9,7 @@ google-api-python-client==2.201.0
 google-auth-httplib2==0.4.4
 
 # Google Cloud Python libraries
-google-cloud-aiplatform==2.5.0
+google-cloud-aiplatform==2.6.0
 google-cloud-alloydb==0.11.4
 google-cloud-api-gateway==1.18.0
 google-cloud-api-keys==0.9.1
@@ -70,7 +70,7 @@ google-cloud-workflows==1.24.0
 google-cloud-workstations==0.8.2
 
 # VertexAI
-google-genai==2.31.0
+google-genai==2.32.0
 
 # Notes
 # Google Groups / Docs APIs:
