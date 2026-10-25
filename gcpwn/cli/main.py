@@ -371,8 +371,12 @@ def _resolve_unauth_module_path(module_token: str) -> str:
     if hit is not None:
         return hit
 
+    # A module can be unauth-RUNNABLE without being an "unauthenticated" (unauth_-prefixed)
+    # module -- e.g. the process_og_* tools read a local file and are listed in
+    # UNAUTH_ALLOWED_MODULE_KEYS. For those, resolve the FULL import path from the complete
+    # registry; returning the bare token here makes the importer fail with "missing '<token>'".
     if not get_module_action(token).requires_auth:
-        return token
+        return _resolve_module_path(token) or token
 
     return ""
 

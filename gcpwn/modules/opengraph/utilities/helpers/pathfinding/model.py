@@ -455,6 +455,12 @@ class AttackGraph:
             tail = tail_full.split("#", 1)[0]
             if ":" in tail:
                 own_tokens.add(tail.split(":", 1)[1])
+        # A resource node id is ``resource:<leaf>[@<project>]`` -- its leaf IS its own scope
+        # (e.g. the org/folder/project id). Binding nodes use ``...@<type>:<leaf>`` and are handled
+        # above; without this, exact matching never identifies a scope RESOURCE node (e.g. the org
+        # node ``resource:358690432006``), so --exact-scope would skip it.
+        if lowered_id.startswith("resource:"):
+            own_tokens.add(lowered_id[len("resource:"):].split("@", 1)[0])
         properties = self.props(node_id)
         for key in ("attached_scope_id", "effective_scope_id", "effective_scope_ids", "project_id", "name"):
             value = properties.get(key)

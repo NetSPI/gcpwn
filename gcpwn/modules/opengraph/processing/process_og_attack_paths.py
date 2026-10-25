@@ -247,6 +247,7 @@ def run_module(user_args, session):
     # SET that scope's IAM (setIamPolicy / policy-binding) and so grant themselves the role --
     # otherwise --to-role roles/owner only finds DIRECT owner holders, missing the setIamPolicy
     # route to effectively becoming owner. (ROLE_EDITOR is excluded: editor cannot grant owner.)
+    iam_control_targets: set[str] = set()
     if roles and any(
         (r.strip().lower() in BASIC_ROLE_RANK) or (("roles/" + r.strip().lower().rsplit("/", 1)[-1]) in BASIC_ROLE_RANK)
         for r in roles
@@ -257,6 +258,7 @@ def run_module(user_args, session):
         _added = _iam_control - target_set.node_ids
         if _added:
             target_set.node_ids |= _added
+            iam_control_targets = set(_added)
             target_set.description += " +iam-control"
             _progress(
                 f"[*] --to-role (basic role): also targeting {len(_added):,} binding(s) that can set "
@@ -371,11 +373,18 @@ def run_module(user_args, session):
 
     if args.no_direct:
         before = len(paths)
-        paths = [p for p in paths if hop_count(graph, p) > 0]
+        # Drop paths where the principal directly holds the TARGET role (hop 0). Exception: a hop-0
+        # path onto an IAM-control binding (added for a basic-role query) is NOT a direct hold of the
+        # role -- it's "principal can set the scope's IAM -> escalate to the role", which is exactly
+        # the escalation --no-direct wants to surface. Keep those.
+        paths = [
+            p for p in paths
+            if hop_count(graph, p) > 0 or (p.nodes and p.nodes[-1] in iam_control_targets)
+        ]
         if not args.as_json:
             removed = before - len(paths)
             if removed:
-                print(f"[*] --no-direct: removed {removed} direct path(s) (principal holds binding with no priv-esc hops)")
+                print(f"[*] --no-direct: removed {removed} direct path(s) (principal holds the role binding with no priv-esc hops)")
 
     if args.upgrade_only:
         before = len(paths)

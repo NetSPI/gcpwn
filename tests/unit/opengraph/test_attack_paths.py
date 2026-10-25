@@ -544,3 +544,33 @@ def test_iam_control_sources_includes_setiampolicy_excludes_editor(tmp_path):
     assert "iambinding:roles/editor@org:111" not in sources  # editor cannot grant owner
     # scoped to a different org -> nothing
     assert graph.iam_control_sources(scope="organizations/999") == set()
+
+
+def test_exact_scope_matches_a_scope_resource_node(tmp_path):
+    """--exact-scope must identify a scope RESOURCE node (resource:<leaf>), not only binding nodes --
+    otherwise iam_control_sources/targeting skips the scope entirely under --exact-scope."""
+    nodes = [
+        _node("resource:111", "GCPOrganization", {"name": "111"}),
+        _node("resource:proj-a@proj-a", "GCPProject", {"name": "proj-a", "project_id": "proj-a"}),
+    ]
+    graph = AttackGraph.from_path(_write(tmp_path, nodes, []))
+    assert graph.scope_matches("resource:111", "organizations/111", exact=True)
+    assert graph.scope_matches("resource:proj-a@proj-a", "projects/proj-a", exact=True)
+    assert not graph.scope_matches("resource:111", "organizations/999", exact=True)
+
+
+def test_iam_control_sources_with_exact_scope(tmp_path):
+    """iam_control_sources must work under exact scope matching (the --exact-scope path)."""
+    nodes = [
+        _node("resource:111", "GCPOrganization", {"name": "111"}),
+        _binding("iambinding:roles/owner@org:111", "roles/owner", "organizations/111", scope_type="organization"),
+        _binding("iambinding:orgadmin@org:111", "roles/resourcemanager.organizationAdmin", "organizations/111", scope_type="organization"),
+    ]
+    edges = [
+        _edge("iambinding:roles/owner@org:111", "resource:111", "ROLE_OWNER"),
+        _edge("iambinding:orgadmin@org:111", "resource:111", "CAN_MODIFY_ORG_IAM"),
+    ]
+    graph = AttackGraph.from_path(_write(tmp_path, nodes, edges))
+    srcs = graph.iam_control_sources(scope="organizations/111", exact=True)
+    assert "iambinding:orgadmin@org:111" in srcs
+    assert "iambinding:roles/owner@org:111" in srcs
