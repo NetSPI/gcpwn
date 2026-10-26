@@ -199,6 +199,21 @@ class TestTargetResolution:
         assert graph.scope_matches(b, "my-proj")
         assert graph.scope_matches(b, "999")
 
+    def test_exact_scope_does_not_leak_across_na_project_id(self, tmp_path):
+        """Org/folder nodes carry project_id='N/A' (they have no project). That placeholder must
+        not be tokenized -- otherwise every org/folder matches every other under --exact-scope."""
+        nodes = [
+            _node("resource:111", "GCPOrganization", {"project_id": "N/A", "name": "111"}),
+            _node("resource:222", "GCPFolder", {"project_id": "N/A", "name": "222"}),
+        ]
+        graph = AttackGraph.from_path(_write(tmp_path, nodes, []))
+        # The folder must NOT match the org under exact scope, and vice versa.
+        assert not graph.scope_matches("resource:222", "organizations/111", exact=True)
+        assert not graph.scope_matches("resource:111", "folders/222", exact=True)
+        # Each still matches itself.
+        assert graph.scope_matches("resource:111", "organizations/111", exact=True)
+        assert graph.scope_matches("resource:222", "222", exact=True)
+
     def test_exact_scope_matches_project_resource_node_by_name(self, tmp_path):
         """--exact-scope on a project must match the project resource node by its id/name, not only
         its number -- otherwise iam_control_sources drops setIamPolicy bindings on it."""

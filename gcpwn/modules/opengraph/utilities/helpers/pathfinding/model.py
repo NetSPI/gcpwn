@@ -50,6 +50,12 @@ CONTAINMENT_EDGE_KINDS = frozenset({"ExistsInProject"})
 # Scope (hierarchy) resource node kinds.
 SCOPE_RESOURCE_KINDS = frozenset({"GCPOrganization", "GCPFolder", "GCPProject"})
 
+# Placeholder values that stand in for "no id" on a node (e.g. an org/folder has no
+# project_id, stored as "N/A"). These are NOT scope identifiers and must never be
+# tokenized -- splitting "N/A" on "/" yields the junk token "a", which would otherwise
+# make every org/folder match every other under --at-scope.
+_NON_SCOPE_VALUES = frozenset({"", "n/a", "na", "none", "null", "-"})
+
 # Edges INTO a scope resource node that let the source set that scope's IAM -- i.e. grant
 # itself (or anyone) ANY role at that scope. A principal reaching a binding with one of these
 # is "effectively owner" of the scope even without a direct roles/owner binding.
@@ -474,7 +480,7 @@ class AttackGraph:
             value = properties.get(key)
             values = value if isinstance(value, (list, tuple)) else [value]
             for item in values:
-                if not item:
+                if not item or str(item).strip().lower() in _NON_SCOPE_VALUES:
                     continue
                 for segment in str(item).lower().split("/"):
                     if not segment:
@@ -513,7 +519,7 @@ class AttackGraph:
                 forms.add(node_id[len("resource:"):].split("@", 1)[0].lower())
             for key in ("project_id", "attached_scope_id"):
                 value = node["properties"].get(key)
-                if value:
+                if value and str(value).strip().lower() not in _NON_SCOPE_VALUES:
                     forms.add(str(value).rsplit("/", 1)[-1].lower())
             for form in forms:
                 aliases.setdefault(form, set()).update(forms - {form})
