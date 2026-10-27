@@ -4,9 +4,22 @@ from typing import Any, Iterable
 
 from google.cloud import compute_v1
 
-from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.module_helpers import extract_path_segment
 from gcpwn.core.utils.persistence import save_to_table
+from gcpwn.core.utils.service_runtime import handle_service_error
+
+
+def _report_lb_error(exc, *, api_name: str, project_id: str, service_label: str) -> None:
+    """Classify a Load Balancer list error (403 disabled/denied, billing, 401, 404)
+    instead of blanket-labeling every failure 'STATUS 500 (UNKNOWN)'."""
+    handle_service_error(
+        exc,
+        api_name=api_name,
+        resource_name=project_id,
+        service_label=service_label,
+        project_id=project_id,
+        return_not_enabled=False,
+    )
 
 
 def _scope_from_self_link(self_link: str) -> str:
@@ -53,13 +66,15 @@ class LbForwardingRulesResource:
         try:
             rows.extend(list(self._global.list(project=project_id)))
         except Exception as exc:
-            UtilityTools.print_500(project_id, "compute.globalForwardingRules.list", exc)
+            _report_lb_error(exc, api_name="compute.globalForwardingRules.list",
+                             project_id=project_id, service_label="Load Balancer Forwarding Rules")
         try:
             aggregated = self._regional.aggregated_list(project=project_id)
             for _scope, scoped in aggregated:
                 rows.extend(list(getattr(scoped, "forwarding_rules", None) or []))
         except Exception as exc:
-            UtilityTools.print_500(project_id, "compute.forwardingRules.aggregatedList", exc)
+            _report_lb_error(exc, api_name="compute.forwardingRules.aggregatedList",
+                             project_id=project_id, service_label="Load Balancer Forwarding Rules")
         return _dedupe_rows(rows)
 
     def save(self, rows: Iterable[Any], *, project_id: str) -> None:
@@ -89,7 +104,8 @@ class LbUrlMapsResource:
         try:
             return list(self.client.list(project=project_id))
         except Exception as exc:
-            UtilityTools.print_500(project_id, "compute.urlMaps.list", exc)
+            _report_lb_error(exc, api_name="compute.urlMaps.list",
+                             project_id=project_id, service_label="Load Balancer URL Maps")
             return []
 
     def save(self, rows: Iterable[Any], *, project_id: str) -> None:
@@ -123,7 +139,8 @@ class LbTargetProxiesResource:
             try:
                 rows.extend([(proxy_type, item) for item in client.list(project=project_id)])
             except Exception as exc:
-                UtilityTools.print_500(project_id, api_name, exc)
+                _report_lb_error(exc, api_name=api_name, project_id=project_id,
+                                 service_label="Load Balancer Target Proxies")
         return rows
 
     def save(self, rows: Iterable[Any], *, project_id: str) -> None:

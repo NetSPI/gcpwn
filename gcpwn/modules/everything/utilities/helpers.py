@@ -509,7 +509,36 @@ def build_roles_and_assets_for_member(
 
     if convenience_summary:
         _add_convenience_roles(data_dict, convenience_summary)
+
+    # Normalize every role collection (kept as sets during the dedup/inheritance
+    # passes above) into a sorted list. _encode_value serializes this dict with
+    # json.dumps(default=str); a set is not JSON-serializable, so default=str would
+    # stringify it into a Python set-repr ("{'roles/owner'}"). That string round-trips
+    # back through ast.literal_eval as a bare string, and the role report then iterates
+    # it character-by-character. Lists serialize as JSON arrays and round-trip cleanly.
+    for entries in data_dict.values():
+        for info in (entries or {}).values():
+            if not isinstance(info, dict):
+                continue
+            if "Direct Permissions" in info:
+                info["Direct Permissions"] = _normalize_role_collection(info["Direct Permissions"])
+            for inh in info.get("Inherited Permissions") or []:
+                if isinstance(inh, dict) and "roles" in inh:
+                    inh["roles"] = _normalize_role_collection(inh["roles"])
     return data_dict
+
+
+def _normalize_role_collection(value: Any) -> list[str]:
+    """Coerce a role collection (set/list/tuple/str) into a sorted, de-duplicated
+    list of non-empty role strings. Used to keep build_roles_and_assets_for_member's
+    output JSON-serializable (no sets) so it round-trips through the DB cleanly."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (set, frozenset, tuple, list)):
+        return sorted({str(v) for v in value if str(v).strip()})
+    return [str(value)]
 
 
 # ---------------------------------------------------------------------------

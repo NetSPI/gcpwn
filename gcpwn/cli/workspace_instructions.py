@@ -34,6 +34,7 @@ from gcpwn.core.utils.module_helpers import (
     iter_module_rows,
     load_mapping_data,
     load_service_locations,
+    parse_string_list,
 )
 from gcpwn.core.utils.export_helpers import (
     export_hierarchy_tree_image,
@@ -1778,15 +1779,27 @@ class CommandProcessor:
                 inherited = asset_details.get("Inherited Permissions") or []
                 inherited_roles = []
                 for entry in inherited:
-                    roles = sorted(str(role) for role in (entry.get("roles") or []) if str(role).strip())
+                    # parse_string_list defends against legacy rows where a set was
+                    # stored as a Python set-repr string ("{'roles/owner'}"); iterating
+                    # that string directly would split it character-by-character.
+                    roles = sorted(
+                        r for r in parse_string_list(
+                            entry.get("roles"), allow_json=True, allow_python_literal=True, fallback_to_single=True
+                        ) if r.strip()
+                    )
                     ancestor = str(entry.get("ancestor") or "").strip()
                     if roles:
                         inherited_roles.append(f"{ancestor}: {', '.join(roles)}" if ancestor else ", ".join(roles))
+                direct_roles = sorted(
+                    r for r in parse_string_list(
+                        asset_details.get("Direct Permissions"), allow_json=True, allow_python_literal=True, fallback_to_single=True
+                    ) if r.strip()
+                )
                 rows.append(
                     {
                         "Resource": str(asset_name),
                         "Parent": str(asset_details.get("parent_name") or asset_details.get("parent_id") or ""),
-                        "Direct Roles": ", ".join(sorted(str(role) for role in (asset_details.get("Direct Permissions") or []) if str(role).strip())) or "-",
+                        "Direct Roles": ", ".join(direct_roles) or "-",
                         "Inherited Roles": " | ".join(inherited_roles) or "-",
                     }
                 )

@@ -814,3 +814,24 @@ us-east4
 us-west1
 us-west2
 us-west3
+
+# Oracle Database@Google Cloud. This API does NOT support the aggregated
+# locations/- wildcard, so a region-scoped list against locations/- 404s. The
+# resolver queries the live locations API first; this fallback exists so that
+# when the API is disabled (or locations.list is denied) we fan out over real
+# regions and the disabled-API short-circuit fires cleanly instead of 404ing
+# on locations/-. Availability varies by service and grows over time.
+[oracledatabase]
+asia-northeast1
+asia-northeast2
+asia-south1
+asia-south2
+asia-southeast1
+australia-southeast1
+australia-southeast2
+europe-west2
+europe-west3
+europe-west8
+northamerica-northeast1
+us-central1
+us-east4

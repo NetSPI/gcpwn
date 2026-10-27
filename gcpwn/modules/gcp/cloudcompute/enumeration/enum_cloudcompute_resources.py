@@ -452,6 +452,14 @@ def _list_discovery_rows(
                 rows.extend(batch or [])
         return rows
 
+    # A region/zone-scoped resource whose locations could not be resolved (e.g.
+    # compute.regions.list was denied because billing is disabled, leaving `regions`
+    # empty) must NOT fall through to the location-less global list below: that call
+    # omits the required region/zone parameter and fails with "Missing required
+    # parameter region", which then surfaces as a bogus STATUS 500 (UNKNOWN).
+    if location_scope in ("region", "zone"):
+        return []
+
     listed = resource.list(project_id=project_id, action_dict=scope_actions)
     if listed in ("Not Enabled", None):
         return []

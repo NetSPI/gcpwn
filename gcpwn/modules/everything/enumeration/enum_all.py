@@ -2017,17 +2017,22 @@ def run_module(user_args, session):
             print(f"[*] Skipping non-Resource-Manager modules for {current_project_id or 'N/A'} (not in allowlist scope).")
 
     completed_services = int(_ENUM_PROGRESS.get("index", 0) or 0)
+    # Count the final bindings step in the displayed denominator regardless of `more`
+    # (pass more=False here), matching the pre-RM `planned_services` estimate's
+    # int(last_run) term. Otherwise RM discovering extra projects (more=True) drops the
+    # bindings step only from the recompute, so the RM banner shows "1/67" while every
+    # later service shows "N/66". The real bindings-run gate below still uses true `more`.
     if run_non_rm_for_project:
         remaining_services = _count_non_rm_service_plan(
             args,
             every_flag_missing=every_flag_missing,
             first_run=first_run,
             last_run=last_run,
-            more=more,
+            more=False,
             enabled_keys=enabled_keys,
         )
     else:
-        remaining_services = int(last_run and not more)
+        remaining_services = int(last_run)
     _ENUM_PROGRESS["total"] = max(completed_services, completed_services + remaining_services)
 
     # Per-project resource enumerators run only in the 'services' phase

@@ -341,7 +341,10 @@ class AppEngineInstancesResource(_AppEngineBaseResource):
         parent = parent or f"apps/{project_id}/services/{service_id}/versions/{version_id}"
         project_id = project_id or self.project_id_from_name(parent)
         try:
-            request = self._appengine_admin_v1.ListInstancesRequest(parent=parent, page_size=200)
+            # instances.list caps page_size at 100 ("Page size should be between 1 and 100");
+            # unlike services/versions it rejects a larger value. The pager auto-paginates,
+            # so 100 still returns every instance.
+            request = self._appengine_admin_v1.ListInstancesRequest(parent=parent, page_size=100)
             rows = [resource_to_dict(instance) for instance in self.client.list_instances(request=request)]
             record_permissions(
                 action_dict,

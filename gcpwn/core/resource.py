@@ -305,11 +305,16 @@ class RestListResource(GcpListResource):
         """The parent path this service lists under. Override for non-regional APIs."""
         return f"projects/{project_id}/locations/{location}"
 
+    def _list_base_url(self, location: str | None) -> str:
+        """Base URL for the list request. Defaults to ``API_BASE``; override for services
+        whose endpoint is region-specific (the endpoint host must match the parent location)."""
+        return self.API_BASE
+
     def list(self, *, project_id=None, location=None, parent=None, action_dict=None, **_):
         scope = parent or self._rest_parent(project_id, location)
         rows = rest_list(
             self.session,
-            f"{self.API_BASE}/{scope}/{self.API_PATH}",
+            f"{self._list_base_url(location)}/{scope}/{self.API_PATH}",
             self.COLLECTION_KEY,
             api_name=self.LIST_PERMISSION or self.LIST_API_NAME,
             service_label=self.SERVICE_LABEL,

@@ -120,6 +120,8 @@ _BILLING_DISABLED_SUBSTRINGS = (
     "Billing is disabled",
     "billing has not been enabled",
     "billing account",
+    "requires billing to be enabled",
+    "enable billing on project",
 )
 
 _INVALID_LOCATION_SUBSTRINGS = (
@@ -197,6 +199,13 @@ def handle_service_error(
     if _FORBIDDEN_EXCEPTIONS and isinstance(exc, _FORBIDDEN_EXCEPTIONS):
         if is_api_disabled_error(exc):
             UtilityTools.print_403_api_disabled(service_label, project_id)
+            return "Not Enabled" if return_not_enabled else None
+        # Billing-disabled can arrive as a 403 (e.g. compute: "This API method requires
+        # billing to be enabled"). It is project-wide, so treat it like a disabled API and
+        # short-circuit the remaining locations instead of mislabeling it a 403 denial.
+        if any(s.lower() in str(exc).lower() for s in _BILLING_DISABLED_SUBSTRINGS):
+            print(f"{UtilityTools.YELLOW}[*] Billing disabled for project {project_id or resource_name}; "
+                  f"skipping remaining locations for {api_name}.{UtilityTools.RESET}")
             return "Not Enabled" if return_not_enabled else None
         UtilityTools.print_403_api_denied(api_name, resource_name=resource_name)
         # --stop-on-denied: treat the denial like a disabled API so region/zone fan-out

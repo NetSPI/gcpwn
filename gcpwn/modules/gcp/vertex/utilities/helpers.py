@@ -74,6 +74,20 @@ class _VertexRestResource(RestListResource):
     # service_runtime.rest_list). PAGE_SIZE stays 100, as this service always used.
     PAGE_SIZE = 100
 
+    def _list_base_url(self, location: str | None) -> str:
+        """Vertex AI list calls must hit the REGIONAL endpoint that matches the parent
+        location (``{region}-aiplatform.googleapis.com``) -- the bare global host rejects a
+        regional parent with "the provided location ID doesn't match the endpoint". The bare
+        host still serves the ``global`` location.
+        """
+        if not location or location == "global":
+            return self.API_BASE
+        return self.API_BASE.replace(
+            "https://aiplatform.googleapis.com",
+            f"https://{location}-aiplatform.googleapis.com",
+            1,
+        )
+
     def _normalize_rest_row(self, raw: dict[str, Any], *, location: str | None = None) -> dict[str, Any]:
         """Route list rows through this service's own ``_normalize``.
 
