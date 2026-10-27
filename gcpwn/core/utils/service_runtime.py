@@ -90,6 +90,8 @@ try:  # pragma: no cover
         BadRequest as _BadRequest,
         Forbidden as _Forbidden,
         NotFound as _NotFound,
+        ResourceExhausted as _ResourceExhausted,
+        TooManyRequests as _TooManyRequests,
         Unauthenticated as _Unauthenticated,
     )
 
@@ -97,11 +99,22 @@ try:  # pragma: no cover
     _NOTFOUND_EXCEPTIONS = (_NotFound,)
     _BAD_REQUEST_EXCEPTIONS = (_BadRequest,)
     _UNAUTHENTICATED_EXCEPTIONS = (_Unauthenticated,)
+    _RATE_LIMIT_EXCEPTIONS = (_ResourceExhausted, _TooManyRequests)
 except Exception:  # pragma: no cover
     _FORBIDDEN_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _NOTFOUND_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _BAD_REQUEST_EXCEPTIONS: tuple[type[BaseException], ...] = ()
     _UNAUTHENTICATED_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+    _RATE_LIMIT_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """True for a 429 quota/rate-limit error (google.api_core ResourceExhausted, or a
+    429/RATE_LIMIT_EXCEEDED surfaced in the message when the type was lost in wrapping)."""
+    if _RATE_LIMIT_EXCEPTIONS and isinstance(exc, _RATE_LIMIT_EXCEPTIONS):
+        return True
+    message = str(exc or "").lower()
+    return "rate_limit_exceeded" in message or "quota exceeded for quota metric" in message or message.startswith("429 ")
 
 
 def _is_unauthenticated_error(exc: Exception) -> bool:
@@ -233,6 +246,12 @@ def handle_service_error(
     # classify it as such instead of letting it fall through to the generic "STATUS 500 (UNKNOWN)".
     if _is_unauthenticated_error(exc):
         UtilityTools.print_401(resource_name, api_name, exc)
+        return None
+    # A 429 is a quota/rate-limit, not a server error -- report it as such (one line, no
+    # stack-trace-style 500) so a burst of throttled calls does not read as failures.
+    if _is_rate_limit_error(exc):
+        print(f"{UtilityTools.YELLOW}[!] RATE LIMIT (429) on {api_name} for {resource_name}; "
+              f"slow down (--threads) or retry later.{UtilityTools.RESET}")
         return None
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
@@ -495,6 +514,12 @@ def handle_discovery_error(
     if _is_unauthenticated_error(exc):
         UtilityTools.print_401(resource_name, api_name, exc)
         return None
+    # A 429 is a quota/rate-limit, not a server error -- report it as such (one line, no
+    # stack-trace-style 500) so a burst of throttled calls does not read as failures.
+    if _is_rate_limit_error(exc):
+        print(f"{UtilityTools.YELLOW}[!] RATE LIMIT (429) on {api_name} for {resource_name}; "
+              f"slow down (--threads) or retry later.{UtilityTools.RESET}")
+        return None
     UtilityTools.print_500(resource_name, api_name, exc)
     return None
 
@@ -609,7 +634,11 @@ def parse_component_args(
             action="store_true",
             help=help_text,
         )
-    add_standard_arguments(parser, standard_args or (), overrides=standard_arg_overrides)
+    # Every component module gets -v/--debug for free. Most modules historically omitted
+    # "debug" from standard_args, so `modules run <svc> --debug` errored with "unrecognized
+    # arguments". Dedup-merge it in (modules that already list it won't double-register).
+    effective_standard_args = tuple(dict.fromkeys([*(standard_args or ()), "debug"]))
+    add_standard_arguments(parser, effective_standard_args, overrides=standard_arg_overrides)
     if callable(add_extra_args):
         add_extra_args(parser)
     if not any(getattr(action, "dest", "") == "threads" for action in parser._actions):

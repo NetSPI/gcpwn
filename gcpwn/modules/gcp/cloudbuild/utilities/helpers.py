@@ -445,13 +445,23 @@ class CloudBuildBuildsResource(GcpListResource):
             request=self._v1.ListBuildsRequest(project_id=project_id, parent=parent, page_size=int(page_size or 50))
         )
 
-    def get(self, *, project_id: str | None = None, build_id: str = "", resource_id: str = "", action_dict=None, **_) -> dict[str, Any] | None:
+    def get(self, *, project_id: str | None = None, build_id: str = "", resource_id: str = "", location: str | None = None, action_dict=None, **_) -> dict[str, Any] | None:
         build_id = build_id or extract_path_segment(resource_id, "builds") or resource_id
         project_id = project_id or extract_project_id_from_resource(resource_id) or getattr(self.session, "project_id", None)
         if not build_id:
             return None
+        # Builds live in regional locations (us-central1, ...). The global
+        # get_build(project_id, id) only finds global builds, so it 404s on every
+        # regional build. When the location is known (resource_id carries the full
+        # projects/P/locations/L/builds/ID name, or it is passed explicitly), fetch by
+        # the location-qualified name instead.
+        location = (location or extract_location_from_resource_name(resource_id) or "").strip()
         try:
-            row = _normalize_build_row(resource_to_dict(self.client.get_build(project_id=project_id, id=build_id)))
+            if location and location != "global":
+                request = self._v1.GetBuildRequest(name=f"projects/{project_id}/locations/{location}/builds/{build_id}")
+                row = _normalize_build_row(resource_to_dict(self.client.get_build(request=request)))
+            else:
+                row = _normalize_build_row(resource_to_dict(self.client.get_build(project_id=project_id, id=build_id)))
             if row:
                 record_permissions(
                     action_dict,

@@ -56,8 +56,11 @@ def run_module(user_args, session):
     args = _parse_args(user_args)
     download_requested = getattr(args, "download", None) is not None
     if download_requested:
+        # list_builds already returns complete Build objects (steps, substitutions,
+        # service account, ...), and the download writes from those listed rows. Do NOT
+        # force --get: a per-build get() on every listed build ignores --download-limit
+        # and quickly trips Cloud Build's low "Get requests per minute" quota (429s).
         args.builds = True
-        args.get = True
 
     discovered = run_components(session, args, components=COMPONENTS, column_name="cloudbuild_actions_allowed",
                                 region_resolver=resolve_regions, module_name="enum_cloudbuild")
