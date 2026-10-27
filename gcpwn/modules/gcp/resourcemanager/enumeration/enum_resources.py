@@ -116,14 +116,31 @@ def _collect_resource_rows(
     allowed_ids: set[str] | None = None,
     enforce_scope: bool = False,
     failed_permission_writer=None,
+    ensure_ids: set[str] | None = None,
 ):
     rows = resource.search(debug=args.debug)
+    not_enabled = False
     if rows == "Not Enabled":
-        return {"rows": [], "scoped_rows": [], "not_enabled": True}
-    if not isinstance(rows, list):
-        return {"rows": [], "scoped_rows": [], "not_enabled": False}
+        rows, not_enabled = [], True
+    elif not isinstance(rows, list):
+        rows = []
 
     discovered_rows = list(rows or [])
+
+    # Ensure projects we already hold credentials for are covered even when
+    # projects.search() cannot see them. A narrowly-scoped credential (e.g. a custom
+    # role with only storage.buckets.create) has no resourcemanager.projects.get, so
+    # search() returns empty -- but projects.testIamPermissions still works without
+    # get, and that is exactly the permission-brute-force use case. Synthesize a row
+    # for each known id not already discovered so --iam tests it (and it lands in the
+    # hierarchy for downstream per-project enumeration).
+    if ensure_ids and component_key == "projects":
+        present = {_resource_id_from_row(row, component_key) for row in discovered_rows}
+        injected = [pid for pid in sorted(ensure_ids) if pid and pid not in present]
+        if injected:
+            print(f"[*] Including known project(s) for permission checks (not returned by search): {', '.join(injected)}")
+            discovered_rows.extend({"name": f"projects/{pid}", "project_id": pid} for pid in injected)
+
     if discovered_rows:
         resource.save(discovered_rows)
 
@@ -188,7 +205,7 @@ def _collect_resource_rows(
     return {
         "rows": discovered_rows,
         "scoped_rows": detailed_rows,
-        "not_enabled": False,
+        "not_enabled": not_enabled,
         "failed_permissions": failed_permissions or {},
     }
 
@@ -214,6 +231,20 @@ def run_module(user_args, session):
         print(f"[*] Folder ID filter active: {', '.join(sorted(allowed_folder_ids))}")
     if allowed_organization_ids:
         print(f"[*] Organization ID filter active: {', '.join(sorted(allowed_organization_ids))}")
+
+    # Projects we already hold a credential for -- the current/context project (set via
+    # `projects set` or the CLI's --project-id) plus any other known projects. These are
+    # ensured as targets so permission brute-forcing (and hierarchy coverage) works even
+    # when projects.search() can't see them (a scoped credential without
+    # resourcemanager.projects.get). An active allowlist scope still wins.
+    _placeholder_tokens = {"", "unknown", "n/a", "none", "null"}
+    known_project_ids: set[str] = set()
+    for candidate in [project_id, *(getattr(session, "global_project_list", None) or [])]:
+        token = str(candidate or "").strip()
+        if token and token.lower() not in _placeholder_tokens:
+            known_project_ids.add(token)
+    if allowlist_active and allowed_project_ids:
+        known_project_ids &= allowed_project_ids
 
     organizations_resource = ResourceManagerOrganizationsResource(session)
     folders_resource = ResourceManagerFoldersResource(session)
@@ -254,6 +285,7 @@ def run_module(user_args, session):
             action_dict=action_dict,
             allowed_ids=component_allowed_ids,
             enforce_scope=allowlist_active,
+            ensure_ids=(known_project_ids if component_key == "projects" else None),
             failed_permission_writer=failed_permission_writer,
         )
         resource_manager_disabled = bool(resource_manager_disabled or result["not_enabled"])
