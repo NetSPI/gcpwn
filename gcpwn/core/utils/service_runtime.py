@@ -37,9 +37,19 @@ from gcpwn.core.console import UtilityTools
 from gcpwn.core.utils.action_recording import has_recorded_actions
 
 
+# Signatures of a "service not enabled" 403 (vs a real permission denial). GCP surfaces a
+# disabled API several ways depending on the service/region/transport, so match any of
+# them -- missing a variant makes a disabled API read as a generic 403/500 and, in a
+# region fan-out, prints "not enabled" for EVERY region instead of short-circuiting once.
 _API_DISABLED_SUBSTRINGS = (
     "Enable it by visiting",
     "has not been used in project",
+    "Access Not Configured",
+    "accessNotConfigured",
+    "SERVICE_DISABLED",
+    "before or it is disabled",
+    "API is not enabled",
+    "has not been enabled",
 )
 
 # Cooperative cancellation. A single Ctrl+C in the REPL sets this flag so every

