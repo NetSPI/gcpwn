@@ -222,6 +222,11 @@ def handle_service_error(
     if _FORBIDDEN_EXCEPTIONS and isinstance(exc, _FORBIDDEN_EXCEPTIONS):
         if is_api_disabled_error(exc):
             UtilityTools.print_403_api_disabled(service_label, project_id)
+            # Show first line of GCP error — a dependency API (e.g. Cloud Build) may be the
+            # real culprit, not the service named in service_label.
+            raw_detail = str(exc).split("\n")[0].strip()
+            if raw_detail:
+                print(f"    Detail: {raw_detail}")
             return "Not Enabled" if return_not_enabled else None
         # Billing-disabled can arrive as a 403 (e.g. compute: "This API method requires
         # billing to be enabled"). It is project-wide, so treat it like a disabled API and
