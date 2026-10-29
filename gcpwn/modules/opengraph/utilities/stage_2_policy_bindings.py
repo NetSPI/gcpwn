@@ -268,7 +268,12 @@ def _compute_cf_build_capable_emails(
     """
     perms_by_email: dict[str, set[str]] = {}
     for row in raw_allow_bindings or []:
-        policy_raw = row.get("policy_json")
+        # Both the enumerated DB (iam_allow_policies) and the CAI file path store the
+        # raw allow-policy JSON under the key "policy". (The legacy "policy_json" key is
+        # kept only as a defensive fallback.) Reading "policy_json" alone silently matched
+        # nothing, leaving every SA non-build-capable and CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA
+        # unable to fire.
+        policy_raw = row.get("policy") or row.get("policy_json")
         policy = parse_json_value(policy_raw, default=None)
         if not isinstance(policy, dict):
             continue

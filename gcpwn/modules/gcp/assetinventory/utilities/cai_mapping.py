@@ -188,7 +188,11 @@ def cai_records_to_tables(records: Iterable[dict]) -> dict[str, list[dict]]:
         # --- typed resources OpenGraph expands ---
         if asset_type == "iam.googleapis.com/ServiceAccount":
             out["iam_service_accounts"].append({
+                # "type" must be present: OpenGraph SA-principal seeding and CRM principalSet
+                # expansion gate on row["type"] containing "service"; the live enum column
+                # value is "service_account".
                 "name": name, "email": str(data.get("email") or ""), "project_id": project_id,
+                "type": "service_account",
             })
         elif asset_type == "iam.googleapis.com/ServiceAccountKey":
             out["iam_sa_keys"].append({"name": name})
@@ -204,8 +208,11 @@ def cai_records_to_tables(records: Iterable[dict]) -> dict[str, list[dict]]:
                 if isinstance(sa, dict) and sa.get("email")
             ]
             out["cloudcompute_instances"].append({
+                # Key must be "service_accounts" (the live enum column) -- the compute->SA
+                # RunsAs/EXECUTES_WITH edge and the actAs combo target index read
+                # row["service_accounts"]; a list of email strings is accepted.
                 "name": name, "project_id": project_id,
-                "service_account_emails": json.dumps(sa_emails),
+                "service_accounts": json.dumps(sa_emails),
             })
         elif asset_type == "iam.googleapis.com/WorkloadIdentityPool":
             pool_id = extract_path_tail(name)
