@@ -1381,7 +1381,7 @@ class CloudComputeInstancesResource:
     """
 
     TABLE_NAME = "cloudcompute_instances"
-    COLUMNS = ["name", "zone", "status", "network_interfaces_output", "metadata_output"]
+    COLUMNS = ["name", "zone", "status", "network_interfaces", "metadata"]
     LIST_PERMISSION = "compute.instances.list"
     GET_PERMISSION = "compute.instances.get"
     START_PERMISSION = "compute.instances.start"

@@ -948,6 +948,7 @@ class CommandProcessor:
             ],
         )
 
+
     # -----------------------------
     # Config parsers
     # -----------------------------
@@ -1348,14 +1349,25 @@ class CommandProcessor:
             if project_id is not None:
                 updates["default_project"] = project_id
             delegates_arg = getattr(args, "delegates", None)
+            _reload_delegates = False
             if delegates_arg is not None:
                 if delegates_arg.strip() == "":
                     updates["delegates"] = None
                     print(f"{UtilityTools.GREEN}[*] Implicit delegation chain cleared for '{credname}'.{UtilityTools.RESET}")
+                    ans = self.session.choice_prompt(
+                        "Reload credential now to drop the delegation chain? [y/n] ",
+                        regex=r"^[yYnN]$",
+                    )
+                    _reload_delegates = str(ans or "").strip().lower() == "y"
                 else:
                     chain = [e.strip() for e in delegates_arg.split(",") if e.strip()]
                     updates["delegates"] = _json.dumps(chain)
                     print(f"{UtilityTools.GREEN}[*] Implicit delegation chain set: {' → '.join(chain)}{UtilityTools.RESET}")
+                    ans = self.session.choice_prompt(
+                        "Reload credential now to apply the new delegation chain? [y/n] ",
+                        regex=r"^[yYnN]$",
+                    )
+                    _reload_delegates = str(ans or "").strip().lower() == "y"
             if updates:
                 self.session.data_master.update_credential(
                     self.session.workspace_id,
@@ -1365,6 +1377,9 @@ class CommandProcessor:
                 non_delegate_keys = [k for k in updates if k != "delegates"]
                 if non_delegate_keys:
                     print(f"{UtilityTools.GREEN}[*] Updated '{credname}': {', '.join(non_delegate_keys)}{UtilityTools.RESET}")
+                if _reload_delegates:
+                    self.session.load_stored_creds(credname)
+                    print(f"{UtilityTools.GREEN}[*] Credential '{credname}' reloaded.{UtilityTools.RESET}")
             else:
                 print("[*] No changes made.")
             self.session.email = email
@@ -2060,6 +2075,7 @@ class CommandProcessor:
                 "sql": lambda: self.handle_sql_command(args),
                 "wipe-service": lambda: self.handle_wipe_service_command(args),
                 "delete-workspace": lambda: self.handle_delete_workspace_command(args),
+
             },
             unknown_message="[X] Unknown data subcommand.",
         )

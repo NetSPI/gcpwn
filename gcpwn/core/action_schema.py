@@ -70,15 +70,18 @@ ACTION_SERVICE_COLUMN_TO_RESOURCE_TYPE = {
     # ── compute / storage ─────────────────────────────────────────────────────
     "compute_actions_allowed": "computeinstance",
     "connectors_actions_allowed": "connectors",
+    "clouddomains_actions_allowed": "clouddomains",
     "datafusion_actions_allowed": "datafusion",
     "dataflow_actions_allowed": "dataflow",
     "dataform_actions_allowed": "dataform",
     "dataplex_actions_allowed": "dataplex",
     "dataproc_actions_allowed": "dataproc",
+    "datastream_actions_allowed": "datastream",
     "deploymentmanager_actions_allowed": "deploymentmanager",
     "developerconnect_actions_allowed": "connections",
     # ── E-F ───────────────────────────────────────────────────────────────────
     "eventarc_actions_allowed": "eventarc",
+    "filestore_actions_allowed": "filestore",
     "firebaseapphosting_actions_allowed": "firebaseapphosting",
     "firestore_actions_allowed": "firestore",
     "function_actions_allowed": "cloudfunction",

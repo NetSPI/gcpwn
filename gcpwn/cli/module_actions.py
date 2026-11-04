@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import io
+import sys
 import traceback
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Sequence
 
 from gcpwn.core.console import UtilityTools
@@ -58,6 +61,7 @@ class RunnerArgs:
     current_project: bool
     all_projects: bool
     passthrough: list[str] = field(default_factory=list)
+    log_output: str | None = None
 
 # (run_once, use_context_project, accepts_project_flags) tuple consumed by get_module_action.
 DEFAULT_MODULE_POLICY = (False, False, True)
@@ -65,6 +69,8 @@ MODULE_POLICY_REGISTRY: dict[str, tuple[bool, bool, bool]] = {
     "enum_resources": (True, True, True),
     "enum_gcp_policy_bindings": (True, True, True),
     "process_gcp_iam_bindings": (True, True, True),
+    "process_scope_creator": (True, True, True),
+    "process_download": (True, True, True),
     "process_og_gcpwn_data": (True, False, False),
     "process_og_node_color_images": (True, False, False),
     "process_og_attack_paths": (True, False, False),
@@ -137,6 +143,13 @@ def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
     )
     p.add_argument("--current-project", action="store_true", help="Target ONLY current session project (no prompts).")
     p.add_argument("--all-projects", action="store_true", help="Target ALL already-known projects (no prompts).")
+    p.add_argument(
+        "--log-output",
+        dest="log_output",
+        default=None,
+        help="Append all stdout/stderr from this module run to FILE (useful for post-run grep).",
+        metavar="FILE",
+    )
 
     known, rest = p.parse_known_args(list(argv or []))
     flattened_project_tokens = flatten_arg_groups(known.project_ids)
@@ -158,6 +171,7 @@ def _parse_runner_args(argv: Sequence[str]) -> RunnerArgs:
         current_project=known.current_project,
         all_projects=known.all_projects,
         passthrough=list(rest),
+        log_output=known.log_output or None,
     )
 
 @contextmanager
@@ -180,6 +194,66 @@ def _temporary_attr(obj: Any, attr: str, value: Any):
                 delattr(obj, attr)
         except Exception:
             pass
+
+
+class _TeeWriter(io.TextIOBase):
+    """Writes to both an original stream and a file handle simultaneously."""
+
+    def __init__(self, orig: Any, fh: Any) -> None:
+        self._orig = orig
+        self._fh = fh
+
+    def write(self, s: str) -> int:
+        try:
+            self._orig.write(s)
+            self._orig.flush()
+        except Exception:
+            pass
+        try:
+            self._fh.write(s)
+        except Exception:
+            pass
+        return len(s)
+
+    def flush(self) -> None:
+        try:
+            self._orig.flush()
+        except Exception:
+            pass
+        try:
+            self._fh.flush()
+        except Exception:
+            pass
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._orig, "encoding", None) or "utf-8"
+
+    @property
+    def errors(self) -> str:
+        return getattr(self._orig, "errors", None) or "replace"
+
+    def fileno(self) -> int:
+        return self._orig.fileno()
+
+    def isatty(self) -> bool:
+        return False
+
+
+@contextmanager
+def _stdout_tee(filepath: str):
+    """Tee sys.stdout and sys.stderr to filepath (append mode) while active."""
+    dest = Path(filepath)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    orig_out, orig_err = sys.stdout, sys.stderr
+    try:
+        with dest.open("a", encoding="utf-8", errors="replace") as fh:
+            sys.stdout = _TeeWriter(orig_out, fh)
+            sys.stderr = _TeeWriter(orig_err, fh)
+            yield dest
+    finally:
+        sys.stdout = orig_out
+        sys.stderr = orig_err
 
 
 def _parallel_services_count(passthrough_args: Sequence[str]) -> int:
@@ -631,6 +705,7 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
             print(f"{UtilityTools.RED}{UtilityTools.BOLD}[X] {e}{UtilityTools.RESET}")
             return -1
         passthrough_args = list(runner.passthrough)
+        log_output = runner.log_output
 
         module_import_path = str(module_path or "").replace("/", ".").strip()
         if not module_import_path:
@@ -736,88 +811,91 @@ def interact_with_module(session, module_path: str, module_args: Sequence[str]) 
 
         run_once, context_project_id, target_project_ids = plan
 
-        if run_once:
-            with _temporary_attr(session, "project_id", context_project_id) if context_project_id else nullcontext():
-                _callback, ok = _execute_module_for_project(
-                    session,
-                    run_module,
-                    mod_short=mod_short,
-                    project_id=None,
-                    passthrough_args=passthrough_args,
-                    run_index=0,
-                    run_total=1,
-                )
-            if not ok:
-                return -1
-            return int(_callback) if isinstance(_callback, int) else 0
+        with (_stdout_tee(log_output) if log_output else nullcontext()):
+            if log_output:
+                print(f"[*] Logging output to {log_output}")
+            if run_once:
+                with _temporary_attr(session, "project_id", context_project_id) if context_project_id else nullcontext():
+                    _callback, ok = _execute_module_for_project(
+                        session,
+                        run_module,
+                        mod_short=mod_short,
+                        project_id=None,
+                        passthrough_args=passthrough_args,
+                        run_index=0,
+                        run_total=1,
+                    )
+                if not ok:
+                    return -1
+                return int(_callback) if isinstance(_callback, int) else 0
 
-        original_project_id = session.project_id
-        failures: list[str] = []
-        pending_project_ids = list(target_project_ids)
-        index = 0
-        try:
-            while index < len(pending_project_ids):
-                project_id = pending_project_ids[index]
-                run_total = len(pending_project_ids)
-                print(
-                    f"{UtilityTools.BOLD}[*] Target project {index + 1}/{run_total}: "
-                    f"{project_id}{UtilityTools.RESET}"
-                )
-                callback, ok = _execute_module_for_project(
-                    session,
-                    run_module,
-                    mod_short=mod_short,
-                    project_id=project_id,
-                    passthrough_args=passthrough_args,
-                    run_index=index,
-                    run_total=run_total,
-                )
-                if not ok or callback == -1:
-                    failures.append(str(project_id))
+            original_project_id = session.project_id
+            failures: list[str] = []
+            pending_project_ids = list(target_project_ids)
+            index = 0
+            try:
+                while index < len(pending_project_ids):
+                    project_id = pending_project_ids[index]
+                    run_total = len(pending_project_ids)
+                    print(
+                        f"{UtilityTools.BOLD}[*] Target project {index + 1}/{run_total}: "
+                        f"{project_id}{UtilityTools.RESET}"
+                    )
+                    callback, ok = _execute_module_for_project(
+                        session,
+                        run_module,
+                        mod_short=mod_short,
+                        project_id=project_id,
+                        passthrough_args=passthrough_args,
+                        run_index=index,
+                        run_total=run_total,
+                    )
+                    if not ok or callback == -1:
+                        failures.append(str(project_id))
+                        index += 1
+                        continue
+                    if (
+                        callback == 2
+                        and mod_short in ("enum_all", "enum_gcp")
+                        and not runner.project_ids
+                        and not runner.current_project
+                    ):
+                        pending_project_ids = _normalize_project_ids(
+                            [*pending_project_ids, *(getattr(session, "global_project_list", []) or [])]
+                        )
                     index += 1
-                    continue
+
+                # enum_all (top orchestrator): after the GCP per-project loop, run the
+                # tenant-scoped Google Workspace phase ONCE. enum_gcp does not (GCP only);
+                # the --parallel-services path runs Workspace inside run_parallel instead.
+                # Skip when the user only wanted a listing/token operation (not enumeration).
+                _enum_all_list_flags = frozenset({"--list-modules", "--list-tokens"})
                 if (
-                    callback == 2
-                    and mod_short in ("enum_all", "enum_gcp")
-                    and not runner.project_ids
-                    and not runner.current_project
+                    mod_short == "enum_all"
+                    and not (_enum_all_list_flags & set(passthrough_args))
+                    and len(failures) < len(pending_project_ids)
                 ):
-                    pending_project_ids = _normalize_project_ids(
-                        [*pending_project_ids, *(getattr(session, "global_project_list", []) or [])]
-                    )
-                index += 1
+                    try:
+                        from gcpwn.modules.everything.enumeration.enum_google_workspace import (
+                            run_module as run_workspace_all,
+                        )
+                        print(f"{UtilityTools.BOLD}[*] enum_all | Google Workspace phase (tenant-scoped, once){UtilityTools.RESET}")
+                        ws_args = ["-v"] if ("-v" in passthrough_args or "--debug" in passthrough_args) else []
+                        if "--download-google-drive" in passthrough_args:
+                            ws_args.append("--download-google-drive")
+                        run_workspace_all(ws_args, session)
+                    except Exception:
+                        print(traceback.format_exc())
 
-            # enum_all (top orchestrator): after the GCP per-project loop, run the
-            # tenant-scoped Google Workspace phase ONCE. enum_gcp does not (GCP only);
-            # the --parallel-services path runs Workspace inside run_parallel instead.
-            # Skip when the user only wanted a listing/token operation (not enumeration).
-            _enum_all_list_flags = frozenset({"--list-modules", "--list-tokens"})
-            if (
-                mod_short == "enum_all"
-                and not (_enum_all_list_flags & set(passthrough_args))
-                and len(failures) < len(pending_project_ids)
-            ):
-                try:
-                    from gcpwn.modules.everything.enumeration.enum_google_workspace import (
-                        run_module as run_workspace_all,
+                if failures:
+                    print(
+                        f"{UtilityTools.YELLOW}[!] {mod_short} completed with failures on "
+                        f"{len(failures)}/{len(pending_project_ids)} target projects.{UtilityTools.RESET}"
                     )
-                    print(f"{UtilityTools.BOLD}[*] enum_all | Google Workspace phase (tenant-scoped, once){UtilityTools.RESET}")
-                    ws_args = ["-v"] if ("-v" in passthrough_args or "--debug" in passthrough_args) else []
-                    if "--download-google-drive" in passthrough_args:
-                        ws_args.append("--download-google-drive")
-                    run_workspace_all(ws_args, session)
-                except Exception:
-                    print(traceback.format_exc())
-
-            if failures:
-                print(
-                    f"{UtilityTools.YELLOW}[!] {mod_short} completed with failures on "
-                    f"{len(failures)}/{len(pending_project_ids)} target projects.{UtilityTools.RESET}"
-                )
-                return -1
-            return 0
-        finally:
-            session.project_id = original_project_id
+                    return -1
+                return 0
+            finally:
+                session.project_id = original_project_id
 
     except KeyboardInterrupt:
         return 0

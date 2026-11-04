@@ -87,6 +87,7 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("asset_inventory", "--asset-inventory"),
     ("eventarc", "--eventarc"),
     ("workstations", "--workstations"),
+    ("filestore", "--filestore"),
     ("cloud_billing", "--cloud-billing"),
     ("cloud_shell", "--cloud-shell"),
     ("cloud_logging", "--cloud-logging"),
@@ -115,6 +116,8 @@ _PARALLEL_SERVICES: tuple[tuple[str, str], ...] = (
     ("secure_source_manager", "--secure-source-manager"),
     ("developer_connect", "--developer-connect"),
     ("private_ca", "--private-ca"),
+    ("datastream", "--datastream"),
+    ("cloud_domains", "--cloud-domains"),
 )
 
 # Umbrella / once-per-run selectors that aren't in _PARALLEL_SERVICES but are still
@@ -193,6 +196,8 @@ _MODULE_TOKEN_ALIASES: dict[str, str] = {
     "ssm": "secure_source_manager", "securesourcemanager": "secure_source_manager",
     "developerconnect": "developer_connect", "devconnect": "developer_connect",
     "privateca": "private_ca", "certificateauthority": "private_ca", "cas": "private_ca",
+    "datastream": "datastream",
+    "domains": "cloud_domains", "clouddomains": "cloud_domains",
 }
 
 
@@ -293,6 +298,7 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "orgpolicy": ("orgpolicy.googleapis.com",),
     "eventarc": ("eventarc.googleapis.com",),
     "workstations": ("workstations.googleapis.com",),
+    "filestore": ("file.googleapis.com",),
     "dataproc": ("dataproc.googleapis.com",),
     "dataflow": ("dataflow.googleapis.com",),
     "notebooks": ("notebooks.googleapis.com",),
@@ -318,6 +324,8 @@ _SERVICE_ENABLED_API: dict[str, tuple[str, ...]] = {
     "secure_source_manager": ("securesourcemanager.googleapis.com",),
     "developer_connect": ("developerconnect.googleapis.com",),
     "private_ca": ("privateca.googleapis.com",),
+    "datastream": ("datastream.googleapis.com",),
+    "cloud_domains": ("domains.googleapis.com",),
 }
 
 # Under --filter-enabled-services these run REGARDLESS of the enabled-API probe:
@@ -466,6 +474,8 @@ _SERVICES: tuple[ServiceSpec, ...] = (
                 threads=True, regions=True),
     ServiceSpec(("workstations",), "gcpwn.modules.gcp.workstations.enumeration.enum_workstations",
                 threads=True, regions=True),
+    ServiceSpec(("filestore",), "gcpwn.modules.gcp.filestore.enumeration.enum_filestore",
+                threads=True, regions=True),
     ServiceSpec(("cloud_billing",), "gcpwn.modules.gcp.billing.enumeration.enum_billing", get=False),
     ServiceSpec(("cloud_shell",), "gcpwn.modules.gcp.cloudshell.enumeration.enum_cloudshell", get=False),
     ServiceSpec(("cloud_logging",), "gcpwn.modules.gcp.logging.enumeration.enum_logging", get=False),
@@ -514,6 +524,12 @@ _SERVICES: tuple[ServiceSpec, ...] = (
                 threads=True, regions=True),
     ServiceSpec(("private_ca",), "gcpwn.modules.gcp.privateca.enumeration.enum_privateca",
                 threads=True, regions=True, iam=True),
+    ServiceSpec(("datastream",), "gcpwn.modules.gcp.datastream.enumeration.enum_datastream",
+                threads=True, regions=True, iam=True, download_output=True,
+                downloads=((("datastream_connection_profiles",), ("--download",)),)),
+    ServiceSpec(("cloud_domains",), "gcpwn.modules.gcp.clouddomains.enumeration.enum_clouddomains",
+                iam=True, download_output=True,
+                downloads=((("clouddomains_contacts",), ("--download",)),)),
 )
 
 
@@ -616,6 +632,7 @@ _SERVICE_NAME_OVERRIDES = {
     "enum_asset_inventory": "Cloud Asset Inventory",
     "enum_eventarc": "Eventarc",
     "enum_workstations": "Cloud Workstations",
+    "enum_filestore": "Cloud Filestore",
     "enum_billing": "Cloud Billing",
     "enum_cloudshell": "Cloud Shell",
     "enum_logging": "Cloud Logging",
@@ -645,6 +662,8 @@ _SERVICE_NAME_OVERRIDES = {
     "enum_securesourcemanager": "Secure Source Manager",
     "enum_developerconnect": "Developer Connect",
     "enum_privateca": "Certificate Authority Service",
+    "enum_datastream": "Datastream",
+    "enum_clouddomains": "Cloud Domains",
 }
 
 DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
@@ -655,7 +674,7 @@ DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
         "cloudtasks_requests",
         "cloudrun_revision_env",
         "clouddns_record_sets",
-
+        "clouddomains_contacts",
     },
     "content": {
         "buckets",
@@ -669,6 +688,7 @@ DOWNLOAD_CATEGORY_TOKENS: dict[str, set[str]] = {
         "artifactregistry_files",
         "batch_scripts",
         "apikeys_content",
+        "datastream_connection_profiles",
     },
 }
 

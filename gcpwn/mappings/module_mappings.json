@@ -413,6 +413,16 @@
             "module_name": "process_gcp_iam_bindings",
             "info_blurb": "Review org-wide security issues that might arise mainly with roles/permissions. Export the data to a csv or txt with --csv or --txt respectively. Note this will handle both convenience and custom roles in addition to normal predefined GCP roles, but not constraints or anything more advanced.",
             "location": "gcpwn.modules.everything.process.process_gcp_iam_bindings"
+          },
+          {
+            "module_name": "process_scope_creator",
+            "info_blurb": "Extract all external-facing URLs and IPs across the workspace DB (Cloud Run, Cloud Functions, App Engine, GKE, Cloud SQL, Compute external IPs, LB rules, AlloyDB, API Gateway, Data Fusion, Managed Kafka, Cloud Shell, Workstations, Service Directory, VPN peers, NAT IPs, Memorystore, Cloud DNS). Outputs scope_creator.csv (resource_type, resource_id, url_or_ip, is_public, dns columns) and dangling_dns.csv (A/CNAME records pointing to IPs not found anywhere else in the org DB). Use --output to set the output directory.",
+            "location": "gcpwn.modules.everything.process.process_scope_creator"
+          },
+          {
+            "module_name": "process_download",
+            "info_blurb": "Download content for already-enumerated GCP resources from the workspace DB. Same token vocabulary as enum_all --download (all/metadata/content or individual tokens: secrets, function_env, cloudrun_revision_env, batch_scripts, apikeys_content, datastream_connection_profiles, clouddomains_contacts, buckets, function_source, bigquery_tables, compute_serial, compute_screenshot, compute_user_data, artifactregistry_files, cloudbuild_builds, cloudtasks_requests, composer_configs, clouddns_record_sets, firestore_data). Use --projects to restrict to specific project IDs.",
+            "location": "gcpwn.modules.everything.process.process_download"
           }
         ]
       }
@@ -794,6 +804,18 @@
             "module_name": "exploit_workstation_as_sa",
             "info_blurb": "Privilege escalation via Cloud Workstations: create a workstation config + workstation running as the target SA; extract its OAuth2 token via container boot startup or Cloud Logging. REQUIRES workstations.workstationConfigs.create + workstations.workstations.create + iam.serviceAccounts.actAs on target SA.",
             "location": "gcpwn.modules.gcp.workstations.exploit.exploit_workstation_as_sa"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Filestore",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_filestore",
+            "info_blurb": "Enumerate Cloud Filestore instances, snapshots, and backups across supported locations.",
+            "location": "gcpwn.modules.gcp.filestore.enumeration.enum_filestore"
           }
         ]
       }
@@ -1249,6 +1271,30 @@
             "module_name": "enum_privateca",
             "info_blurb": "Enumerate Private CA Service CA pools and certificate authorities. CA pool access (privateca.caPools.use) = cert issuance = TLS identity forgery for internal mTLS-protected services. Supports testIamPermissions on CA pools.",
             "location": "gcpwn.modules.gcp.privateca.enumeration.enum_privateca"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Datastream",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_datastream",
+            "info_blurb": "Enumerate Datastream connection profiles (source/destination DB credentials), streams, private connections (VPC peering), and routes. Use --download to save connection profile credential details (hostname, port, username, SSH/TLS config) to JSON files.",
+            "location": "gcpwn.modules.gcp.datastream.enumeration.enum_datastream"
+          }
+        ]
+      }
+    },
+    {
+      "service": "Cloud Domains",
+      "categories": {
+        "Enumeration": [
+          {
+            "module_name": "enum_clouddomains",
+            "info_blurb": "Enumerate Cloud Domains domain registrations (domain name, expiry, state, DNS config, registrant contact info). Use --download to save registrant/admin/technical contact settings (name, email, phone, address) to JSON files.",
+            "location": "gcpwn.modules.gcp.clouddomains.enumeration.enum_clouddomains"
           }
         ]
       }

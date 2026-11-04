@@ -28,6 +28,8 @@ google-cloud-config==0.7.2
 google-cloud-data-fusion==1.18.0
 google-cloud-dataform==0.11.4
 google-cloud-dataplex==2.21.0
+google-cloud-datastream==1.21.0
+google-cloud-domains==1.15.0
 google-cloud-container==2.67.0
 google-cloud-dataflow-client==0.14.1
 google-cloud-dataproc==5.32.0

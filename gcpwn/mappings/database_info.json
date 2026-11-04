@@ -23,7 +23,8 @@
         "versioning_enabled",
         "labels",
         "iam_policy",
-        "external_curl"
+        "external_curl",
+        "raw_json"
       ],
       "primary_keys": [
         "project_id",
@@ -2868,6 +2869,69 @@
       ]
     },
     {
+      "table_name": "filestore_instances",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "state",
+        "status_message",
+        "create_time",
+        "tier",
+        "labels",
+        "kms_key_name",
+        "protocol",
+        "deletion_protection_enabled",
+        "deletion_protection_reason",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "filestore_snapshots",
+      "columns": [
+        "project_id",
+        "name",
+        "instance_name",
+        "description",
+        "state",
+        "create_time",
+        "labels",
+        "filesystem_used_bytes",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
+      "table_name": "filestore_backups",
+      "columns": [
+        "project_id",
+        "name",
+        "description",
+        "state",
+        "create_time",
+        "labels",
+        "capacity_gb",
+        "storage_bytes",
+        "source_instance",
+        "source_file_share",
+        "source_instance_tier",
+        "kms_key",
+        "file_system_protocol",
+        "raw_json"
+      ],
+      "primary_keys": [
+        "project_id",
+        "name"
+      ]
+    },
+    {
       "table_name": "billing_accounts",
       "columns": [
         "project_id",
@@ -4127,6 +4191,49 @@
         "project_id",
         "name"
       ]
+    },
+    {
+      "table_name": "datastream_connection_profiles",
+      "columns": [
+        "project_id", "location", "name", "display_name", "create_time", "update_time",
+        "labels", "state", "profile_type", "hostname", "port", "username",
+        "has_forward_ssh", "has_private_connectivity", "raw_json"
+      ],
+      "primary_keys": ["project_id", "name"]
+    },
+    {
+      "table_name": "datastream_streams",
+      "columns": [
+        "project_id", "location", "name", "display_name", "create_time", "update_time",
+        "labels", "state", "source_connection_profile", "destination_connection_profile",
+        "customer_managed_encryption_key", "raw_json"
+      ],
+      "primary_keys": ["project_id", "name"]
+    },
+    {
+      "table_name": "datastream_private_connections",
+      "columns": [
+        "project_id", "location", "name", "display_name", "create_time", "update_time",
+        "labels", "state", "vpc_peering_config", "raw_json"
+      ],
+      "primary_keys": ["project_id", "name"]
+    },
+    {
+      "table_name": "datastream_routes",
+      "columns": [
+        "project_id", "name", "display_name", "create_time", "update_time",
+        "labels", "destination_address", "destination_port", "private_connection_name", "raw_json"
+      ],
+      "primary_keys": ["project_id", "name"]
+    },
+    {
+      "table_name": "clouddomains_registrations",
+      "columns": [
+        "project_id", "name", "domain_name", "create_time", "expire_time", "state",
+        "issues", "labels", "renewal_method", "transfer_lock_state",
+        "dns_config_type", "registrant_email", "raw_json"
+      ],
+      "primary_keys": ["project_id", "name"]
     }
   ]
 }
