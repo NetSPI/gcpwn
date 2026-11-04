@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 import pytest
 
-from gcpwn.core.resource import RestListResource
 from gcpwn.modules.gcp.vertex.utilities import helpers as vertex_helpers
 
 
