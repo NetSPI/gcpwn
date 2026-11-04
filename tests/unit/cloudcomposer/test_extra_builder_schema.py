@@ -115,9 +115,14 @@ def test_save_with_dag_gcs_prefix_does_not_inject_unknown_column():
     with patch("gcpwn.modules.gcp.cloudcomposer.utilities.helpers.save_to_table") as mock_save:
         r.save([row], project_id="proj", location="us-central1")
         assert mock_save.called
-        # Verify extra_builder key is NOT being blocked (it was before schema fix)
-        call_kwargs = mock_save.call_args
-        assert call_kwargs is not None
+        _, kw = mock_save.call_args
+        eb = kw.get("extra_builder")
+        assert eb is not None, "save_to_table must receive an extra_builder"
+        extra = eb(row, row)
+        assert extra.get("dag_gcs_prefix") == "gs://us-central1-my-env-abc123/dags", (
+            "extra_builder must expose dag_gcs_prefix; this column caused "
+            "sqlite3.OperationalError before the schema fix"
+        )
 
 
 def test_save_extra_builder_keys_in_schema():

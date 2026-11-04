@@ -1,91 +1,12 @@
-"""Regression tests for compute regional resource enumeration.
+"""Regression test for compute regional resource enumeration.
 
-Bug: region_disks, region_instant_snapshots, and resource_policies used
-`explicit_region_scope and regions` as the condition to fan out per-region.
-Because `explicit_region_scope` is only True when the user explicitly passes
---all-regions / --regions-list / --regions-file, the per-region path was dead
-in normal invocations. The fallback called `.list(project_id=...)` without a
-region; those three resources have no `aggregated_list`, so they silently
-returned [].
-
-Fix: the condition is now `if regions else ...` — the per-region fan-out fires
-whenever `regions` is non-empty (populated by `_resolve_regions` with
-`require_all=True` for any selected regional component).
+Region-scoped resources (region_disks, region_instant_snapshots, resource_policies)
+have no aggregated_list, so calling .list() without a region silently returns [].
+The per-region fan-out must fire whenever a non-empty regions list is resolved,
+not only when the user explicitly passes --all-regions.
 """
 
 from __future__ import annotations
-
-import ast
-from pathlib import Path
-
-ENUM_FILE = Path(__file__).resolve().parents[3] / "gcpwn" / "modules" / "gcp" / "cloudcompute" / "enumeration" / "enum_cloudcompute_resources.py"
-
-# The three resources that have no aggregated_list and need the per-region fan-out
-AFFECTED_RESOURCES = (
-    "region_disks_resource",
-    "region_instant_snapshots_resource",
-    "resource_policies_resource",
-)
-
-
-def _find_conditional_patterns(source: str, resource_name: str) -> list[str]:
-    """Return all ternary `... if <cond> else <resource_name>.list(...)` patterns
-    that contain `resource_name` in the else branch, capturing the condition."""
-    # Walk AST to find IfExp nodes whose orelse is a Call whose func resolves to
-    # `resource_name.list`.
-    tree = ast.parse(source)
-    conditions = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.IfExp):
-            continue
-        orelse = node.orelse
-        if not isinstance(orelse, ast.Call):
-            continue
-        func = orelse.func
-        if not (isinstance(func, ast.Attribute)
-                and func.attr == "list"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == resource_name):
-            continue
-        # Found: capture the condition as unparsed source
-        conditions.append(ast.unparse(node.test))
-    return conditions
-
-
-def test_region_disks_condition_does_not_require_explicit_scope():
-    source = ENUM_FILE.read_text()
-    conds = _find_conditional_patterns(source, "region_disks_resource")
-    assert conds, "No ternary with region_disks_resource in else-branch found"
-    for cond in conds:
-        assert "explicit_region_scope" not in cond, (
-            f"region_disks uses 'explicit_region_scope' in its list condition: {cond!r}\n"
-            "This silently returns [] on normal runs — condition must be just 'if regions'."
-        )
-        assert "regions" in cond, (
-            f"region_disks condition {cond!r} doesn't gate on 'regions'; fan-out may not fire."
-        )
-
-
-def test_region_instant_snapshots_condition_does_not_require_explicit_scope():
-    source = ENUM_FILE.read_text()
-    conds = _find_conditional_patterns(source, "region_instant_snapshots_resource")
-    assert conds, "No ternary with region_instant_snapshots_resource in else-branch found"
-    for cond in conds:
-        assert "explicit_region_scope" not in cond, (
-            f"region_instant_snapshots uses 'explicit_region_scope': {cond!r}\n"
-            "Fix: use 'if regions' so fan-out fires even without --all-regions."
-        )
-
-
-def test_resource_policies_condition_does_not_require_explicit_scope():
-    source = ENUM_FILE.read_text()
-    conds = _find_conditional_patterns(source, "resource_policies_resource")
-    assert conds, "No ternary with resource_policies_resource in else-branch found"
-    for cond in conds:
-        assert "explicit_region_scope" not in cond, (
-            f"resource_policies uses 'explicit_region_scope': {cond!r}\n"
-            "Fix: use 'if regions' so fan-out fires even without --all-regions."
-        )
 
 
 def test_gapic_resource_list_without_region_returns_empty_for_no_aggregated_list():

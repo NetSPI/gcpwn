@@ -12,9 +12,11 @@ from gcpwn.core.utils.resume import RunLedger, resolve_run_token, strip_resume_f
 
 
 def test_resolve_run_token_fresh_vs_resume():
+    from datetime import datetime
+
     token, is_resume = resolve_run_token(["--iam", "--parallel-services", "8"])
     assert is_resume is False
-    assert token.isdigit() and len(token) == 14  # fresh UTC-timestamp token
+    datetime.strptime(token, "%Y%m%d%H%M%S")  # raises ValueError if format changes
 
     token2, is_resume2 = resolve_run_token(["--resume", "20260101120000", "--iam"])
     assert is_resume2 is True and token2 == "20260101120000"

@@ -26,6 +26,15 @@ def test_key_module_helpers_project_and_location_extraction() -> None:
     resource_name = "projects/demo-project/zones/us-central1-a/instances/vm-1"
     assert extract_project_id_from_resource(resource_name) == "demo-project"
     assert extract_location_from_resource_name(resource_name, include_zones=True) == "us-central1-a"
+    # Without include_zones, the zone is not surfaced (only /locations/ segments are)
+    assert extract_location_from_resource_name(resource_name, include_zones=False) == ""
+
+
+def test_key_module_helpers_location_segment_always_returned() -> None:
+    # Resources using /locations/ are returned regardless of include_zones
+    name = "projects/demo-project/locations/us-central1/services/my-service"
+    assert extract_location_from_resource_name(name, include_zones=True) == "us-central1"
+    assert extract_location_from_resource_name(name, include_zones=False) == "us-central1"
 
 
 def test_key_module_helpers_bigquery_table_parsing() -> None:

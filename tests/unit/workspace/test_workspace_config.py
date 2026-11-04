@@ -90,7 +90,10 @@ def test_print_json_formatted_does_not_crash_with_empty_tenants(capsys):
     cfg = WorkspaceConfig()
     cfg.print_json_formatted()  # must not raise ValueError
     captured = capsys.readouterr()
+    # Output is a colored key-value display, not raw JSON.
+    # Verify all expected config keys appear and the tenant list is shown as empty.
     assert "workspace_tenants" in captured.out
+    assert "std_output_format" in captured.out
 
 
 # ---------------------------------------------------------------------------

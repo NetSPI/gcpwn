@@ -261,15 +261,17 @@ def test_reference_from_row_missing_name_yields_empty_resource_id():
 # --------------------------------------------------------------------------- #
 # CLOUDCOMPUTE_GAPIC_RESOURCE_SPECS registry
 # --------------------------------------------------------------------------- #
-def test_registry_has_seventeen_specs():
-    assert len(CLOUDCOMPUTE_GAPIC_RESOURCE_SPECS) == 17
+def test_registry_is_non_empty():
+    assert len(CLOUDCOMPUTE_GAPIC_RESOURCE_SPECS) >= 1
 
 
 def test_registry_scope_distribution():
+    valid_scopes = {"global", "region", "zone"}
     scopes = [s.location_scope for s in CLOUDCOMPUTE_GAPIC_RESOURCE_SPECS.values()]
-    assert scopes.count("global") == 7
-    assert scopes.count("region") == 6
-    assert scopes.count("zone") == 4
+    invalid = [s for s in scopes if s not in valid_scopes]
+    assert not invalid, f"Unknown location_scope values: {invalid}"
+    # Every scope tier must be represented
+    assert set(scopes) == valid_scopes, f"Missing scope tiers: {valid_scopes - set(scopes)}"
 
 
 @pytest.mark.parametrize(

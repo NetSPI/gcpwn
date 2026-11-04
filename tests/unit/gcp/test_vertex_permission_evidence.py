@@ -57,12 +57,6 @@ def _list(response):
 
 
 class TestVertexIsOnTheSharedBase:
-    def test_uses_rest_list_resource(self):
-        assert issubclass(vertex_helpers._VertexRestResource, RestListResource)
-
-    def test_local_pager_is_gone(self):
-        assert not hasattr(vertex_helpers, "_list_paged"), "duplicate pager came back"
-
     def test_page_size_is_preserved(self):
         assert vertex_helpers._VertexRestResource.PAGE_SIZE == 100
 

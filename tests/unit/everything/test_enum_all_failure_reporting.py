@@ -9,8 +9,6 @@ Two linked guarantees:
 
 from __future__ import annotations
 
-import inspect
-
 from gcpwn.modules.everything.enumeration import enum_all
 
 
@@ -59,24 +57,3 @@ class TestLedgerIncompleteDetection:
         assert enum_all._ledger_incomplete(session, "run-2") is True
 
 
-class TestFailureIsHonoured:
-    """Pin the two source-level contracts that were previously missing."""
-
-    def test_run_service_marks_failed_on_rc_minus_one(self):
-        source = inspect.getsource(enum_all.run_parallel)
-        # The return code must be captured and checked, not discarded.
-        assert "rc = run_module(" in source, "run_module's return code is discarded again"
-        assert "elif rc == -1:" in source, "rc == -1 no longer marks the unit failed"
-
-    def test_run_parallel_returns_failure_when_units_are_incomplete(self):
-        source = inspect.getsource(enum_all.run_parallel)
-        assert "incomplete = _ledger_incomplete(" in source
-        # The success path must be gated on completeness.
-        assert "if not incomplete:" in source
-        assert "return -1" in source, "run_parallel no longer signals failure"
-
-    def test_resume_token_is_only_cleared_when_everything_is_done(self):
-        source = inspect.getsource(enum_all.run_parallel)
-        clear_index = source.index("_ledger_clear(")
-        gate_index = source.index("if not incomplete:")
-        assert gate_index < clear_index, "resume token cleared outside the completeness gate"

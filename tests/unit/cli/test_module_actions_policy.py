@@ -5,6 +5,9 @@ how every module is dispatched.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from gcpwn.cli.module_actions import (
     _is_unauth_module,
     _should_prompt_all_projects,
@@ -15,19 +18,20 @@ _UNAUTH = "gcpwn.modules.gcp.cloudfunctions.unauthenticated.unauth_functionbrute
 _ENUM = "gcpwn.modules.gcp.iam.enumeration.enum_iam"
 _EXPLOIT = "gcpwn.modules.gcp.iam.exploit.exploit_service_account_keys"
 
-# All Workspace-tenant modules share the same run-once / no-project-flags policy.
-_WORKSPACE_MODULE_PATHS = [
-    "gcpwn.modules.everything.enumeration.enum_google_workspace",
-    "gcpwn.modules.workspace.cloud_identity.enumeration.enum_cloud_identity",
-    "gcpwn.modules.workspace.apps.drive.enumeration.enum_drive",
-    "gcpwn.modules.workspace.directory.enumeration.enum_admin_roles",
-    "gcpwn.modules.workspace.directory.enumeration.enum_org_units",
-    "gcpwn.modules.workspace.directory.enumeration.enum_domains",
-    "gcpwn.modules.workspace.directory.enumeration.enum_mobile_devices",
-    "gcpwn.modules.workspace.directory.enumeration.enum_oauth_tokens",
-    "gcpwn.modules.workspace.groups_settings.enumeration.enum_group_settings",
-    "gcpwn.modules.workspace.data_transfer.enumeration.enum_data_transfers",
-]
+
+def _workspace_module_paths() -> list[str]:
+    """Derive workspace module paths from module_mappings.json so new modules are auto-covered."""
+    _ROOT = Path(__file__).resolve().parents[3]
+    data = json.loads((_ROOT / "gcpwn" / "mappings" / "module_mappings.json").read_text())
+    paths = []
+    for svc in data.get("services", []):
+        for cat_mods in svc.get("categories", {}).values():
+            for m in cat_mods:
+                loc = m.get("location", "")
+                if ".workspace." in loc or "enum_google_workspace" in loc:
+                    paths.append(loc)
+    assert paths, "no workspace modules found in module_mappings.json"
+    return sorted(paths)
 
 
 def test_is_unauth_module_detects_prefix_and_path_segment():
@@ -63,7 +67,7 @@ def test_workspace_modules_run_once_no_project_flags():
     not apply to them. Regression guard for the MODULE_POLICY_REGISTRY gap where these
     modules fell back to DEFAULT_MODULE_POLICY (per-project, with project flags).
     """
-    for path in _WORKSPACE_MODULE_PATHS:
+    for path in _workspace_module_paths():
         action = get_module_action(path)
         short = path.rsplit(".", 1)[-1]
         assert action.run_once is True, f"{short}: expected run_once=True, got False"

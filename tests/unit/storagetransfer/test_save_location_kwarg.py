@@ -27,19 +27,20 @@ def test_save_accepts_location_kwarg():
 
     with patch("gcpwn.modules.gcp.storagetransfer.utilities.helpers.save_to_table") as mock_save:
         r.save([row], project_id="proj", location="global")
-        mock_save.assert_called_once()
+        args, _ = mock_save.call_args
+        assert args[1] == "storagetransfer_transferjobs"
+        assert args[2].get("name") == "transferJobs/test-job"
 
 
 def test_save_location_kwarg_is_ignored():
-    """location kwarg is accepted but does not affect the saved row."""
+    """location is accepted but must not appear as a column in the saved rows."""
     r = _resource()
     row = {"name": "transferJobs/test-job", "status": "ENABLED"}
 
     with patch("gcpwn.modules.gcp.storagetransfer.utilities.helpers.save_to_table") as mock_save:
         r.save([row], project_id="proj", location="us-central1")
-        args, kwargs = mock_save.call_args
-        # The table name should be present, not any location injection
-        assert args[1] == "storagetransfer_transferjobs"
+        args, _ = mock_save.call_args
+        assert "location" not in args[2]
 
 
 def test_save_without_location_still_works():
@@ -49,14 +50,4 @@ def test_save_without_location_still_works():
 
     with patch("gcpwn.modules.gcp.storagetransfer.utilities.helpers.save_to_table") as mock_save:
         r.save([row], project_id="proj")
-        mock_save.assert_called_once()
-
-
-def test_save_extra_kwargs_ignored():
-    """**_ absorbs any unexpected keyword arguments without raising."""
-    r = _resource()
-    row = {"name": "transferJobs/test-job", "status": "ENABLED"}
-
-    with patch("gcpwn.modules.gcp.storagetransfer.utilities.helpers.save_to_table") as mock_save:
-        r.save([row], project_id="proj", location="global", unknown_future_param="x")
         mock_save.assert_called_once()

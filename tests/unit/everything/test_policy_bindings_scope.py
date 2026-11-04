@@ -63,7 +63,16 @@ def test_scope_none_sweeps_everything_and_syncs_users() -> None:
     session, tree_levels, _project_node, resource_loads = _run_scope(None)
     joined = " ".join(level or "" for level in tree_levels)
     assert "org" in joined and "folder" in joined and "project" in joined
-    assert len(resource_loads) > 5  # every resource table is loaded
+    loaded_tables = {table for table, *_ in resource_loads}
+    for expected in (
+        "iam_service_accounts",
+        "cloudstorage_buckets",
+        "cloudrun_services",
+        "cloudfunctions_functions",
+        "cloudcompute_instances",
+        "secretsmanager_secrets",
+    ):
+        assert expected in loaded_tables, f"scope=None must query {expected!r}"
     assert all(where is None and params == () for _t, _c, where, params in resource_loads)
     assert session.sync_users_calls == 1
 

@@ -32,6 +32,7 @@ def appengine(monkeypatch):
         GetServiceRequest=_Request("GetServiceRequest"),
         GetVersionRequest=_Request("GetVersionRequest"),
         GetInstanceRequest=_Request("GetInstanceRequest"),
+        GetApplicationRequest=_Request("GetApplicationRequest"),
         ServicesClient=lambda credentials=None: None,
         VersionsClient=lambda credentials=None: None,
         InstancesClient=lambda credentials=None: None,
@@ -113,5 +114,9 @@ class TestEachCollectionUsesItsOwnCall:
 
     def test_apps_resource_keeps_its_own_get(self, appengine):
         """The singleton Application has a different signature and must not be folded."""
-        helpers, _stub, _recorded = appengine
-        assert "project_id" in helpers.AppEngineAppsResource.get.__code__.co_varnames
+        helpers, stub, recorded = appengine
+        cls = helpers.AppEngineAppsResource
+        resource = _probe(helpers, cls, "get_application", recorded)
+        resource._appengine_admin_v1 = stub
+        row = resource.get(project_id="my-project", action_dict={})
+        assert row == {"name": "apps/my-project"}

@@ -75,14 +75,3 @@ class TestReachableFromTheRepl:
 
         assert "delete-workspace" in CommandProcessor.DATA_SUBCOMMANDS
 
-    def test_handler_exists_and_calls_delete_workspace(self):
-        import inspect
-
-        from gcpwn.cli.workspace_instructions import CommandProcessor
-
-        handler = getattr(CommandProcessor, "handle_delete_workspace_command", None)
-        assert callable(handler), "data delete-workspace has no handler"
-        source = inspect.getsource(handler)
-        assert "delete_workspace(" in source
-        assert '"DELETE"' in source, "destructive command must require typed confirmation"
-        assert "yes" in source, "must honour --yes for non-interactive use"

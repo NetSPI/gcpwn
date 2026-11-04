@@ -48,6 +48,9 @@ def _args(**over):
     return SimpleNamespace(**base)
 
 
+_ENSURE_ID = "test-project-fixture"
+
+
 def test_known_project_is_brute_forced_when_search_is_empty():
     resource = _FakeProjectsResource(search_result=[])
     result = enum_resources._collect_resource_rows(
@@ -57,17 +60,17 @@ def test_known_project_is_brute_forced_when_search_is_empty():
         action_dict={},
         allowed_ids=set(),
         enforce_scope=False,
-        ensure_ids={"bsidesnovapocproject"},
+        ensure_ids={_ENSURE_ID},
     )
     # The known project was synthesized, saved, and testIamPermissions ran against it.
-    assert any(r.get("project_id") == "bsidesnovapocproject" for r in resource.saved)
-    assert resource.tested == [("projects/bsidesnovapocproject", resource.load_permissions())]
+    assert any(r.get("project_id") == _ENSURE_ID for r in resource.saved)
+    assert resource.tested == [(f"projects/{_ENSURE_ID}", resource.load_permissions())]
     assert result["not_enabled"] is False
-    assert any(r.get("project_id") == "bsidesnovapocproject" for r in result["rows"])
+    assert any(r.get("project_id") == _ENSURE_ID for r in result["rows"])
 
 
 def test_known_project_not_duplicated_when_search_already_returned_it():
-    discovered = [{"name": "projects/bsidesnovapocproject", "project_id": "bsidesnovapocproject"}]
+    discovered = [{"name": f"projects/{_ENSURE_ID}", "project_id": _ENSURE_ID}]
     resource = _FakeProjectsResource(search_result=discovered)
     enum_resources._collect_resource_rows(
         resource,
@@ -76,7 +79,7 @@ def test_known_project_not_duplicated_when_search_already_returned_it():
         action_dict={},
         allowed_ids=set(),
         enforce_scope=False,
-        ensure_ids={"bsidesnovapocproject"},
+        ensure_ids={_ENSURE_ID},
     )
     # Only one testIamPermissions call -- the injected id matched the discovered one.
     assert len(resource.tested) == 1
@@ -91,6 +94,6 @@ def test_ensure_ids_ignored_for_non_project_components():
         action_dict={},
         allowed_ids=set(),
         enforce_scope=False,
-        ensure_ids={"bsidesnovapocproject"},
+        ensure_ids={_ENSURE_ID},
     )
     assert resource.tested == []  # no project injection for the organizations component

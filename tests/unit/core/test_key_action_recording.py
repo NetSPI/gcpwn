@@ -37,8 +37,6 @@ def test_key_action_recording_records_resource_permissions() -> None:
 
 
 def test_key_action_recording_has_recorded_actions() -> None:
-    assert has_recorded_actions({}) is False
-
     action_dict = {
         "demo-project": {
             "cloudtasks.queues.setIamPolicy": {

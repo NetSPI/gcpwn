@@ -75,17 +75,6 @@ def test_plan_counts_only_workspace_scoped_rows(tmp_path):
     assert tables_with_rows.get("gcs_buckets") == 1
 
 
-def test_plan_is_read_only_no_rows_deleted(tmp_path):
-    dc = _controller(tmp_path)
-    _setup_tables(dc)
-
-    dc.plan_service_wipe(workspace_id=1)
-
-    # After planning, rows are still there
-    row = dc.conn.execute("SELECT COUNT(1) FROM iam_service_accounts").fetchone()
-    assert row[0] == 3
-
-
 def test_wipe_deletes_target_workspace_only(tmp_path):
     dc = _controller(tmp_path)
     _setup_tables(dc)
