@@ -78,7 +78,7 @@ def _spec_by_module_tail(tail: str) -> ServiceSpec:
 # Table-shape sanity: every spec builds without error, for all gate flags      #
 # --------------------------------------------------------------------------- #
 def test_services_table_is_non_empty_and_specs_are_frozen():
-    assert len(_SERVICES) == 66
+    assert len(_SERVICES) == 69
     for spec in _SERVICES:
         assert isinstance(spec, ServiceSpec)
         assert spec.module.startswith("gcpwn.modules.")
@@ -321,7 +321,7 @@ def test_output_only_for_specs_with_download_output_true():
     download_output=True ever emit --output."""
     args = _args(download_output="/o")
     downloader = _downloader(*enum_all.ALL_DOWNLOAD_TOKENS)
-    has_output = {"enum_cloudcompute_resources", "enum_cloudfunctions", "enum_cloudstorage", "enum_cloudtasks"}
+    has_output = {"enum_cloudcompute_resources", "enum_cloudfunctions", "enum_cloudstorage", "enum_cloudtasks", "enum_datastream", "enum_clouddomains"}
     for spec in _SERVICES:
         tail = spec.module.split(".")[-1]
         out = _build_service_args(spec, args, downloader)

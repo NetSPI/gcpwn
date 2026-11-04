@@ -19,8 +19,7 @@ import csv
 import ipaddress
 import json
 import os
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from gcpwn.core.console import UtilityTools
@@ -668,8 +667,8 @@ def run_module(user_args, session):
                     f"{dangling_csv}{UtilityTools.RESET}"
                 )
                 print(
-                    f"    These A/AAAA/CNAME records point to IPs or hostnames not found "
-                    f"in any other GCP resource in this workspace."
+                    "    These A/AAAA/CNAME records point to IPs or hostnames not found "
+                    "in any other GCP resource in this workspace."
                 )
                 _SHOW_LIMIT = 25
                 for entry in dangling[:_SHOW_LIMIT]:

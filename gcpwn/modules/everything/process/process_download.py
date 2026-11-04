@@ -649,7 +649,7 @@ def run_module(user_args, session):
     for project_id in project_ids:
         for token in sorted(tokens):
             if budget.exceeded():
-                print(f"[!] Download budget exceeded; stopping.")
+                print("[!] Download budget exceeded; stopping.")
                 break
             handler = _HANDLERS.get(token)
             if not handler:

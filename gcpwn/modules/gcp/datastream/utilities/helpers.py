@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from gcpwn.core.resource import GcpListResource
-from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
 from gcpwn.core.output_paths import compact_filename_component
 from gcpwn.core.utils.module_helpers import (
     extract_path_segment,
