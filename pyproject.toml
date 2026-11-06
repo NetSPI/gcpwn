@@ -29,13 +29,13 @@ classifiers = [
 dev = [
   "pytest>=9.1.1",
   "ruff==0.17.3",
-  "mypy==2.4.0"
+  "mypy==2.4.1"
 ]
 table = [
   "prettytable==3.18.0"
 ]
 excel = [
-  "xlsxwriter==3.3.0"
+  "xlsxwriter==3.3.1"
 ]
 dataflow = [
   "apache-beam[gcp]>=2.50.0"
