@@ -4,7 +4,7 @@ pandas==3.1.0
 requests==2.34.2
 
 # Google API / auth libraries
-google-api-core==2.43.2
+google-api-core==2.44.0
 google-api-python-client==2.201.0
 google-auth-httplib2==0.4.4
 
@@ -16,17 +16,17 @@ google-cloud-api-keys==0.9.1
 google-cloud-appengine-admin==1.19.0
 google-cloud-artifact-registry==1.23.0
 google-cloud-asset==4.5.0
-google-cloud-batch==0.22.4
+google-cloud-batch==0.22.5
 google-cloud-bigquery==3.47.0
 google-cloud-bigquery-connection==1.23.0
 google-cloud-bigquery-datatransfer==3.24.0
 google-cloud-bigtable==2.50.2
 google-cloud-billing==1.21.0
-google-cloud-build==3.42.0
-google-cloud-compute==1.56.0
+google-cloud-build==3.43.0
+google-cloud-compute==1.57.0
 google-cloud-config==0.7.2
 google-cloud-data-fusion==1.18.0
-google-cloud-dataform==0.11.4
+google-cloud-dataform==0.11.5
 google-cloud-dataplex==2.21.0
 google-cloud-datastream==1.21.0
 google-cloud-domains==1.15.0
@@ -38,9 +38,9 @@ google-cloud-dns==0.37.2
 google-cloud-eventarc==1.22.0
 google-cloud-firestore==2.34.1
 google-cloud-functions==1.25.0
-google-cloud-developerconnect==0.6.1
+google-cloud-developerconnect==0.6.2
 google-cloud-gke-hub==1.26.0
-google-cloud-iam==2.26.0
+google-cloud-iam==2.27.0
 google-cloud-managedkafka==0.4.2
 google-cloud-oracledatabase==0.6.4
 google-cloud-parametermanager==0.4.3
@@ -59,7 +59,7 @@ google-cloud-redis-cluster==0.5.7
 google-cloud-resource-manager==1.19.0
 google-cloud-run==0.16.2
 google-cloud-scheduler==2.21.0
-google-cloud-secret-manager==2.31.0
+google-cloud-secret-manager==2.32.0
 google-cloud-service-directory==1.19.0
 google-cloud-service-usage==1.18.0
 google-cloud-shell==1.17.0
