@@ -441,8 +441,9 @@ def thread_local_discovery_service(owner: Any, *, attr: str, factory: Callable[[
     """
     local = getattr(owner, "_discovery_service_local", None)
     if local is None:
-        local = threading.local()
-        setattr(owner, "_discovery_service_local", local)
+        # __dict__.setdefault is atomic under the GIL: racing first calls all
+        # keep the same threading.local instead of replacing each other's.
+        local = owner.__dict__.setdefault("_discovery_service_local", threading.local())
     service = getattr(local, attr, None)
     if service is None:
         service = factory()
@@ -465,8 +466,8 @@ def cached_discovery_service(
     ``run_components`` fans ``list()`` over a region/nested-parent pool using
     the same resource instance, so a per-instance cache lets two workers use
     (and one close) the same connection concurrently -- which frees the SSL
-    object under the other reader and crashes natively. Compute already kept a
-    thread-local variant for this reason; this makes the helper do the same.
+    object under the other reader and crashes natively. The Compute discovery
+    resource uses this helper too; both caches are now per-thread.
 
     The cache lives on a ``threading.local`` stored on ``owner``; ``attr`` keys
     the entry so an owner can hold more than one discovery service.

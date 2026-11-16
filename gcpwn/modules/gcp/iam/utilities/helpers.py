@@ -43,7 +43,6 @@ class _IAMBaseDiscoveryResource:
 
     def __init__(self, session) -> None:
         self.session = session
-        self._discovery_service = None
 
     def _get_discovery_service(self):
         return cached_discovery_service(self, "iam", "v1",

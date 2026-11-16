@@ -10,12 +10,7 @@ from google.cloud import dns
 
 from gcpwn.core.output_paths import resolve_download_path
 from gcpwn.core.utils.action_recording import record_permissions
-from gcpwn.core.utils.service_runtime import (
-    build_discovery_service,
-    handle_discovery_error,
-    handle_service_error,
-    thread_local_discovery_service,
-)
+from gcpwn.core.utils.service_runtime import build_discovery_service, handle_discovery_error, handle_service_error
 from gcpwn.core.utils.iam_permissions import permissions_with_prefixes
 from gcpwn.core.utils.persistence import save_to_table
 from gcpwn.core.utils.persistence import snake_case_payload as _normalize_keys
@@ -83,16 +78,7 @@ class CloudDnsManagedZonesResource:
 
     def __init__(self, session) -> None:
         self.session = session
-
-    @property
-    def discovery_service(self):
-        # Discovery clients wrap a non-thread-safe httplib2.Http; run_components
-        # can call test_iam_permissions from region/parent workers.
-        return thread_local_discovery_service(
-            self,
-            attr="discovery_service",
-            factory=lambda: build_discovery_service(self.session.credentials, "dns", "v1"),
-        )
+        self.discovery_service = build_discovery_service(session.credentials, "dns", "v1")
 
     def build_client(self, project_id: str) -> dns.Client:
         return dns.Client(project=project_id, credentials=self.session.credentials)
