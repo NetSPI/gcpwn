@@ -13,6 +13,7 @@ from gcpwn.core.utils.service_runtime import (
     build_discovery_service,
     handle_discovery_error,
     paged_list,
+    thread_local_discovery_service,
 )
 from gcpwn.core.utils.module_helpers import extract_path_tail
 from gcpwn.core.utils.persistence import save_to_table
@@ -113,7 +114,15 @@ class FirestoreRulesResource:
 
     def __init__(self, session) -> None:
         self.session = session
-        self.service = build_discovery_service(session.credentials, "firebaserules", "v1")
+
+    @property
+    def service(self):
+        # Discovery clients wrap a non-thread-safe httplib2.Http; keep one per thread.
+        return thread_local_discovery_service(
+            self,
+            attr="service",
+            factory=lambda: build_discovery_service(self.session.credentials, "firebaserules", "v1"),
+        )
 
     def list_releases(self, *, project_id: str, action_dict=None) -> list[dict[str, Any]] | str | None:
         parent = f"projects/{project_id}"
