@@ -163,7 +163,6 @@ class _ApiGatewayBaseResource:
             ) from exc
         self._apigateway_v1 = apigateway_v1
         self.client = apigateway_v1.ApiGatewayServiceClient(credentials=session.credentials)
-        self._discovery_service = None
 
     def resource_name(self, row: Any) -> str:
         return resource_name_from_row(row)

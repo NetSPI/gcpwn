@@ -35,6 +35,7 @@ from gcpwn.core.utils.service_runtime import (
     handle_service_error,
     paged_list,
     rest_list,
+    thread_local_discovery_service,
 )
 
 
@@ -389,10 +390,22 @@ class DiscoveryListResource:
 
     def __init__(self, session) -> None:
         self.session = session
-        self.service = self._build_service(session)
 
     def _build_service(self, session):
         return build_discovery_service(session.credentials, self.DISCOVERY_API, self.DISCOVERY_VERSION)
+
+    @property
+    def service(self):
+        # googleapiclient services wrap a single httplib2.Http, and httplib2's
+        # connection cache is NOT thread-safe. run_components fans a resource's
+        # list() over a region/nested-parent pool, so one shared service per
+        # instance let two workers drive the same connection: one closed the
+        # socket in getresponse() while the other was still reading it, freeing
+        # the SSL object mid-write (native SIGSEGV/heap corruption). One service
+        # per thread, following the compute discovery pattern.
+        return thread_local_discovery_service(
+            self, attr="service", factory=lambda: self._build_service(self.session)
+        )
 
     def _fallback_project(self) -> str:
         return getattr(self.session, "project_id", "") or ""

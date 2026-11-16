@@ -73,7 +73,6 @@ class _BigQueryBaseResource:
     def __init__(self, session) -> None:
         self.session = session
         self.client = bigquery.Client(project=session.project_id, credentials=session.credentials)
-        self._discovery_service = None
 
     def _default_row_fields(self, row: Any) -> dict[str, Any]:
         """Per-subclass extraction of display columns from a non-dict resource object."""

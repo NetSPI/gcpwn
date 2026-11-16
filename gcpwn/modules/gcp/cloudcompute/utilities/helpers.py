@@ -20,7 +20,6 @@ import base64
 import json
 import re
 import sys
-import threading
 import time
 from importlib import import_module
 from dataclasses import dataclass
@@ -43,6 +42,7 @@ from gcpwn.core.utils.service_runtime import (
     build_discovery_service,
     handle_discovery_error,
     paged_list,
+    thread_local_discovery_service,
 )
 from gcpwn.core.utils.iam_permissions import call_test_iam_permissions, permissions_with_prefixes
 from gcpwn.core.utils.module_helpers import dedupe_strs, extract_path_segment, extract_path_tail
@@ -511,8 +511,8 @@ class CloudComputeDiscoveryResource:
     The discovery counterpart of CloudComputeGapicResource, used for resource types the
     compute_v1 GAPIC client doesn't expose. Gracefully skips a resource whose discovery
     collection is missing (is_supported() prints once and returns []). The discovery service is
-    built per-thread (threading.local) so parallel enumeration is safe -- but as everywhere,
-    DB writes (save) happen on the main thread only.
+    built per-thread via ``thread_local_discovery_service`` so parallel enumeration is safe --
+    but as everywhere, DB writes (save) happen on the main thread only.
     """
 
     SERVICE_LABEL = "Compute"
@@ -525,7 +525,6 @@ class CloudComputeDiscoveryResource:
         self.TABLE_NAME = spec.table_name
         self.COLUMNS = list(spec.summary_columns)
         self.ACTION_RESOURCE_TYPE = spec.action_resource_type
-        self._discovery_service_local = threading.local()
         self._collection_available: bool | None = None
 
     @property
@@ -533,16 +532,16 @@ class CloudComputeDiscoveryResource:
         return bool(self.spec.get_param_name)
 
     def _service(self):
-        service = getattr(self._discovery_service_local, "service", None)
-        if service is None:
-            service = build_discovery_service(
+        return thread_local_discovery_service(
+            self,
+            attr="service",
+            factory=lambda: build_discovery_service(
                 getattr(self.session, "credentials", None),
                 "compute",
                 "v1",
                 scopes=(self.CLOUD_PLATFORM_SCOPE,),
-            )
-            self._discovery_service_local.service = service
-        return service
+            ),
+        )
 
     def is_supported(self) -> bool:
         """Return whether the installed discovery client exposes this spec's collection (cached).

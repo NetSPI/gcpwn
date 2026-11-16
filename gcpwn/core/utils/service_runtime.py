@@ -426,6 +426,31 @@ def build_discovery_service(credentials, service_name: str, version: str, *, sco
     return build(str(service_name), str(version), credentials=scoped, cache_discovery=False)
 
 
+def thread_local_discovery_service(owner: Any, *, attr: str, factory: Callable[[], Any]):
+    """Return ``owner``'s discovery client for the calling thread, built once.
+
+    Discovery clients are not thread-safe: every googleapiclient service wraps one
+    ``httplib2.Http`` whose connection cache is shared mutable state. Enumeration
+    fans a resource's list() over a worker pool, so a per-instance client lets two
+    workers use (and one close) the same HTTP/SSL connection, freeing the SSL
+    object under the other reader. Keep one client per thread instead.
+
+    The cache is a ``threading.local`` stored on ``owner``; ``attr`` keys the entry
+    so an owner can hold more than one discovery service. ``factory`` is called on
+    the first use in each thread.
+    """
+    local = getattr(owner, "_discovery_service_local", None)
+    if local is None:
+        # __dict__.setdefault is atomic under the GIL: racing first calls all
+        # keep the same threading.local instead of replacing each other's.
+        local = owner.__dict__.setdefault("_discovery_service_local", threading.local())
+    service = getattr(local, attr, None)
+    if service is None:
+        service = factory()
+        setattr(local, attr, service)
+    return service
+
+
 def cached_discovery_service(
     owner: Any,
     service_name: str,
@@ -434,19 +459,26 @@ def cached_discovery_service(
     scopes: Iterable[str] | None = None,
     attr: str = "_discovery_service",
 ):
-    """Build a discovery client once per ``owner``, cached on that attribute.
+    """Build a discovery client once **per thread** for ``owner``.
 
-    Per-INSTANCE caching. Compute keeps its own thread-local variant instead: its
-    specs are shared across a region pool and discovery clients are not
-    thread-safe -- do not fold that one onto this.
+    Discovery clients are not thread-safe: every googleapiclient service wraps
+    one ``httplib2.Http`` whose connection cache is shared mutable state.
+    ``run_components`` fans ``list()`` over a region/nested-parent pool using
+    the same resource instance, so a per-instance cache lets two workers use
+    (and one close) the same connection concurrently -- which frees the SSL
+    object under the other reader and crashes natively. The Compute discovery
+    resource uses this helper too; both caches are now per-thread.
+
+    The cache lives on a ``threading.local`` stored on ``owner``; ``attr`` keys
+    the entry so an owner can hold more than one discovery service.
     """
-    service = getattr(owner, attr, None)
-    if service is None:
-        service = build_discovery_service(
+    return thread_local_discovery_service(
+        owner,
+        attr=attr,
+        factory=lambda: build_discovery_service(
             getattr(owner.session, "credentials", None), service_name, version, scopes=scopes
-        )
-        setattr(owner, attr, service)
-    return service
+        ),
+    )
 
 
 def extract_discovery_http_error(exc: Exception) -> tuple[int | None, str]:
