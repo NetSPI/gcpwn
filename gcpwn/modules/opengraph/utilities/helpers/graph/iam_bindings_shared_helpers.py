@@ -489,6 +489,11 @@ def _normalized_rule(name: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
         # Extra precondition a source principal must satisfy before the edge is real
         # (e.g. source_must_hold_custom_role for UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS).
         "prerequisite_binding": str(raw_rule.get("prerequisite_binding") or "").strip(),
+        # When true, only the binding's own scope is used as the target node; fanout to
+        # resources within the project is suppressed.  Used by UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS
+        # so a project-scope binding targets the project itself without also fanning out to
+        # every SA / secret in the project.
+        "scope_only": bool(raw_rule.get("scope_only", False)),
     }
 
 

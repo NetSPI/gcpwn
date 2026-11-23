@@ -65,6 +65,7 @@ def collect_rule_events(
         _ev_targets_from_permissions = set(rule.get("targets_from_permissions") or ())
         _ev_target_requires_permissions = set(rule.get("target_requires_permissions") or ())
         _ev_status = str(rule.get("status") or "").strip()
+        _ev_scope_only = bool(rule.get("scope_only", False))
 
         total_groups = len(grouped_entries)
         for group_index, group_entries in enumerate(grouped_entries, start=1):
@@ -134,6 +135,7 @@ def collect_rule_events(
                         "targets_from_permissions": _ev_targets_from_permissions,
                         "target_requires_permissions": _ev_target_requires_permissions,
                         "status": _ev_status,
+                        "scope_only": _ev_scope_only,
                         "privilege_escalation": True,
                     }
                 )

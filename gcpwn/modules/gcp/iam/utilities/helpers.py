@@ -403,6 +403,52 @@ def iam_generate_id_token(iam_client, sa_name: str, audience: str, include_email
     return None
 
 
+def iam_get_role(iam_client, role_name, debug=False):
+    """Fetch a custom role by resource name; returns Role proto or None."""
+    if debug:
+        print(f"[DEBUG] GetRole {role_name}")
+    try:
+        return iam_client.get_role(request=iam_admin_v1.GetRoleRequest(name=role_name))
+    except Forbidden as e:
+        print(f"{UtilityTools.RED}[X] 403 GetRole denied for {role_name}: {e}{UtilityTools.RESET}")
+    except NotFound:
+        print(f"{UtilityTools.RED}[X] 404 Role not found: {role_name}{UtilityTools.RESET}")
+    except Exception as e:
+        print(f"{UtilityTools.RED}[X] GetRole failed for {role_name}: {e}{UtilityTools.RESET}")
+    return None
+
+
+def iam_update_role_permissions(iam_client, role_name, permissions, etag=None, debug=False):
+    """Replace included_permissions on a custom IAM role; returns updated Role or None.
+
+    etag should be supplied when available to prevent concurrent-update races.
+    """
+    from google.protobuf import field_mask_pb2
+
+    if debug:
+        print(f"[DEBUG] UpdateRole {role_name} → {permissions}")
+    try:
+        role_body = iam_admin_v1.Role(
+            name=role_name,
+            included_permissions=list(permissions),
+        )
+        if etag:
+            role_body.etag = etag
+        request = iam_admin_v1.UpdateRoleRequest(
+            name=role_name,
+            role=role_body,
+            update_mask=field_mask_pb2.FieldMask(paths=["included_permissions"]),
+        )
+        return iam_client.update_role(request=request)
+    except Forbidden as e:
+        print(f"{UtilityTools.RED}[X] 403 UpdateRole denied for {role_name}: {e}{UtilityTools.RESET}")
+    except NotFound:
+        print(f"{UtilityTools.RED}[X] 404 Role not found: {role_name}{UtilityTools.RESET}")
+    except Exception as e:
+        print(f"{UtilityTools.RED}[X] UpdateRole failed for {role_name}: {e}{UtilityTools.RESET}")
+    return None
+
+
 def bucket_set_iam_policy(storage_client, bucket_name, policy, debug = False):
     """setIamPolicy on a GCS bucket via the storage client; returns policy / ``404`` / None."""
     if debug:

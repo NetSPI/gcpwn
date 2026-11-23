@@ -569,6 +569,11 @@
             "module_name": "exploit_wif_impersonation",
             "info_blurb": "Privilege escalation via Workload Identity Federation: create a WIF pool + provider, bind to a target SA, and exchange an external token for a federated GCP access token. Supports Google/GitHub/GitLab/AWS/custom identity providers.",
             "location": "gcpwn.modules.gcp.iam.exploit.exploit_wif_impersonation"
+          },
+          {
+            "module_name": "exploit_update_custom_role",
+            "info_blurb": "Add a dangerous permission (e.g. iam.serviceAccounts.actAs) to a custom IAM role the caller already holds a binding to, taking immediate effect. Requires iam.roles.update on the project. Optional --cleanup removes the injected permission afterwards.",
+            "location": "gcpwn.modules.gcp.iam.exploit.exploit_update_custom_role"
           }
         ]
       }
