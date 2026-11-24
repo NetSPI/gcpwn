@@ -96,10 +96,9 @@ def test_key_permission_map_coverage_marks_rule_unsupported_when_permission_miss
 
 
 def test_key_multi_binding_builder_skips_unsupported_rule_names() -> None:
-    # Use CREATE_CLOUDRUN_SERVICE_AS_SA (via=capability) so no resource is needed.
+    # Use CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA (via=capability) so no resource is needed.
     matching_permissions = {
         "run.services.create",
-        "artifactregistry.repositories.downloadArtifacts",
         "iam.serviceAccounts.actAs",
     }
     entries = [
@@ -111,10 +110,10 @@ def test_key_multi_binding_builder_skips_unsupported_rule_names() -> None:
 
     supported_context = _BuilderContext(entries=entries, unsupported_rule_names=[])
     supported_stats = build_iam_bindings_multi_permission_graph(supported_context)
-    assert any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_AS_SA" for edge in supported_context.builder.edge_map.values())
+    assert any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA" for edge in supported_context.builder.edge_map.values())
     assert supported_stats["dangerous_edges_emitted"] >= 1
 
-    blocked_context = _BuilderContext(entries=entries, unsupported_rule_names=["CREATE_CLOUDRUN_SERVICE_AS_SA"])
+    blocked_context = _BuilderContext(entries=entries, unsupported_rule_names=["CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA"])
     blocked_stats = build_iam_bindings_multi_permission_graph(blocked_context)
-    assert not any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_AS_SA" for edge in blocked_context.builder.edge_map.values())
+    assert not any(edge.edge_type == "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA" for edge in blocked_context.builder.edge_map.values())
     assert blocked_stats["dangerous_edges_emitted"] <= supported_stats["dangerous_edges_emitted"]

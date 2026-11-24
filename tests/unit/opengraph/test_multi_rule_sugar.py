@@ -46,7 +46,7 @@ def test_sugar_expands_to_full_combo_hop_shape():
 
 
 def test_sugar_supports_multiple_subject_groups():
-    out = _desugar_multi_permission_rule("CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA", {
+    out = _desugar_multi_permission_rule("CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA", {
         "subject_groups": [
             {"permissions": ["cloudfunctions.functions.create"], "target": "cloudfunction"},
             {"permissions": ["cloudfunctions.functions.call"], "target": "cloudfunction"},
@@ -58,4 +58,4 @@ def test_sugar_supports_multiple_subject_groups():
     assert out["combo_hop"]["hops"][0]["from_groups"] == ["subject_1", "subject_2"]
     assert out["combo_hop"]["hops"][0]["node_mode"] == "capability"
     # target_edge omitted -> defaults to the rule name
-    assert out["combo_hop"]["edge_to_target"] == "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA"
+    assert out["combo_hop"]["edge_to_target"] == "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA"

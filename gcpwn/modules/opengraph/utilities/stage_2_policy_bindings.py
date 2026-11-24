@@ -245,33 +245,64 @@ def _invert_permission_to_roles(permission_to_roles: dict[str, list[str]] | None
 _CF_BUILD_SA_REQUIRED_PERMS: frozenset[str] = frozenset({
     "artifactregistry.repositories.downloadArtifacts",
     "artifactregistry.repositories.uploadArtifacts",
-    "storage.objects.create",
-    "storage.objects.get",
+    "logging.logEntries.create",
 })
 
-# Predefined roles known to include all 4 CF build SA minimum permissions.
+# Predefined roles known to include all 3 CF build SA minimum permissions.
+# These also carry project-level storage access, satisfying the CF gen2 staging
+# bucket requirement without a separate bucket-level grant.
 _CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES: frozenset[str] = frozenset({
     "roles/owner",
     "roles/editor",
     "roles/cloudbuild.builds.builder",
 })
 
+# CF gen2 always stages source into gcf-v2-sources-{project_number}-{region} before
+# passing it to Cloud Build. The build SA needs storage.objects.get on that bucket.
+_CF_V2_STAGING_BUCKET_PREFIX: str = "gcf-v2-sources-"
+_STORAGE_OBJECT_GET_PERM: str = "storage.objects.get"
+# Predefined bucket-level roles that grant storage.objects.get.
+_BUCKET_LEVEL_STORAGE_READ_ROLES: frozenset[str] = frozenset({
+    "roles/storage.objectViewer",
+    "roles/storage.objectUser",
+    "roles/storage.objectAdmin",
+    "roles/storage.admin",
+    "roles/storage.legacyObjectReader",
+    "roles/owner",
+    "roles/editor",
+})
+
 
 def _compute_cf_build_capable_emails(
     raw_allow_bindings: Iterable[dict[str, Any]] | None,
     custom_role_perms: dict[str, set[str]],
-) -> frozenset[str]:
-    """Return emails of SAs that have all 4 CF gen1 build SA minimum permissions.
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return (v1_capable, v2_capable) SA email sets.
+
+    v1_capable: SA has the 3 minimum CF build SA permissions (AR + logging).
+    v2_capable: SA has the 3 minimum perms AND storage.objects.get coverage for the
+        gcf-v2-sources-* staging bucket — either via a predefined sufficient role
+        (which carries project-level storage access) or via an explicit
+        storage-read role/perm on the gcf-v2-sources-* bucket.
 
     Checks predefined sufficient roles statically and custom roles via their
-    included_permissions. An SA with all 4 perms can be used as buildServiceAccount.
+    included_permissions. Both ``policy`` and ``policy_json`` keys are accepted.
     """
     perms_by_email: dict[str, set[str]] = {}
+    has_v2_storage_access: set[str] = set()
+
     for row in raw_allow_bindings or []:
+        resource_name = str(row.get("resource_name") or "").strip()
+        resource_type = str(row.get("resource_type") or "").strip()
+        is_gcf_sources_bucket = (
+            resource_type == "bucket" and _CF_V2_STAGING_BUCKET_PREFIX in resource_name
+        )
+        is_project_or_broader = resource_type in ("project", "folder", "organization")
+
         # Both the enumerated DB (iam_allow_policies) and the CAI file path store the
         # raw allow-policy JSON under the key "policy". (The legacy "policy_json" key is
         # kept only as a defensive fallback.) Reading "policy_json" alone silently matched
-        # nothing, leaving every SA non-build-capable and CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA
+        # nothing, leaving every SA non-build-capable and CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA
         # unable to fire.
         policy_raw = row.get("policy") or row.get("policy_json")
         policy = parse_json_value(policy_raw, default=None)
@@ -282,24 +313,52 @@ def _compute_cf_build_capable_emails(
             if not role:
                 continue
             role_perms: set[str] | None = None
-            if role in _CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES:
+            if role in _CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES and is_project_or_broader:
+                # Only meaningful at project/folder/org scope — basic roles on individual
+                # resources (e.g. roles/owner on a KMS key) do not grant AR/logging perms.
                 role_perms = set(_CF_BUILD_SA_REQUIRED_PERMS)
             elif role in custom_role_perms:
                 role_perms = custom_role_perms[role]
-            if not role_perms:
+
+            # Determine if this binding satisfies the V2 staging bucket requirement.
+            # Bucket-level: standard storage-read roles or any custom role with the perm.
+            # Project-or-broader: predefined build/storage roles that include storage
+            # access (inherits to all project buckets) or custom role with storage.objects.get.
+            role_gives_v2_storage = False
+            if is_gcf_sources_bucket:
+                if role in _BUCKET_LEVEL_STORAGE_READ_ROLES:
+                    role_gives_v2_storage = True
+                elif role_perms and _STORAGE_OBJECT_GET_PERM in role_perms:
+                    role_gives_v2_storage = True
+            elif is_project_or_broader:
+                if role in _CF_BUILD_SA_PREDEFINED_SUFFICIENT_ROLES or role in _BUCKET_LEVEL_STORAGE_READ_ROLES:
+                    role_gives_v2_storage = True
+                elif role_perms and _STORAGE_OBJECT_GET_PERM in role_perms:
+                    role_gives_v2_storage = True
+
+            if not role_perms and not role_gives_v2_storage:
                 continue
             for member in (binding.get("members") or []):
                 member_str = str(member or "").strip()
                 if not member_str.startswith("serviceAccount:"):
                     continue
                 email = member_str[len("serviceAccount:"):]
-                if email:
+                if not email:
+                    continue
+                if role_perms:
                     perms_by_email.setdefault(email, set()).update(role_perms)
-    return frozenset(
+                if role_gives_v2_storage:
+                    has_v2_storage_access.add(email)
+
+    v1_capable = frozenset(
         email
         for email, perms in perms_by_email.items()
         if _CF_BUILD_SA_REQUIRED_PERMS.issubset(perms)
     )
+    v2_capable = frozenset(
+        email for email in v1_capable if email in has_v2_storage_access
+    )
+    return v1_capable, v2_capable
 
 
 # Parse custom role rows into role->permissions so custom roles merge cleanly
@@ -355,10 +414,13 @@ def build_scope_and_resource_indexes(
     project_id_by_scope_name: dict[str, str] = {}
     project_scope_by_project_id: dict[str, str] = {}
 
-    # Precompute which SA emails have the 4 minimum CF build SA permissions so we
-    # can tag their resource entries with is_cf_build_capable for edge filtering.
+    # Precompute which SA emails have the minimum CF build SA permissions so we
+    # can tag their resource entries with is_cf_build_capable / is_cf_v2_build_capable
+    # for edge filtering.
     _custom_role_perms = _custom_role_permissions(iam_custom_roles_rows)
-    _cf_build_capable = _compute_cf_build_capable_emails(raw_allow_bindings_rows, _custom_role_perms)
+    _cf_build_capable, _cf_v2_build_capable = _compute_cf_build_capable_emails(
+        raw_allow_bindings_rows, _custom_role_perms
+    )
 
     for scope_name, scope_type in scope_type_by_name.items():
         token = str(scope_name or "").strip()
@@ -400,6 +462,8 @@ def build_scope_and_resource_indexes(
         }
         if resource_type == "service-account" and resource_name in _cf_build_capable:
             member_entry["is_cf_build_capable"] = True
+        if resource_type == "service-account" and resource_name in _cf_v2_build_capable:
+            member_entry["is_cf_v2_build_capable"] = True
         allow_resources.append(member_entry)
 
     # Index of resource_name -> list[SA email] so via=resource combo rules can find
@@ -498,6 +562,8 @@ def build_scope_and_resource_indexes(
         }
         if email in _cf_build_capable:
             entry["is_cf_build_capable"] = True
+        if email in _cf_v2_build_capable:
+            entry["is_cf_v2_build_capable"] = True
         allow_resources.append(entry)
 
     # Ensure enumerated Cloud Functions appear as selectable targets for
@@ -563,7 +629,7 @@ def build_scope_and_resource_indexes(
         )
 
     # Ensure enumerated Cloud Run services/jobs appear as selectable targets for
-    # UPDATE_CLOUDRUN_SERVICE_AS_SA / UPDATE_CLOUDRUN_JOB_AS_SA (via: "resource").
+    # UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA / UPDATE_CLOUDRUN_JOB_AS_SA (via: "resource").
     for row in cloudrun_services_rows or []:
         svc_name = str(row.get("name") or "").strip()
         if not svc_name:

@@ -1478,6 +1478,9 @@ def _resource_metadata_filter_passes(
         elif key == "is_cf_build_capable":
             if bool(resource.get("is_cf_build_capable")) != bool(required_value):
                 return False
+        elif key == "is_cf_v2_build_capable":
+            if bool(resource.get("is_cf_v2_build_capable")) != bool(required_value):
+                return False
         # Unknown metadata filter keys: skip silently (forward-compat).
     return True
 

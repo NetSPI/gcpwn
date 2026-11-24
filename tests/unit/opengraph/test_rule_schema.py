@@ -53,7 +53,7 @@ def _cf_build_capable_row():
 
     Read only by _compute_cf_build_capable_emails (which keys off ``policy_json``);
     the main binding parser keys off ``policy`` and ignores this row. Needed so
-    CREATE/UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA, whose act_as gate requires
+    CREATE/UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA, whose act_as gate requires
     is_cf_build_capable, can fire against the target SA.
     """
     return {
@@ -115,7 +115,7 @@ class TestDesugarsNewForm:
     """New keys: requires / on / edge / via / (no target_edge needed)."""
 
     def test_basic_2hop_capability(self):
-        out = _desugar_multi_permission_rule("CREATE_CLOUDRUN_SERVICE_AS_SA", {
+        out = _desugar_multi_permission_rule("CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA", {
             "requires": [
                 {"permissions": ["run.services.create"], "on": "cloudrunservice"},
             ],
@@ -132,7 +132,7 @@ class TestDesugarsNewForm:
         hop = out["combo_hop"]["hops"][0]
         assert hop["edge_from_subject"] == "CAN_CREATE_CLOUDRUN_SERVICE"
         assert hop["node_mode"] == "capability"
-        assert out["combo_hop"]["edge_to_target"] == "CREATE_CLOUDRUN_SERVICE_AS_SA"
+        assert out["combo_hop"]["edge_to_target"] == "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA"
 
     def test_resource_node_mode(self):
         out = _desugar_multi_permission_rule("RESET_COMPUTE_STARTUP_SA", {
@@ -150,7 +150,7 @@ class TestDesugarsNewForm:
         assert groups["subject_1"]["target_selector"]["status_in"] == ["RUNNING"]
 
     def test_multiple_requires_groups(self):
-        out = _desugar_multi_permission_rule("CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA", {
+        out = _desugar_multi_permission_rule("CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA", {
             "requires": [
                 {"permissions": ["cloudfunctions.functions.create",
                                  "cloudfunctions.functions.sourceCodeSet"], "on": "cloudfunction"},
@@ -162,7 +162,7 @@ class TestDesugarsNewForm:
         })
         assert out["combo_hop"]["hops"][0]["from_groups"] == ["subject_1", "subject_2"]
         # rule key = final edge when no explicit target_edge
-        assert out["combo_hop"]["edge_to_target"] == "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA"
+        assert out["combo_hop"]["edge_to_target"] == "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA"
 
     def test_no_on_in_requires_group(self):
         # CREATE_CLOUDSCHEDULER_JOB_AS_SA has no "on" in its requires group
@@ -177,7 +177,7 @@ class TestDesugarsNewForm:
         assert groups["subject_1"]["resource_scopes_possible"] == ["project"]
 
     def test_description_passed_through(self):
-        out = _desugar_multi_permission_rule("CREATE_CLOUDRUN_SERVICE_AS_SA", {
+        out = _desugar_multi_permission_rule("CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA", {
             "requires": [{"permissions": ["run.services.create"], "on": "cloudrunservice"}],
             "edge": "CAN_CREATE_CLOUDRUN_SERVICE",
             "via": "capability",
@@ -343,8 +343,10 @@ def test_live_json_all_expected_rules_present():
     }
     expected_multi = {
         "RESET_COMPUTE_STARTUP_SA", "START_COMPUTE_STARTUP_SA",
-        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA", "UPDATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-        "CREATE_CLOUDSCHEDULER_JOB_AS_SA", "CREATE_CLOUDBUILD_BUILD_AS_SA", "CREATE_CLOUDRUN_SERVICE_AS_SA",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA", "UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
+        "CREATE_CLOUDSCHEDULER_JOB_AS_SA", "CREATE_CLOUDBUILD_BUILD_AS_SA",
+        "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA", "UPDATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
+        "CREATE_CLOUDRUN_SERVICE_FUNC_AS_SA", "UPDATE_CLOUDRUN_SERVICE_FUNC_AS_SA",
     }
     for name in expected_single:
         assert name in rules, f"missing single rule: {name}"
@@ -395,18 +397,17 @@ def test_live_json_no_old_keys():
         "CREATE_CLOUDBUILD_BUILD_AS_SA",
     ),
     (
-        "CREATE_CLOUDRUN_SERVICE_AS_SA",
-        ["run.services.create", "artifactregistry.repositories.downloadArtifacts",
-         "iam.serviceAccounts.actAs"],
-        "CREATE_CLOUDRUN_SERVICE_AS_SA",
-        "CREATE_CLOUDRUN_SERVICE_AS_SA",
+        "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
+        ["run.services.create", "iam.serviceAccounts.actAs"],
+        "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
+        "CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA",
     ),
     (
-        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
         ["cloudfunctions.functions.create", "cloudfunctions.functions.sourceCodeSet",
          "cloudfunctions.functions.call", "iam.serviceAccounts.actAs"],
-        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
-        "CREATE_AND_INVOKE_CLOUDFUNCTION_AS_SA",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
+        "CREATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA",
     ),
 ])
 def test_multi_rule_produces_correct_edges(rule_name, perms, subject_edge, combo_edge):
