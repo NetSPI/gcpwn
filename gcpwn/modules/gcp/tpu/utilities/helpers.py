@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 import time
@@ -8,8 +7,7 @@ from typing import Any
 
 from google.cloud import tpu_v2  # type: ignore
 from google.cloud import tpu_v2alpha1  # type: ignore
-from googleapiclient.discovery import build as discovery_build
-from googleapiclient.http import MediaIoBaseDownload
+from google.cloud import storage as gcs
 
 from gcpwn.core.resource import GcpListResource
 from gcpwn.core.utils.module_helpers import (
@@ -242,11 +240,7 @@ def poll_gcs_proof(session, bucket: str, timeout: int = 180) -> str | None:
     """
     print(f"  [gcs] Polling gs://{bucket}/{_GCS_PROOF_PATH} (up to {timeout}s)...")
     try:
-        storage = discovery_build(
-            "storage", "v1",
-            credentials=session.credentials,
-            cache_discovery=False,
-        )
+        client = gcs.Client(credentials=session.credentials, project=getattr(session, "project_id", None))
     except Exception as exc:
         print(f"  [gcs] Failed to build storage client: {exc}")
         return None
@@ -255,13 +249,8 @@ def poll_gcs_proof(session, bucket: str, timeout: int = 180) -> str | None:
     while time.time() < deadline:
         time.sleep(15)
         try:
-            req = storage.objects().get_media(bucket=bucket, object=_GCS_PROOF_PATH)
-            buf = io.BytesIO()
-            dl = MediaIoBaseDownload(buf, req)
-            done = False
-            while not done:
-                _, done = dl.next_chunk()
-            content = buf.getvalue().decode("utf-8", errors="replace")
+            blob = client.bucket(bucket).blob(_GCS_PROOF_PATH)
+            content = blob.download_as_text()
             if content:
                 print("  [gcs] Proof file found!")
                 return content

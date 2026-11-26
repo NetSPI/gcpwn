@@ -49,13 +49,17 @@ class CloudWorkflowsWorkflowsResource(GcpListResource):
             "crypto_key_name": str(raw.get("crypto_key_name", "") or "").strip(),
         }
 
-    def create(self, *, parent: str, workflow_id: str, body: dict) -> dict:
-        """Create a workflow via REST (avoids auto-polling the LRO which needs workflows.operations.get)."""
-        from googleapiclient.discovery import build as _disco_build
-        wf_rest = _disco_build("workflows", "v1", credentials=self.session.credentials, cache_discovery=False)
-        return wf_rest.projects().locations().workflows().create(
-            parent=parent, workflowId=workflow_id, body=body,
-        ).execute()
+    def create(self, *, parent: str, workflow_id: str, body: dict) -> None:
+        """Create a workflow. Fires the LRO but does not poll it (avoids needing workflows.operations.get)."""
+        workflow = workflows_v1.Workflow(
+            source_contents=body.get("sourceContents", ""),
+            service_account=body.get("serviceAccount", ""),
+        )
+        self.client.create_workflow(request=workflows_v1.CreateWorkflowRequest(
+            parent=parent,
+            workflow_id=workflow_id,
+            workflow=workflow,
+        ))
 
     def poll_active(self, *, name: str, deadline: float, debug: bool = False) -> bool:
         """Poll until the workflow reaches ACTIVE state or deadline passes. Returns True if ACTIVE."""
@@ -74,11 +78,9 @@ class CloudWorkflowsWorkflowsResource(GcpListResource):
         return False
 
     def delete(self, *, name: str) -> None:
-        """Delete a workflow via REST."""
-        from googleapiclient.discovery import build as _disco_build
-        wf_rest = _disco_build("workflows", "v1", credentials=self.session.credentials, cache_discovery=False)
+        """Delete a workflow. Fires the LRO but does not poll it."""
         try:
-            wf_rest.projects().locations().workflows().delete(name=name).execute()
+            self.client.delete_workflow(request=workflows_v1.DeleteWorkflowRequest(name=name))
         except Exception:
             pass
 
