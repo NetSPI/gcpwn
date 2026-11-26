@@ -1,0 +1,45 @@
+name: New Service / Module Request
+description: Request coverage for a GCP service that gcpwn doesn't enumerate yet
+labels: ["service-coverage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to request enumeration or exploit coverage for a GCP service.
+
+  - type: input
+    id: service
+    attributes:
+      label: GCP service name
+      description: e.g. "Cloud Spanner", "Dataflow", "BigQuery Data Transfer"
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is this service interesting from a security perspective?
+      description: |
+        What resources does it hold? What permissions are relevant?
+        What privilege-escalation or lateral-movement paths does it enable?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Relevant GCP API / GAPIC library
+      description: |
+        Link to the Cloud client library docs or REST API reference if you know it.
+        e.g. https://cloud.google.com/python/docs/reference/spanner/latest
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of coverage requested
+      options:
+        - Enumeration (list resources, record IAM)
+        - Exploit / privilege escalation
+        - Both
+    validations:
+      required: true

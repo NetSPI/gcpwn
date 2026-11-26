@@ -1,0 +1,32 @@
+name: Feature Request
+description: Suggest an improvement or new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for making gcpwn more useful? Describe it here.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What would you like to see?
+      description: A clear description of the feature or improvement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this useful?
+      description: |
+        What problem does it solve or what workflow does it improve?
+        If it relates to a specific attack scenario, describe it at a high level.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Any workarounds you currently use, or other approaches that could work.

@@ -1,0 +1,63 @@
+name: OpenGraph Priv-Esc Edge Request
+description: Propose a new privilege escalation edge for the default OpenGraph attack path set
+labels: ["opengraph"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a new privilege escalation edge for the **default** OpenGraph edge set.
+
+        **What belongs here:** Edges that directly enable lateral movement or privilege escalation with high confidence — paths where holding the required permissions reliably translates to acting as or controlling another identity. The bar is high because these edges appear in every attack graph by default.
+
+        **What doesn't belong here:** Edges that reach a resource (a bucket, a secret, a database) rather than a principal. Those are valuable but are intentionally excluded from the default set — anyone can add them locally, and `process_og_gcpwn_data --include-all` already surfaces paths to any role or identity when needed. The text-based privilege escalation module (`process_og_attack_paths`) can then be run against the output JSON to find paths to any target role or resource node (e.g. `--to-kind GCPBucket` to find all paths to Cloud Storage buckets). See the wiki for full usage.
+
+        If you're unsure whether your edge meets the bar, open it anyway and we'll discuss.
+
+  - type: input
+    id: edge_name
+    attributes:
+      label: Proposed edge name
+      description: Short name describing the technique, e.g. "CreateCloudRunService"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What does this edge represent?
+      description: |
+        Describe the attack path: who is the source principal, what permission(s) do they hold,
+        and what identity or resource do they gain access to as a result?
+    validations:
+      required: true
+
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Required permissions
+      description: List the GCP IAM permissions needed to execute this path.
+      placeholder: |
+        - run.services.create
+        - iam.serviceAccounts.actAs
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or reference
+      description: |
+        Link to GCP documentation, a blog post, a lab result, or any other source that
+        confirms this path works in practice. Include any caveats (conditions, org policies, etc.).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: validated
+    attributes:
+      label: Have you validated this path in a live environment?
+      options:
+        - "Yes"
+        - "No — theoretical / based on documentation"
+    validations:
+      required: true
