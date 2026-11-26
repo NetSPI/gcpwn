@@ -18,6 +18,7 @@ so enum modules call them unchanged:
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Iterable
 
 from gcpwn.core.utils.action_recording import record_permissions
@@ -389,10 +390,24 @@ class DiscoveryListResource:
 
     def __init__(self, session) -> None:
         self.session = session
-        self.service = self._build_service(session)
+        self._service_local = threading.local()
 
     def _build_service(self, session):
         return build_discovery_service(session.credentials, self.DISCOVERY_API, self.DISCOVERY_VERSION)
+
+    @property
+    def service(self):
+        """Return a per-thread discovery client.
+
+        httplib2.Http (which googleapiclient wraps) is not thread-safe.
+        Building one client per thread prevents socket-cache corruption when
+        run_components fans a resource across a region/parent pool.
+        """
+        client = getattr(self._service_local, "client", None)
+        if client is None:
+            client = self._build_service(self.session)
+            self._service_local.client = client
+        return client
 
     def _fallback_project(self) -> str:
         return getattr(self.session, "project_id", "") or ""

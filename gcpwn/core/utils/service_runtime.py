@@ -434,18 +434,20 @@ def cached_discovery_service(
     scopes: Iterable[str] | None = None,
     attr: str = "_discovery_service",
 ):
-    """Build a discovery client once per ``owner``, cached on that attribute.
+    """Build a discovery client once per (owner, thread), cached in a threading.local.
 
-    Per-INSTANCE caching. Compute keeps its own thread-local variant instead: its
-    specs are shared across a region pool and discovery clients are not
-    thread-safe -- do not fold that one onto this.
+    httplib2.Http (which googleapiclient wraps) is not thread-safe: a single shared
+    client across threads can corrupt the socket cache under concurrent requests.
+    Each thread gets its own client, built lazily on first use.
     """
-    service = getattr(owner, attr, None)
+    tls_attr = f"_tls_{attr}"
+    local = owner.__dict__.setdefault(tls_attr, threading.local())
+    service = getattr(local, "client", None)
     if service is None:
         service = build_discovery_service(
             getattr(owner.session, "credentials", None), service_name, version, scopes=scopes
         )
-        setattr(owner, attr, service)
+        local.client = service
     return service
 
 
