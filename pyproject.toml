@@ -28,14 +28,14 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
   "pytest>=9.1.1",
-  "ruff==0.17.5",
+  "ruff==0.17.6",
   "mypy==2.4.1"
 ]
 table = [
-  "prettytable==3.18.0"
+  "prettytable==3.19.0"
 ]
 excel = [
-  "xlsxwriter==3.3.1"
+  "xlsxwriter==3.3.4"
 ]
 dataflow = [
   "apache-beam[gcp]>=2.50.0"
