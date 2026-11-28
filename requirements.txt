@@ -9,7 +9,7 @@ google-api-python-client==2.202.0
 google-auth-httplib2==0.4.4
 
 # Google Cloud Python libraries
-google-cloud-aiplatform==2.9.0
+google-cloud-aiplatform==2.10.0
 google-cloud-alloydb==0.11.4
 google-cloud-api-gateway==1.18.0
 google-cloud-api-keys==0.9.1
@@ -49,7 +49,7 @@ google-cloud-securesourcemanager==0.6.3
 google-cloud-vmwareengine==1.13.0
 google-cloud-iap==1.23.0
 google-cloud-kms==3.19.0
-google-cloud-logging==3.17.0
+google-cloud-logging==3.17.1
 google-cloud-notebooks==1.18.0
 google-cloud-orchestration-airflow==1.23.0
 google-cloud-org-policy==1.19.0
@@ -63,8 +63,8 @@ google-cloud-secret-manager==2.32.0
 google-cloud-service-directory==1.19.0
 google-cloud-service-usage==1.18.0
 google-cloud-shell==1.17.0
-google-cloud-spanner==3.72.0
-google-cloud-storage==3.17.1
+google-cloud-spanner==3.72.1
+google-cloud-storage==3.17.2
 google-cloud-storage-transfer==1.22.0
 google-cloud-tasks==2.26.0
 google-cloud-tpu==1.28.0
