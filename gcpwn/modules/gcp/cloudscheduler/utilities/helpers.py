@@ -71,6 +71,13 @@ class CloudSchedulerJobsResource(GcpListResource):
     def get_by_name(self, *, name: str) -> Any:
         return self.client.get_job(request=scheduler_v1.GetJobRequest(name=name))
 
+    def patch(self, *, job: Any, update_mask: str) -> Any:
+        from google.protobuf import field_mask_pb2
+        return self.client.update_job(request=scheduler_v1.UpdateJobRequest(
+            job=job,
+            update_mask=field_mask_pb2.FieldMask(paths=update_mask.split(",")),
+        ))
+
     def delete(self, *, name: str) -> None:
         try:
             self.client.delete_job(request=scheduler_v1.DeleteJobRequest(name=name))

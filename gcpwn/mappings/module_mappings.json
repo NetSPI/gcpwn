@@ -170,11 +170,6 @@
             "module_name": "exploit_cloudbuild_build_as_sa",
             "info_blurb": "Exploit Cloud Build for lateral movement: create new build or (attempt to) update existing build to run arbitrary code as an attached service account. Recovers token via in-project Cloud Logging (secure) or external URL exfil. REQUIRES cloudbuild.builds.create/update + iam.serviceAccounts.actAs on target SA. Note: .update() permission exists in IAM but Cloud Build REST API does not expose the endpoint.",
             "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_build_as_sa"
-          },
-          {
-            "module_name": "exploit_cloudbuild_trigger_as_sa",
-            "info_blurb": "Privilege escalation via Cloud Build trigger: create a trigger (optionally with a Cloud Source Repository) that runs a build as the target SA, recovering the OAuth2 token via Cloud Logging or URL callback. REQUIRES cloudbuild.triggers.create + iam.serviceAccounts.actAs on target SA.",
-            "location": "gcpwn.modules.gcp.cloudbuild.exploit.exploit_cloudbuild_trigger_as_sa"
           }
         ]
       }
